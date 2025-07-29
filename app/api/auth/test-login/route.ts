@@ -102,6 +102,22 @@ export async function POST(request: NextRequest) {
 
     console.log("✅ [Test Login API] 테스트 로그인 성공:", testUser.name)
 
+    // 로그인 기록 저장
+    try {
+      await fetch(`${new URL(request.url).origin}/api/auth/login-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: testUser.email,
+          name: testUser.name,
+          loginMethod: 'test',
+          success: true
+        })
+      })
+    } catch (error) {
+      console.error("로그인 기록 저장 실패:", error)
+    }
+
     return res
   } catch (error) {
     console.error("❌ [Test Login API] 테스트 로그인 실패:", error)

@@ -108,6 +108,10 @@ const config: Config = {
           '0%': { transform: 'translateX(-100%) skewX(-20deg)' },
           '100%': { transform: 'translateX(200%) skewX(-20deg)' },
         },
+        'gradient-x': {
+          '0%, 100%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+        },
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
@@ -115,6 +119,7 @@ const config: Config = {
   			'blur-in': 'blur-in 1.5s ease-out',
         'background-pan': 'background-pan 10s linear infinite',
         'shimmer': 'shimmer 4s ease-in-out infinite',
+        'gradient-x': 'gradient-x 3s ease infinite',
   		},
   		textShadow: {
   			'default': '2px 2px 4px rgba(0, 0, 0, 0.8)',

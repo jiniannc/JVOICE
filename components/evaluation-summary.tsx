@@ -485,11 +485,13 @@ export function EvaluationSummary({
                   <Badge variant="outline" className="text-purple-700 border-purple-200 bg-purple-50">{getLanguageDisplay(language)}</Badge>
                 </div>
                 <hr className="my-4 border-gray-200"/>
-                <div className="flex items-center">
-                  <CheckCircle className="w-4 h-4 mr-3 text-gray-400" />
-                  <span className="font-medium text-gray-500 w-20">평가자</span>
-                  <span className="font-semibold text-gray-900">{evaluatedBy || authenticatedUser?.name || authenticatedUser?.email || "Unknown"}</span>
-                </div>
+                {!isReviewMode && (
+                  <div className="flex items-center">
+                    <CheckCircle className="w-4 h-4 mr-3 text-gray-400" />
+                    <span className="font-medium text-gray-500 w-20">평가자</span>
+                    <span className="font-semibold text-gray-900">{evaluatedBy || authenticatedUser?.name || authenticatedUser?.email || "Unknown"}</span>
+                  </div>
+                )}
                 <div className="flex items-center">
                   <Calendar className="w-4 h-4 mr-3 text-gray-400" />
                   <span className="font-medium text-gray-500 w-20">평가일시</span>

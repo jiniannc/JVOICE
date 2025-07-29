@@ -1,4 +1,4 @@
-import { GoogleDriveService, DriveFile } from "./google-drive-service"
+import dropboxService from "./dropbox-service"
 import { getEnvValue } from "./env-config"
 
 export interface PDFFile {
@@ -11,17 +11,10 @@ export interface PDFFile {
 }
 
 export class PDFSyncService {
-  private driveService: GoogleDriveService
   private syncedFiles: PDFFile[] = []
   private lastSyncTime: string | null = null
 
   constructor() {
-    this.driveService = new GoogleDriveService({
-      apiKey: getEnvValue("NEXT_PUBLIC_GOOGLE_API_KEY"),
-      clientId: getEnvValue("NEXT_PUBLIC_GOOGLE_CLIENT_ID"),
-      discoveryDoc: "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
-      scopes: "https://www.googleapis.com/auth/drive.file",
-    })
     this.lastSyncTime = typeof window !== "undefined" ? localStorage.getItem("lastPDFSync") : null
     this.loadFromLocalStorage()
   }
@@ -52,15 +45,26 @@ export class PDFSyncService {
     console.log("🔄 PDF 파일 동기화 시작...")
 
     try {
-      // Google Drive에서 PDF 파일 목록 가져오기
-      const files = await this.driveService.listPDFFiles()
+      // API 라우트를 통해 Dropbox에서 PDF 파일 목록 가져오기
+      const response = await fetch('/api/dropbox-list?path=/scripts')
+      
+      if (!response.ok) {
+        throw new Error(`Dropbox API 호출 실패: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      const files = data.entries || []
+      const pdfFiles = files.filter((file: any) => 
+        file[".tag"] === "file" && 
+        file.name.toLowerCase().endsWith(".pdf")
+      )
 
-      console.log(`📄 총 ${files.length}개의 PDF 파일 발견`)
+      console.log(`📄 총 ${pdfFiles.length}개의 PDF 파일 발견`)
 
       // 파일명 파싱하여 언어와 번호 추출
       const parsedFiles: PDFFile[] = []
       
-      for (const file of files) {
+      for (const file of pdfFiles) {
         console.log(`🔍 파일 분석 중: ${file.name}`)
         const parsed = this.parseFileName(file.name)
         
@@ -70,8 +74,8 @@ export class PDFSyncService {
             name: file.name,
             language: parsed.language,
             number: parsed.number,
-            url: `https://drive.google.com/file/d/${file.id}/view`,
-            lastModified: file.modifiedTime || new Date().toISOString(),
+            url: `/api/dropbox-share`, // 공유 링크는 필요할 때 생성
+            lastModified: file.client_modified || new Date().toISOString(),
           }
           parsedFiles.push(pdfFile)
           console.log(`✅ 파싱 성공: ${file.name} → ${parsed.language} ${parsed.number}번`)
@@ -181,23 +185,37 @@ export class PDFSyncService {
     return sortedScripts
   }
 
-  getPDFUrl(language: string, scriptNumber: number, mode?: "korean" | "english"): string {
+  async getPDFUrl(language: string, scriptNumber: number, mode?: "korean" | "english"): Promise<string> {
     // 실제 동기화된 파일에서 해당 스크립트의 URL을 찾음
     const file = this.syncedFiles.find(
       (f) => f.language === language && f.number === scriptNumber
     )
     
     if (file) {
-      console.log(`📄 PDF URL 찾음: ${file.name} → ${file.url}`)
+      console.log(`📄 PDF URL 찾음: ${file.name}`)
       
-      // Google Drive URL을 CSP 정책에 맞는 형태로 변환
-      // 기존: https://drive.google.com/file/d/{fileId}/view
-      // 변경: https://drive.google.com/file/d/{fileId}/preview
-      const fileId = file.id
-      const previewUrl = `https://drive.google.com/file/d/${fileId}/preview`
-      
-      console.log(`🔓 Preview URL 생성: ${previewUrl}`)
-      return previewUrl
+      try {
+        // Dropbox 공유 링크 생성
+        const response = await fetch('/api/dropbox-share', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            path: `/scripts/${file.name}`
+          })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          if (data.url) {
+            console.log(`🔓 Dropbox 공유 URL 생성: ${data.url}`)
+            return data.url
+          }
+        }
+      } catch (error) {
+        console.error('Dropbox 공유 링크 생성 실패:', error)
+      }
     }
     
     // 파일을 찾지 못한 경우 플레이스홀더 반환

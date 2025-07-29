@@ -9,7 +9,7 @@ const Player = dynamic(
   () => import("@lottiefiles/react-lottie-player").then(mod => ({ default: mod.Player })),
   { 
     ssr: false,
-    loading: () => <div className="w-full h-16 bg-transparent animate-pulse rounded flex items-center justify-center">로딩 중...</div>
+    loading: () => <div className="w-full h-16 bg-transparent"></div>
   }
 );
 
@@ -84,7 +84,7 @@ export default function ScrollDownLottie() {
     console.log("ScrollDownLottie: 서버 사이드 렌더링 중");
     return (
       <div className="w-full flex justify-center items-center min-h-[256px] bg-transparent">
-        <p className="text-white" style={{ textShadow: '2px 2px 4px rgba(0, 0, 0, 0.8)' }}>클라이언트 로딩 중...</p>
+        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
       </div>
     );
   }
@@ -92,10 +92,7 @@ export default function ScrollDownLottie() {
   if (loading) {
     return (
       <div className="w-full flex justify-center items-center min-h-[256px] bg-transparent">
-        <div className="text-center">
-          <p className="text-white mb-2" style={{ textShadow: '2px 2px 4px rgba(0, 0, 0, 0.8)' }}>애니메이션 로딩 중...</p>
-          <p className="text-xs text-white/70" style={{ textShadow: '1px 1px 2px rgba(0, 0, 0, 0.8)' }}>Player 상태: {playerState}</p>
-        </div>
+        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
       </div>
     );
   }

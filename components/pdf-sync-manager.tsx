@@ -61,15 +61,25 @@ export function PDFSyncManager() {
       clearInterval(progressInterval)
       setSyncStatus((prev) => ({ ...prev, progress: 100 }))
 
-      // 상태 업데이트
+      // 상태 업데이트 및 파일 목록 새로고침
       setTimeout(() => {
         checkSyncStatus()
+        // 동기화된 파일 목록도 새로고침
+        const files = pdfSyncService.getSyncedFiles()
+        setSyncedFiles(files.map(f => ({ name: f.name, lastModified: f.lastModified })))
       }, 1000)
 
       console.log("✅ PDF 동기화 완료")
     } catch (error) {
       console.error("❌ PDF 동기화 실패:", error)
       setSyncStatus((prev) => ({ ...prev, isLoading: false, progress: 0 }))
+      
+      // 사용자에게 에러 메시지 표시
+      if (error instanceof Error && error.message.includes("Dropbox 앱 설정")) {
+        alert("드롭박스 설정이 누락되었습니다. 관리자에게 문의하세요.")
+      } else {
+        alert("PDF 동기화 중 오류가 발생했습니다.")
+      }
     }
   }
 

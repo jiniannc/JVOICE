@@ -1,5 +1,3 @@
-"use client"
-
 import { getEnvValue } from "./env-config"
 
 export interface Employee {
@@ -75,14 +73,16 @@ export class EmployeeDatabase {
 
       this.lastFetchTime = now
 
-      // 로컬 스토리지에 백업 저장
-      localStorage.setItem(
-        "employeeDatabase",
-        JSON.stringify({
-          employees: this.employees,
-          timestamp: now,
-        }),
-      )
+      // 로컬 스토리지에 백업 저장 (클라이언트에서만)
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        localStorage.setItem(
+          "employeeDatabase",
+          JSON.stringify({
+            employees: this.employees,
+            timestamp: now,
+          }),
+        )
+      }
 
       console.log(`✅ 승무원 정보 ${this.employees.length}명 로드 완료`)
       return this.employees
@@ -94,48 +94,47 @@ export class EmployeeDatabase {
 
   private getLocalEmployeeData(): Employee[] {
     try {
-      const stored = localStorage.getItem("employeeDatabase")
-      if (stored) {
-        const { employees, timestamp } = JSON.parse(stored)
-        const now = Date.now()
-
-        // 24시간 이내 데이터면 사용
-        if (now - timestamp < 24 * 60 * 60 * 1000) {
-          console.log("로컬 백업 데이터 사용")
-          return employees
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        const stored = localStorage.getItem("employeeDatabase")
+        if (stored) {
+          const { employees, timestamp } = JSON.parse(stored)
+          const now = Date.now()
+          if (Array.isArray(employees) && now - timestamp < this.cacheTimeout) {
+            console.log("로컬 데이터에서 승무원 정보 로드")
+            return employees
+          }
         }
       }
     } catch (error) {
-      console.error("로컬 데이터 로딩 실패:", error)
+      console.warn("로컬 데이터 로딩 실패:", error)
     }
-
-    // 기본 테스트 데이터
-    console.log("기본 테스트 데이터 사용")
+    // 기본 테스트 데이터 사용
+    console.warn("기본 테스트 데이터 사용")
     return [
       {
         email: "kim.seungmu@jinair.com",
         name: "김승무",
-        employeeId: "CA001",
-        department: "객실승무",
-        position: "승무원",
+        employeeId: "100001",
+        department: "객실승무팀",
+        position: "A10",
         isActive: true,
         isInstructor: false,
       },
       {
         email: "park.hanggong@jinair.com",
         name: "박항공",
-        employeeId: "CA002",
-        department: "객실승무",
-        position: "수석승무원",
+        employeeId: "100002",
+        department: "운항팀",
+        position: "B20",
         isActive: true,
         isInstructor: false,
       },
       {
-        email: "test@gmail.com", // 테스트용 Gmail
-        name: "테스트승무원",
-        employeeId: "TEST001",
-        department: "객실승무",
-        position: "승무원",
+        email: "test@gmail.com",
+        name: "테스트",
+        employeeId: "999999",
+        department: "테스트팀",
+        position: "T99",
         isActive: true,
         isInstructor: false,
       },

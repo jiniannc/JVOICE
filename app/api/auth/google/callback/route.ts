@@ -105,6 +105,22 @@ export async function GET(request: NextRequest) {
 
     console.log("✅ [Google Callback] 로그인 완료:", userData.name)
 
+    // 로그인 기록 저장
+    try {
+      await fetch(`${new URL(request.url).origin}/api/auth/login-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: userData.email,
+          name: userData.name,
+          loginMethod: 'google',
+          success: true
+        })
+      })
+    } catch (error) {
+      console.error("로그인 기록 저장 실패:", error)
+    }
+
     return NextResponse.redirect(new URL("/?login=success", request.url))
   } catch (error) {
     console.error("❌ [Google Callback] 콜백 처리 실패:", error)

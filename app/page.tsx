@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from "react"
-import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -24,6 +24,7 @@ import {
   Eye,
   ClipboardCheck,
   LogIn,
+  Globe,
 } from "lucide-react"
 import { PDFViewer } from "@/components/pdf-viewer"
 import { AudioRecorder } from "@/components/audio-recorder"
@@ -34,6 +35,7 @@ import { GoogleAuth } from "@/components/google-auth"
 import { TypographyAnimation } from "@/components/typography-animation"
 import HeroLottie from "@/components/hero-lottie"
 import ScrollDownLottie from "@/components/scroll-down-lottie"
+import { RecordingWaitingPage } from "@/components/recording-waiting-page"
 import { pdfSyncService } from "@/lib/pdf-sync-service"
 import { employeeDB } from "@/lib/employee-database"
 import Image from "next/image"
@@ -137,18 +139,10 @@ export default function HomePage() {
   const [showEvaluationAuth, setShowEvaluationAuth] = useState(false)
   const [showMyPage, setShowMyPage] = useState(false)
   const [showRecordingSetup, setShowRecordingSetup] = useState(false)
+  const [showRecordingWaiting, setShowRecordingWaiting] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
-  const [heroVisible, setHeroVisible] = useState(false);
-  const [heroZoomActive, setHeroZoomActive] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-
-  useEffect(() => {
-    setHeroVisible(true);
-    // 0.2초 후 blur 해제
-    const timer = setTimeout(() => setHeroZoomActive(true), 200);
-    return () => clearTimeout(timer);
-  }, []);
 
   // 🔥 앱 시작시 자동 문안 동기화
   useEffect(() => {
@@ -343,7 +337,18 @@ export default function HomePage() {
   const handleRecordingSetupComplete = (setupInfo: UserInfo) => {
     setUserInfo(setupInfo)
     setShowRecordingSetup(false)
-    setModeState("recording")
+    setShowRecordingWaiting(true)
+  }
+
+  const handleRecordingStart = () => {
+    try {
+      setShowRecordingWaiting(false)
+      setModeState("recording")
+    } catch (error) {
+      console.error("녹음 모드 전환 중 오류:", error)
+      // 오류 발생 시 대기 페이지로 되돌리기
+      setShowRecordingWaiting(true)
+    }
   }
 
 
@@ -383,7 +388,6 @@ export default function HomePage() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="bg-white rounded-2xl shadow-lg w-full max-w-md p-8 text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 text-sm font-medium">시스템 로딩 중...</p>
           {isAutoSyncing && (
             <div className="mt-4 p-4 bg-blue-50 rounded-lg">
               <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-2 text-blue-600" />
@@ -392,6 +396,26 @@ export default function HomePage() {
           )}
         </div>
       </div>
+    )
+  }
+
+  if (showRecordingWaiting) {
+    // userInfo가 유효하지 않으면 녹음 설정으로 돌아가기
+    if (!userInfo?.name || !userInfo?.employeeId || !userInfo?.language || !userInfo?.category) {
+      setShowRecordingWaiting(false)
+      setShowRecordingSetup(true)
+      return null
+    }
+    
+    return (
+      <RecordingWaitingPage
+        userInfo={userInfo}
+        onStart={handleRecordingStart}
+        onBack={() => {
+          setShowRecordingWaiting(false)
+          setShowRecordingSetup(true)
+        }}
+      />
     )
   }
 
@@ -567,41 +591,113 @@ export default function HomePage() {
       </div>
 
       {/* 메인 컨텐츠 */}
-      <div className="ml-64 p-8 main-scroll-container" style={{height: '100vh', overflowY: 'auto', scrollSnapType: 'y mandatory'}}>
+      <div className="ml-64 p-8 main-scroll-container bg-blue-50" style={{
+        height: '100vh', 
+        overflowY: 'auto', 
+        scrollSnapType: 'y mandatory',
+        backgroundColor: 'rgba(220, 235, 255, 1) !important',
+        background: `
+          rgba(220, 235, 255, 1) center / 100% 100%,
+          repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 2px,
+            rgba(0,0,0,0.02) 2px,
+            rgba(0,0,0,0.02) 4px
+          ) center / 4px 4px,
+          repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 2px,
+            rgba(0,0,0,0.02) 2px,
+            rgba(0,0,0,0.02) 4px
+          ) center / 4px 4px,
+          radial-gradient(circle at 50% 50%, rgba(255,255,255,0.6) 0%, transparent 100%) center / 100% 100%
+        `,
+        backgroundImage: `
+          repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 2px,
+            rgba(0,0,0,0.02) 2px,
+            rgba(0,0,0,0.02) 4px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 2px,
+            rgba(0,0,0,0.02) 2px,
+            rgba(0,0,0,0.02) 4px
+          ),
+          radial-gradient(circle at 50% 50%, rgba(255,255,255,0.6) 0%, transparent 100%)
+        `,
+        backgroundSize: '4px 4px, 4px 4px, 100% 100%',
+        backgroundPosition: 'center, center, center'
+      }}>
         {/* hero 이미지 섹션 */}
         <section className="flex flex-col mb-0 -mx-8 section-snap" style={{height: '1020px', scrollSnapAlign: 'start'}}>
+          {/* 페이퍼 텍스처 배경 */}
+          <div className="absolute inset-0 pointer-events-none -z-10">
+            <div className="w-full h-full" style={{
+              background: `
+                rgba(235, 245, 255, 1) center / 100% 100%,
+                repeating-linear-gradient(
+                  0deg,
+                  transparent,
+                  transparent 1px,
+                  rgba(0,0,0,0.015) 1px,
+                  rgba(0,0,0,0.015) 2px
+                ) center / 2px 2px,
+                repeating-linear-gradient(
+                  90deg,
+                  transparent,
+                  transparent 1px,
+                  rgba(0,0,0,0.015) 1px,
+                  rgba(0,0,0,0.015) 2px
+                ) center / 2px 2px,
+                radial-gradient(circle at 30% 70%, rgba(59, 130, 246, 0.08) 0%, transparent 50%) 30% 70% / 300px 300px,
+                radial-gradient(circle at 70% 30%, rgba(147, 51, 234, 0.06) 0%, transparent 50%) 70% 30% / 400px 400px
+              `
+            }}></div>
+            {/* 기하학적 패턴 */}
+            <div className="absolute inset-0 opacity-[0.04]">
+              <div className="absolute top-20 left-20 w-32 h-32 border border-slate-300 rounded-full"></div>
+              <div className="absolute top-40 right-32 w-24 h-24 border border-slate-300 rounded-full"></div>
+              <div className="absolute bottom-32 left-1/4 w-16 h-16 border border-slate-300 rounded-full"></div>
+              <div className="absolute bottom-20 right-1/3 w-20 h-20 border border-slate-300 rounded-full"></div>
+              <div className="absolute top-1/3 left-1/2 w-12 h-12 border border-slate-300 rounded-full"></div>
+            </div>
+            {/* 미묘한 그리드 패턴 */}
+            <div className="absolute inset-0 opacity-[0.03]">
+              <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" strokeWidth="1"/>
+                  </pattern>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#grid)" />
+              </svg>
+            </div>
+          </div>
           {/* 컨텐츠 영역 전체 : ml-64 로 이미 사이드바 만큼 밀려 있음 */}
           <div className="relative w-full" style={{ height: '1020px' }}>
             {/* 배경 비디오 영역 */}
             <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:'33.6rem',height:'33.6rem',zIndex:1}}>
-              <div className="w-[33.6rem] h-[33.6rem] rounded-full overflow-hidden shadow-2xl flex items-center justify-center bg-white/10">
+              <div className="w-[33.6rem] h-[33.6rem] rounded-full overflow-hidden shadow-2xl flex items-center justify-center bg-white/20 backdrop-blur-sm">
               <video
                 autoPlay
                 loop
                 muted
                 playsInline
-                className={`object-cover w-full h-full transition-opacity duration-1000 hero-zoom-in${heroZoomActive ? ' hero-zoom-in-active' : ''} ${heroVisible ? 'opacity-100' : 'opacity-0'}`}
-                style={{
-                  animation: heroVisible
-                      ? 'hero-zoom-in 1s cubic-bezier(0.4,0,0.2,1) forwards'
-                    : undefined
-                }}
+                className="object-cover w-full h-full animate-hero-video"
               >
                 <source src="/video/main-hero.webm" type="video/webm" />
                 <source src="/video/main-hero.mp4" type="video/mp4" />
               </video>
               </div>
             </div>
-            {/* 그라데이션 오버레이 */}
-            <div className="gradient-overlay"></div>
-            {/* 구름층 */}
-            <div className="cloud-layer">
-              <div className="cloud cloud-1"></div>
-              <div className="cloud cloud-2"></div>
-              <div className="cloud cloud-3"></div>
-            </div>
-            {/* 안개층 */}
-            <div className="fog-layer"></div>
+            {/* 미묘한 오버레이 */}
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-slate-50/30 pointer-events-none"></div>
             {/* 로티 애니메이션 오버레이 - 상단 중앙 */}
             <div className="absolute top-0 left-1/2 transform -translate-x-1/2 z-10">
               <HeroLottie />
@@ -614,7 +710,42 @@ export default function HomePage() {
         </section>
 
         {/* 로티+텍스트+카드 section */}
-        <section className="section-snap flex flex-col items-center" style={{minHeight: '100vh', scrollSnapAlign: 'start', paddingTop: 0, marginTop: 0}}>
+        <section className="section-snap flex flex-col items-center relative" style={{minHeight: '100vh', scrollSnapAlign: 'start', paddingTop: 0, marginTop: 0}}>
+          {/* 페이퍼 텍스처 배경 */}
+          <div className="absolute inset-0 pointer-events-none -z-10">
+            <div className="w-full h-full" style={{
+              background: `
+                rgba(245, 250, 255, 1) center / 100% 100%,
+                repeating-linear-gradient(
+                  0deg,
+                  transparent,
+                  transparent 1px,
+                  rgba(0,0,0,0.01) 1px,
+                  rgba(0,0,0,0.01) 2px
+                ) center / 2px 2px,
+                repeating-linear-gradient(
+                  90deg,
+                  transparent,
+                  transparent 1px,
+                  rgba(0,0,0,0.01) 1px,
+                  rgba(0,0,0,0.01) 2px
+                ) center / 2px 2px,
+                radial-gradient(circle at 25% 75%, rgba(59, 130, 246, 0.05) 0%, transparent 50%) 25% 75% / 350px 350px,
+                radial-gradient(circle at 75% 25%, rgba(147, 51, 234, 0.04) 0%, transparent 50%) 75% 25% / 400px 400px
+              `
+            }}></div>
+            {/* 미묘한 점 패턴 */}
+            <div className="absolute inset-0 opacity-[0.02]">
+              <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <pattern id="dots" width="60" height="60" patternUnits="userSpaceOnUse">
+                    <circle cx="30" cy="30" r="1" fill="currentColor"/>
+                  </pattern>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#dots)" />
+              </svg>
+            </div>
+          </div>
           <div className="w-full max-w-6xl flex flex-col items-center" style={{gap: 0, marginTop: 0, paddingTop: 0}}>
             <Typography2Once
               style={{ width: '80%', height: 360, display: 'block', padding: 0, marginTop: 0, marginBottom: '-80px', transform: 'translateY(-50px)' }}
@@ -627,7 +758,7 @@ export default function HomePage() {
             {/* 3개 카드 - Record, Review, Evaluate */}
             {/* Record 카드 - RECORD.mp4 동영상 */}
             <div
-              className="bg-white rounded-2xl shadow-lg border border-blue-100 hover:shadow-xl transition-all duration-300 group cursor-pointer"
+              className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl border border-slate-200/50 hover:shadow-2xl hover:border-slate-300/50 transition-all duration-500 group cursor-pointer overflow-hidden"
               onClick={() => handleNavigation("recording")}
               onMouseEnter={(e) => {
                 const video = e.currentTarget.querySelector('video') as HTMLVideoElement
@@ -644,39 +775,39 @@ export default function HomePage() {
                 }
               }}
             >
-              <div className="relative overflow-hidden rounded-t-2xl">
+              <div className="relative overflow-hidden rounded-t-3xl">
                 <video
                   muted
                   playsInline
-                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-300"
+                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => {
                     console.log("Video failed to load:", e)
                     // 동영상 로드 실패시 플레이스홀더 이미지로 대체
                     const target = e.target as HTMLVideoElement
                     target.style.display = "none"
                     const placeholder = document.createElement("div")
-                    placeholder.className = "w-full h-84 bg-blue-100 flex items-center justify-center"
+                    placeholder.className = "w-full h-84 bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center"
                     placeholder.innerHTML =
-                      '<div class="text-blue-600 text-center"><div class="text-4xl mb-2">🎤</div><div class="text-sm">Record Video</div></div>'
+                      '<div class="text-blue-600 text-center"><div class="text-4xl mb-2">🎤</div><div class="text-sm font-medium">Record Video</div></div>'
                     target.parentNode?.appendChild(placeholder)
                   }}
                 >
                   <source src="/video/RECORD.mp4" type="video/mp4" />
                   Your browser does not support the video tag.
                 </video>
-                <div className="absolute inset-0 bg-blue-600/10 group-hover:bg-blue-600/20 transition-colors duration-300"></div>
+                <div className="absolute inset-0 bg-gradient-to-t from-blue-600/5 to-transparent group-hover:from-blue-600/10 transition-all duration-500"></div>
               </div>
-              <CardHeader className="text-center pb-6">
-                <CardTitle className="text-xl font-bold text-gray-900 mb-2">Record</CardTitle>
-                <CardDescription className="text-gray-500">기내 방송 음성 녹음 및 제출</CardDescription>
+              <CardHeader className="text-center pb-6 px-8">
+                <CardTitle className="text-xl font-bold text-slate-800 mb-2">Record</CardTitle>
+                <CardDescription className="text-slate-600">기내 방송 음성 녹음 및 제출</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-8 pb-8">
                 <Button
                   onClick={(e) => {
                     e.stopPropagation()
                     handleNavigation("recording")
                   }}
-                  className="w-full bg-blue-600 hover:bg-blue-700 h-12 text-sm font-medium"
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 h-12 text-sm font-medium rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                 >
                   <Mic className="w-4 h-4 mr-2" />
                   녹음 시작하기
@@ -686,7 +817,7 @@ export default function HomePage() {
 
             {/* Review 카드 - REVIEW.mp4 동영상 */}
             <div
-              className="bg-white rounded-2xl shadow-lg border border-green-100 hover:shadow-xl transition-all duration-300 group cursor-pointer"
+              className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl border border-slate-200/50 hover:shadow-2xl hover:border-slate-300/50 transition-all duration-500 group cursor-pointer overflow-hidden"
               onClick={() => handleNavigation("review")}
               onMouseEnter={(e) => {
                 const video = e.currentTarget.querySelector('video') as HTMLVideoElement
@@ -703,38 +834,38 @@ export default function HomePage() {
                 }
               }}
             >
-              <div className="relative overflow-hidden rounded-t-2xl">
+              <div className="relative overflow-hidden rounded-t-3xl">
                 <video
                   muted
                   playsInline
-                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-300"
+                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => {
                     console.log("Video failed to load:", e)
                     const target = e.target as HTMLVideoElement
                     target.style.display = "none"
                     const placeholder = document.createElement("div")
-                    placeholder.className = "w-full h-84 bg-green-100 flex items-center justify-center"
+                    placeholder.className = "w-full h-84 bg-gradient-to-br from-emerald-50 to-teal-100 flex items-center justify-center"
                     placeholder.innerHTML =
-                      '<div class="text-green-600 text-center"><div class="text-4xl mb-2">👁️</div><div class="text-sm">Review Video</div></div>'
+                      '<div class="text-emerald-600 text-center"><div class="text-4xl mb-2">👁️</div><div class="text-sm font-medium">Review Video</div></div>'
                     target.parentNode?.appendChild(placeholder)
                   }}
                 >
                   <source src="/video/REVIEW.mp4" type="video/mp4" />
                   Your browser does not support the video tag.
                 </video>
-                <div className="absolute inset-0 bg-green-600/10 group-hover:bg-green-600/20 transition-colors duration-300"></div>
+                <div className="absolute inset-0 bg-gradient-to-t from-emerald-600/5 to-transparent group-hover:from-emerald-600/10 transition-all duration-500"></div>
               </div>
-              <CardHeader className="text-center pb-6">
-                <CardTitle className="text-xl font-bold text-gray-900 mb-2">Review</CardTitle>
-                <CardDescription className="text-gray-500">내 녹음 내역 및 평가 결과 확인</CardDescription>
+              <CardHeader className="text-center pb-6 px-8">
+                <CardTitle className="text-xl font-bold text-slate-800 mb-2">Review</CardTitle>
+                <CardDescription className="text-slate-600">내 녹음 내역 및 평가 결과 확인</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-8 pb-8">
                 <Button
                   onClick={(e) => {
                     e.stopPropagation()
                     handleNavigation("review")
                   }}
-                  className="w-full bg-green-600 hover:bg-green-700 h-12 text-sm font-medium"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 h-12 text-sm font-medium rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                 >
                   <Eye className="w-4 h-4 mr-2" />
                   결과 확인하기
@@ -744,7 +875,7 @@ export default function HomePage() {
 
             {/* Evaluate 카드 - EVALUATE.mp4 동영상 */}
             <div
-              className="bg-white rounded-2xl shadow-lg border border-purple-100 hover:shadow-xl transition-all duration-300 group cursor-pointer"
+              className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl border border-slate-200/50 hover:shadow-2xl hover:border-slate-300/50 transition-all duration-500 group cursor-pointer overflow-hidden"
               onClick={() => handleNavigation("evaluation")}
               onMouseEnter={(e) => {
                 const video = e.currentTarget.querySelector('video') as HTMLVideoElement
@@ -761,37 +892,38 @@ export default function HomePage() {
                 }
               }}
             >
-              <div className="relative overflow-hidden rounded-t-2xl">
+              <div className="relative overflow-hidden rounded-t-3xl">
                 <video
                   muted
                   playsInline
-                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-300"
+                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => {
                     console.log("Video failed to load:", e)
                     const target = e.target as HTMLVideoElement
                     target.style.display = "none"
                     const placeholder = document.createElement("div")
+                    placeholder.className = "w-full h-84 bg-gradient-to-br from-violet-50 to-purple-100 flex items-center justify-center"
                     placeholder.innerHTML =
-                      '<div class="text-purple-600 text-center"><div class="text-4xl mb-2">📋</div><div class="text-sm">Evaluate Video</div></div>'
+                      '<div class="text-violet-600 text-center"><div class="text-4xl mb-2">📋</div><div class="text-sm font-medium">Evaluate Video</div></div>'
                     target.parentNode?.appendChild(placeholder)
                   }}
                 >
                   <source src="/video/EVALUATE.mp4" type="video/mp4" />
                   Your browser does not support the video tag.
                 </video>
-                <div className="absolute inset-0 bg-purple-600/10 group-hover:bg-purple-600/20 transition-colors duration-300"></div>
+                <div className="absolute inset-0 bg-gradient-to-t from-violet-600/5 to-transparent group-hover:from-violet-600/10 transition-all duration-500"></div>
               </div>
-              <CardHeader className="text-center pb-6">
-                <CardTitle className="text-xl font-bold text-gray-900 mb-2">Evaluate</CardTitle>
-                <CardDescription className="text-gray-500">전문 교관 평가 및 피드백</CardDescription>
+              <CardHeader className="text-center pb-6 px-8">
+                <CardTitle className="text-xl font-bold text-slate-800 mb-2">Evaluate</CardTitle>
+                <CardDescription className="text-slate-600">전문 교관 평가 및 피드백</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-8 pb-8">
                 <Button
                   onClick={(e) => {
                     e.stopPropagation()
                     handleNavigation("evaluation")
                   }}
-                  className="w-full bg-purple-600 hover:bg-purple-700 h-12 text-sm font-medium"
+                  className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 h-12 text-sm font-medium rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                 >
                   <ClipboardCheck className="w-4 h-4 mr-2" />
                   평가 시작하기
@@ -800,10 +932,10 @@ export default function HomePage() {
             </div>
           </div>
         </section>
-        <div className="flex flex-col items-center justify-center w-full mt-[-48px] mb-4">
-          <div className="text-gray-700 text-xs leading-relaxed font-normal text-center" style={{ fontFamily: 'Noto Sans, sans-serif' }}>
-            <div>J-VOICE v1.0 | © 2025 Jin Air Cabin Training Group</div>
-            <div>This system supports the qualification and evaluation of cabin crew in-flight announcements.</div>
+        <div className="flex flex-col items-center justify-center w-full mt-[-48px] mb-8">
+          <div className="text-slate-500 text-xs leading-relaxed font-medium text-center tracking-wide" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+            <div className="mb-1">J-VOICE v1.0 | © 2025 Jin Air Cabin Training Group</div>
+            <div className="text-slate-400">This system supports the qualification and evaluation of cabin crew in-flight announcements.</div>
           </div>
         </div>
       </div>
@@ -1520,6 +1652,15 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
     return Math.max(0, timeLimit - elapsedTime)
   }
 
+  // 시간 제한 체크
+  useEffect(() => {
+    const remainingTime = getRemainingTime()
+    if (remainingTime <= 0 && !showFinalConfirmation) {
+      console.log("⏰ 시간 제한 도달! 자동으로 최종 확인 페이지로 이동")
+      setShowFinalConfirmation(true)
+    }
+  }, [elapsedTime, showFinalConfirmation])
+
   useEffect(() => {
     const scripts = pdfSyncService.getRandomScripts(userInfo.language, 5)
     setAvailableScripts(scripts)
@@ -1609,28 +1750,50 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
   }
 
   return (
-    <div className="min-h-screen bg-blue-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-zinc-100">
       {/* 헤더 */}
-      <div className="bg-white border-b border-blue-200 p-4">
+      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60 p-6 shadow-sm">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <Button onClick={handleGoHome} variant="outline" className="border-blue-200 bg-transparent">
-              <div className="text-gray-900 font-bold text-lg">JVOICE</div>
-            </Button>
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+              <Mic className="w-6 h-6 text-white" />
+            </div>
             <div>
-              <h1 className="text-lg font-bold text-gray-900">기내 방송 녹음</h1>
-              <p className="text-gray-500 text-sm">
+              <h1 className="text-xl font-bold text-gray-900">기내 방송 녹음</h1>
+              <p className="text-gray-600 text-sm">
                 {userInfo.name} ({userInfo.employeeId}) - {getLanguageDisplay(userInfo.language)}
               </p>
             </div>
           </div>
 
           {/* 타이머 */}
-          <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+          <div className={`rounded-2xl p-4 border shadow-sm transition-all duration-300 ${
+            getRemainingTime() <= 300 
+              ? 'bg-gradient-to-r from-red-100 to-orange-100 border-red-200/50 animate-pulse' 
+              : getRemainingTime() <= 600 
+                ? 'bg-gradient-to-r from-yellow-100 to-orange-100 border-yellow-200/50' 
+                : 'bg-gradient-to-r from-slate-100 to-gray-100 border-gray-200/50'
+          }`}>
             <div className="text-center">
-              <div className="text-lg font-bold text-blue-900 mb-1">{formatTime(getRemainingTime())}</div>
-              <div className="text-xs text-blue-700">남은 시간</div>
-              <div className="mt-1 text-xs text-blue-600">
+              <div className={`text-2xl font-bold mb-1 ${
+                getRemainingTime() <= 300 
+                  ? 'text-red-800' 
+                  : getRemainingTime() <= 600 
+                    ? 'text-orange-800' 
+                    : 'text-gray-900'
+              }`}>
+                {formatTime(getRemainingTime())}
+              </div>
+              <div className={`text-xs font-medium ${
+                getRemainingTime() <= 300 
+                  ? 'text-red-700' 
+                  : getRemainingTime() <= 600 
+                    ? 'text-orange-700' 
+                    : 'text-gray-600'
+              }`}>
+                {getRemainingTime() <= 0 ? '시간 종료!' : '남은 시간'}
+              </div>
+              <div className="mt-2 text-xs text-gray-500 bg-white/60 rounded-full px-3 py-1">
                 진행: {getCurrentScriptIndex() + 1}/{availableScripts.length}
               </div>
             </div>
@@ -1638,135 +1801,171 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto p-8">
-        <div className="grid lg:grid-cols-2 gap-8">
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="grid lg:grid-cols-5 gap-8">
           {/* PDF 뷰어 */}
-          <div className="bg-white rounded-2xl shadow-lg p-6 border border-blue-200">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900">
-                문안 {currentScript}번 - {getLanguageDisplay(userInfo.language)}
-              </h2>
-              <Badge className="bg-blue-100 text-blue-800 border-blue-200">
-                {getCurrentScriptIndex() + 1} / {availableScripts.length}
-              </Badge>
-            </div>
-            <PDFViewer
-              language={userInfo.language}
-              scriptNumber={currentScript}
-              currentLanguageMode={currentLanguageMode}
-            />
+          <div className="lg:col-span-3">
+            <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
+              <CardHeader className="bg-gray-50/80">
+                              <CardTitle className="flex items-center justify-between text-xl font-bold text-gray-800">
+                <div className="flex items-center gap-3">
+                  <FileText className="w-6 h-6 text-blue-600" />
+                  <span>문안 {currentScript}번 - {getLanguageDisplay(userInfo.language)}</span>
+                </div>
+                <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+                  {getCurrentScriptIndex() + 1} / {availableScripts.length}
+                </Badge>
+              </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4">
+                <PDFViewer
+                  language={userInfo.language}
+                  scriptNumber={currentScript}
+                  currentLanguageMode={currentLanguageMode}
+                />
+              </CardContent>
+            </Card>
           </div>
 
           {/* 녹음 컨트롤 */}
-          <div className="space-y-6">
+          <div className="lg:col-span-2 space-y-6">
             {/* 사용자 정보 카드 */}
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-blue-200">
-              <h3 className="font-bold text-gray-900 mb-4">녹음 정보</h3>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-gray-500">이름:</span>
-                  <span className="ml-2 font-medium">{userInfo.name}</span>
+            <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
+              <CardHeader className="bg-gray-50/80">
+                <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                  <User className="w-6 h-6 text-blue-600" />
+                  녹음 정보
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-500">이름:</span>
+                    <span className="ml-2 font-medium">{userInfo.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">사번:</span>
+                    <span className="ml-2 font-medium">{userInfo.employeeId}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">언어:</span>
+                    <span className="ml-2 font-medium">{getLanguageDisplay(userInfo.language)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">구분:</span>
+                    <span className="ml-2 font-medium">{userInfo.category}</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-gray-500">사번:</span>
-                  <span className="ml-2 font-medium">{userInfo.employeeId}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">언어:</span>
-                  <span className="ml-2 font-medium">{getLanguageDisplay(userInfo.language)}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">구분:</span>
-                  <span className="ml-2 font-medium">{userInfo.category}</span>
-                </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* 언어 모드 선택 */}
             {userInfo.language === "korean-english" && (
-              <div className="bg-white rounded-2xl shadow-lg p-6 border border-blue-200">
-                <h3 className="font-bold text-gray-900 mb-4">언어 모드</h3>
-                <div className="flex gap-2">
-                  <Button
-                    onClick={() => setCurrentLanguageMode("korean")}
-                    className={`flex-1 ${
-                      currentLanguageMode === "korean"
-                        ? "bg-blue-600 hover:bg-blue-700"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
-                  >
-                    한국어
-                  </Button>
-                  <Button
-                    onClick={() => setCurrentLanguageMode("english")}
-                    className={`flex-1 ${
-                      currentLanguageMode === "english"
-                        ? "bg-blue-600 hover:bg-blue-700"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
-                  >
-                    English
-                  </Button>
-                </div>
-              </div>
+              <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
+                <CardHeader className="bg-gray-50/80">
+                                  <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                  <Globe className="w-6 h-6 text-purple-600" />
+                  언어 모드
+                </CardTitle>
+                </CardHeader>
+                <CardContent className="p-4">
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => setCurrentLanguageMode("korean")}
+                      className={`flex-1 ${
+                        currentLanguageMode === "korean"
+                          ? "bg-blue-600 hover:bg-blue-700"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      한국어
+                    </Button>
+                    <Button
+                      onClick={() => setCurrentLanguageMode("english")}
+                      className={`flex-1 ${
+                        currentLanguageMode === "english"
+                          ? "bg-purple-600 hover:bg-purple-700"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      English
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
             {/* 녹음 컨트롤 */}
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-blue-200">
-              <AudioRecorder
-                onRecordingComplete={(blob) => {
-                  // 언어별로 올바른 키 생성
-                  let recordingKey: string
-                  if (userInfo.language === "korean-english") {
-                    recordingKey = getRecordingKey(currentScript, currentLanguageMode)
-                  } else {
-                    // 일본어, 중국어는 해당 언어 키 사용
-                    recordingKey = getRecordingKey(currentScript, userInfo.language as "japanese" | "chinese")
-                  }
-                  console.log("📌 녹음 키 생성:", recordingKey, "언어:", userInfo.language)
-                  setRecordings((prev) => ({ ...prev, [recordingKey]: blob }))
-                }}
-                existingRecording={recordings[getRecordingKey(currentScript, currentLanguageMode)]}
-              />
-            </div>
+            <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
+              <CardHeader className="bg-gray-50/80">
+                <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                  <Mic className="w-6 h-6 text-red-600" />
+                  녹음 컨트롤
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4">
+                <AudioRecorder
+                  onRecordingComplete={(blob) => {
+                    // 언어별로 올바른 키 생성
+                    let recordingKey: string
+                    if (userInfo.language === "korean-english") {
+                      recordingKey = getRecordingKey(currentScript, currentLanguageMode)
+                    } else {
+                      // 일본어, 중국어는 해당 언어 키 사용
+                      recordingKey = getRecordingKey(currentScript, userInfo.language as "japanese" | "chinese")
+                    }
+                    console.log("📌 녹음 키 생성:", recordingKey, "언어:", userInfo.language)
+                    setRecordings((prev) => ({ ...prev, [recordingKey]: blob }))
+                  }}
+                  existingRecording={recordings[getRecordingKey(currentScript, currentLanguageMode)]}
+                />
+              </CardContent>
+            </Card>
 
             {/* 진행 상태 */}
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-blue-200">
-              <h3 className="font-bold text-gray-900 mb-4">진행 상태</h3>
-              <div className="space-y-2">
-                {availableScripts.map((scriptNum, index) => {
-                  const isCompleted =
-                    userInfo.language === "korean-english"
-                      ? recordings[getRecordingKey(scriptNum, "korean")] &&
-                        recordings[getRecordingKey(scriptNum, "english")]
-                      : recordings[getRecordingKey(scriptNum, userInfo.language as "japanese" | "chinese")]
+            <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
+              <CardHeader className="bg-gray-50/80">
+                <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                  <ClipboardCheck className="w-6 h-6 text-green-600" />
+                  진행 상태
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4">
+                <div className="space-y-2">
+                  {availableScripts.map((scriptNum, index) => {
+                    const isCompleted =
+                      userInfo.language === "korean-english"
+                        ? recordings[getRecordingKey(scriptNum, "korean")] &&
+                          recordings[getRecordingKey(scriptNum, "english")]
+                        : recordings[getRecordingKey(scriptNum, userInfo.language as "japanese" | "chinese")]
 
-                  return (
-                    <div key={scriptNum} className="flex items-center gap-3">
-                      <div
-                        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                          scriptNum === currentScript
-                            ? "bg-blue-600 text-white"
-                            : isCompleted
-                              ? "bg-green-500 text-white"
-                              : "bg-gray-200 text-gray-600"
-                        }`}
-                      >
-                        {index + 1}
+                    return (
+                      <div key={scriptNum} className="flex items-center gap-3">
+                        <div
+                          className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                            scriptNum === currentScript
+                              ? "bg-blue-600 text-white"
+                              : isCompleted
+                                ? "bg-green-500 text-white"
+                                : "bg-gray-200 text-gray-600"
+                          }`}
+                        >
+                          {index + 1}
+                        </div>
+                        <span
+                          className={`text-sm ${
+                            scriptNum === currentScript ? "font-bold text-blue-600" : "text-gray-600"
+                          }`}
+                        >
+                          문안 {scriptNum}번
+                        </span>
+                        {isCompleted && <span className="text-green-500 text-xs">✓</span>}
                       </div>
-                      <span
-                        className={`text-sm ${
-                          scriptNum === currentScript ? "font-bold text-blue-600" : "text-gray-600"
-                        }`}
-                      >
-                        문안 {scriptNum}번
-                      </span>
-                      {isCompleted && <span className="text-green-500 text-xs">✓</span>}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
 
             {/* 다음 버튼 */}
             <Button
@@ -2117,7 +2316,7 @@ function EvaluationMode({
       </div>
       {/* 메인 컨텐츠 */}
       <div className="ml-64 p-8 main-scroll-container" style={{height: '100vh', overflowY: 'auto', scrollSnapType: 'y mandatory'}}>
-        <EvaluationDashboard onBack={onBack} authenticatedUser={undefined} />
+        <EvaluationDashboard onBack={onBack} authenticatedUser={authenticatedUser} userInfo={userInfo} />
       </div>
       {/* 녹음 설정 모달 */}
       {showRecordingSetup && (

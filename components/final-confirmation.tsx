@@ -3,8 +3,6 @@
 import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Label } from "@/components/ui/label"
 import { Play, Upload, CheckCircle, Pause, AlertCircle } from "lucide-react"
 import { driveService } from "@/lib/google-drive-service"
 
@@ -67,7 +65,6 @@ declare module 'lamejs';
 export function FinalConfirmation({ userInfo, recordings, availableScripts, onSubmit }: FinalConfirmationProps) {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [comment, setComment] = useState("")
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null)
   const [audioElements, setAudioElements] = useState<{ [key: string]: HTMLAudioElement }>({})
@@ -229,7 +226,6 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
         recordingCount: totalFiles,
         scriptNumbers: availableScripts,
         status: "submitted",
-        comment,
         driveFolder: "1cdUwgx4z3BrCqrp8tt8e8T6OQhFMvqLF",
       }
 
@@ -265,9 +261,7 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
           category: submissionData.category,
           submittedAt: submissionData.submittedAt,
           recordingCount: submissionData.recordingCount,
-          uploadedFiles: submissionData.uploadedFiles,
           status: submissionData.status,
-          comment: submissionData.comment,
           driveFolder: submissionData.driveFolder,
           dropboxFiles
         }
@@ -296,15 +290,81 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
 
   if (isSubmitted) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 p-4 flex items-center justify-center">
-        <Card className="w-full max-w-md">
-          <CardContent className="p-8 text-center">
-            <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">제출 완료!</h2>
-            <p className="text-gray-600 mb-4">녹음 파일이 성공적으로 제출되었습니다.</p>
-            <p className="text-sm text-gray-500">평가 결과는 추후 안내드리겠습니다.</p>
-          </CardContent>
-        </Card>
+      <div className="min-h-screen bg-gradient-to-br from-green-400 via-emerald-500 to-teal-600 relative overflow-hidden">
+        {/* 배경 장식 요소들 */}
+        <div className="absolute inset-0">
+          <div className="absolute top-10 left-10 w-32 h-32 bg-white/10 rounded-full blur-xl animate-pulse"></div>
+          <div className="absolute top-40 right-20 w-24 h-24 bg-white/10 rounded-full blur-xl animate-pulse delay-1000"></div>
+          <div className="absolute bottom-20 left-1/4 w-40 h-40 bg-white/10 rounded-full blur-xl animate-pulse delay-2000"></div>
+          <div className="absolute bottom-40 right-1/3 w-20 h-20 bg-white/10 rounded-full blur-xl animate-pulse delay-1500"></div>
+        </div>
+
+        <div className="relative z-10 flex items-center justify-center min-h-screen p-4">
+          <div className="w-full max-w-lg">
+            {/* 메인 카드 */}
+            <div className="bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl p-8 text-center relative overflow-hidden">
+              {/* 카드 내부 장식 */}
+              <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-green-400 via-emerald-500 to-teal-600"></div>
+              <div className="absolute -top-4 -right-4 w-24 h-24 bg-gradient-to-br from-green-400 to-emerald-500 rounded-full opacity-20"></div>
+              <div className="absolute -bottom-6 -left-6 w-32 h-32 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full opacity-20"></div>
+
+              {/* 성공 아이콘 */}
+              <div className="relative z-10 mb-6">
+                <div className="w-24 h-24 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-lg animate-bounce">
+                  <CheckCircle className="w-12 h-12 text-white" />
+                </div>
+              </div>
+
+              {/* 제목 */}
+              <h1 className="text-4xl font-bold text-gray-900 mb-4 relative z-10">
+                🎉 제출 완료! 🎉
+              </h1>
+
+              {/* 메인 메시지 */}
+              <div className="space-y-4 mb-8 relative z-10">
+                <p className="text-xl text-gray-700 font-semibold">
+                  수고하셨습니다!
+                </p>
+                <p className="text-lg text-gray-600">
+                  녹음 파일이 성공적으로 제출되었습니다.
+                </p>
+              </div>
+
+              {/* 추가 정보 */}
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-6 mb-6 relative z-10 border border-green-200/50">
+                <div className="flex items-center justify-center gap-3 mb-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
+                    <span className="text-white text-sm font-bold">{Object.values(recordings).filter(Boolean).length}</span>
+                  </div>
+                  <span className="text-green-800 font-semibold">개 파일 업로드 완료</span>
+                </div>
+                <p className="text-sm text-green-700">
+                  {userInfo.name} ({userInfo.employeeId}) - {getLanguageDisplay(userInfo.language)}
+                </p>
+              </div>
+
+              {/* 안내 메시지 */}
+              <div className="space-y-2 relative z-10">
+                <p className="text-sm text-gray-600">
+                  💫 평가 결과는 월 말 공지로 확인해주세요
+                </p>
+                <p className="text-xs text-gray-500">
+                  조용히 방송실습실을 퇴실해주세요
+                </p>
+              </div>
+
+              {/* 하단 장식 */}
+              <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-green-400 to-transparent"></div>
+            </div>
+
+            {/* 하단 메시지 */}
+            <div className="text-center mt-6">
+              <p className="text-white/80 text-sm font-medium">
+                ✨ 오늘도 좋은 하루 되세요! ✨
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     )
   }
@@ -338,44 +398,84 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
   const recordingsByLanguage = getRecordingsByLanguage()
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-zinc-100">
+      {/* 헤더 */}
+      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60 p-6 shadow-sm">
+        <div className="max-w-4xl mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg">
+              <CheckCircle className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">최종 확인</h1>
+              <p className="text-gray-600 text-sm">
+                {userInfo.name} ({userInfo.employeeId}) - {userInfo.category} - {getLanguageDisplay(userInfo.language)}
+              </p>
+            </div>
+          </div>
+
+          {/* 제출 상태 */}
+          <div className="bg-gradient-to-r from-green-100 to-emerald-100 rounded-2xl p-4 border border-green-200/50 shadow-sm">
+            <div className="text-center">
+              <div className="text-lg font-bold text-green-900 mb-1">
+                {Object.values(recordings).filter(Boolean).length}개 파일
+              </div>
+              <div className="text-xs text-green-700 font-medium">녹음 완료</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto p-6">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">최종 확인</h1>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">녹음 파일 최종 확인</h2>
           <p className="text-gray-600">
-            {userInfo.name} ({userInfo.employeeId}) - {userInfo.category} - {getLanguageDisplay(userInfo.language)}
+            녹음된 파일들을 확인하고 최종 제출해주세요.
           </p>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                녹음 파일 확인
-                {currentlyPlaying && (
-                  <Button onClick={stopAllPlayback} variant="outline" size="sm">
-                    <Pause className="w-4 h-4 mr-1" />
-                    정지
-                  </Button>
-                )}
+          <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
+            <CardHeader className="bg-gray-50/80">
+              <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                <Play className="w-6 h-6 text-blue-600" />
+                <span>녹음 파일 확인</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {Object.entries(recordingsByLanguage).map(([language, recordings]) => (
                 <div key={language} className="space-y-3">
                   <h3 className="font-semibold text-lg">{language}</h3>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {recordings.map(({ scriptNum, key }) => (
-                      <div key={key} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <span className="font-medium">{scriptNum}번 문안</span>
+                      <div key={key} className="flex items-center justify-between p-4 bg-gradient-to-r from-slate-50 to-gray-50 rounded-xl border border-gray-200/50 shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white text-sm font-bold">
+                            {scriptNum}
+                          </div>
+                          <span className="font-semibold text-gray-800">{scriptNum}번 문안</span>
+                        </div>
                         <Button
                           size="sm"
                           variant="outline"
                           onClick={() => playRecording(key)}
-                          className={currentlyPlaying === key ? "bg-blue-100" : "bg-transparent"}
+                          className={`${
+                            currentlyPlaying === key 
+                              ? "bg-red-50 text-red-700 border-red-300 shadow-md hover:bg-red-100" 
+                              : "bg-white text-gray-700 border-gray-300 hover:bg-blue-50 hover:text-blue-600"
+                          } transition-all duration-200`}
                         >
-                          <Play className="w-3 h-3 mr-1" />
-                          {currentlyPlaying === key ? "재생중" : "재생"}
+                          {currentlyPlaying === key ? (
+                            <>
+                              <Pause className="w-3 h-3 mr-1" />
+                              정지
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3 h-3 mr-1" />
+                              재생
+                            </>
+                          )}
                         </Button>
                       </div>
                     ))}
@@ -385,63 +485,77 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>제출 정보</CardTitle>
+          <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
+            <CardHeader className="bg-gray-50/80">
+              <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                <Upload className="w-6 h-6 text-green-600" />
+                제출 정보
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="font-medium text-gray-600">이름:</span>
-                  <p>{userInfo.name}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-2.5 bg-gradient-to-r from-slate-50 to-gray-50 rounded-lg border border-gray-200/50">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">이름</span>
+                  <p className="font-semibold text-gray-900 mt-0.5">{userInfo.name}</p>
                 </div>
-                <div>
-                  <span className="font-medium text-gray-600">사번:</span>
-                  <p>{userInfo.employeeId}</p>
+                <div className="p-2.5 bg-gradient-to-r from-slate-50 to-gray-50 rounded-lg border border-gray-200/50">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">사번</span>
+                  <p className="font-semibold text-gray-900 mt-0.5">{userInfo.employeeId}</p>
                 </div>
-                <div>
-                  <span className="font-medium text-gray-600">구분:</span>
-                  <p>{userInfo.category}</p>
+                <div className="p-2.5 bg-gradient-to-r from-slate-50 to-gray-50 rounded-lg border border-gray-200/50">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">구분</span>
+                  <p className="font-semibold text-gray-900 mt-0.5">{userInfo.category}</p>
                 </div>
-                <div>
-                  <span className="font-medium text-gray-600">언어:</span>
-                  <p>{getLanguageDisplay(userInfo.language)}</p>
+                <div className="p-2.5 bg-gradient-to-r from-slate-50 to-gray-50 rounded-lg border border-gray-200/50">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">언어</span>
+                  <p className="font-semibold text-gray-900 mt-0.5">{getLanguageDisplay(userInfo.language)}</p>
                 </div>
               </div>
 
-              <div>
-                <Label htmlFor="comment">추가 메모 (선택사항)</Label>
-                <Textarea
-                  id="comment"
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  placeholder="특이사항이나 전달할 내용이 있으면 입력해주세요..."
-                  className="mt-1"
-                />
+              {/* 중요 안내사항 */}
+              <div className="space-y-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200/50">
+                <h4 className="font-semibold text-blue-900 text-sm flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  중요 안내사항
+                </h4>
+                <div className="space-y-2 text-xs text-blue-800">
+                  <div className="flex items-start gap-2">
+                    <span className="text-blue-600 font-medium">•</span>
+                    <span>이 페이지에서 나가면 녹음 데이터가 손실됩니다.</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-blue-600 font-medium">•</span>
+                    <span>업로드 완료 후 조용히 방송실습실을 퇴실해주세요.</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-blue-600 font-medium">•</span>
+                    <span>평가 결과는 월 말 공지로 확인해주세요.</span>
+                  </div>
+                </div>
               </div>
 
               {isUploading && (
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span>업로드 진행률</span>
-                    <span>{Math.round(uploadProgress)}%</span>
+                <div className="space-y-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200/50">
+                  <div className="flex justify-between text-sm font-medium">
+                    <span className="text-green-700">업로드 진행률</span>
+                    <span className="text-green-800">{Math.round(uploadProgress)}%</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-3">
+                  <div className="w-full bg-green-200 rounded-full h-3 overflow-hidden">
                     <div
-                      className="bg-blue-600 h-3 rounded-full transition-all duration-300"
+                      className="bg-gradient-to-r from-green-500 to-emerald-500 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
                       style={{ width: `${uploadProgress}%` }}
                     />
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-blue-600">
-                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                    <span>{uploadStatus}</span>
+                  <div className="flex items-center gap-3 text-sm text-green-700">
+                    <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin"></div>
+                    <span className="font-medium">{uploadStatus}</span>
                   </div>
                 </div>
               )}
 
               <Button
                 onClick={handleSubmit}
-                className="w-full"
+                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-12 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
                 disabled={isUploading || Object.values(recordings).filter(Boolean).length === 0}
               >
                 <Upload className="w-4 h-4 mr-2" />

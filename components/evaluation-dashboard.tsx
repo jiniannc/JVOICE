@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Slider } from "@/components/ui/slider"
-import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil } from "lucide-react"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil, Activity, AlertCircle } from "lucide-react"
 import { evaluationCriteria, getGradeInfo } from "@/lib/evaluation-criteria"
 import { EvaluationSummary } from "@/components/evaluation-summary"
 import React from "react"
@@ -48,14 +49,20 @@ interface EvaluationCandidate {
 interface EvaluationDashboardProps {
   onBack: () => void
   authenticatedUser: any
+  userInfo?: any
 }
 
-export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDashboardProps) {
+export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: EvaluationDashboardProps) {
   const [candidates, setCandidates] = useState<EvaluationCandidate[]>([])
   const [selectedCandidate, setSelectedCandidate] = useState<EvaluationCandidate | null>(null)
   const [currentLanguage, setCurrentLanguage] = useState<"korean" | "english">("korean")
   const [evaluationData, setEvaluationData] = useState<{ [candidateId: string]: { scores: { [key: string]: number }, comments: { korean: string; english: string } } }>({})
   const [currentCandidateId, setCurrentCandidateId] = useState<string | null>(null)
+
+  // 로그인 기록 상태
+  const [loginLogs, setLoginLogs] = useState<any[]>([])
+  const [showLoginLogs, setShowLoginLogs] = useState(false)
+  const [loginLogsLoading, setLoginLogsLoading] = useState(false)
 
   // 현재 선택된 후보자의 점수 가져오기
   const getCurrentScores = () => {
@@ -113,6 +120,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDas
   useEffect(() => {
     loadCandidates()
   }, [])
+
+  // 로그인 기록 불러오기
+  const loadLoginLogs = async () => {
+    setLoginLogsLoading(true);
+    try {
+      const response = await fetch('/api/auth/login-log?limit=100');
+      const data = await response.json();
+      setLoginLogs(data.logs || []);
+    } catch (error) {
+      console.error('로그인 기록 로딩 실패:', error);
+      alert('로그인 기록을 불러오는데 실패했습니다.');
+    } finally {
+      setLoginLogsLoading(false);
+    }
+  };
 
   // 🔥 제출된 녹음 데이터 로드 - Dropbox에서 읽기 (실시간 업데이트)
   const loadCandidates = async () => {
@@ -1195,96 +1217,71 @@ export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDas
                 <div className="text-center py-12 text-gray-500">표시할 후보자가 없습니다.</div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full table-fixed">
+                    <colgroup>
+                      <col className="w-1/7" />
+                      <col className="w-1/7" />
+                      <col className="w-1/7" />
+                      <col className="w-1/7" />
+                      <col className="w-1/7" />
+                      <col className="w-1/7" />
+                      <col className="w-1/7" />
+                    </colgroup>
                     <thead>
                       <tr className="border-b border-gray-200 text-sm">
-                        <th className="py-4 px-5 font-semibold text-gray-700 text-left">이름 (사번)</th>
-                        <th className="py-4 px-5 font-semibold text-gray-700 text-center">언어</th>
-                        <th className="py-4 px-5 font-semibold text-gray-700 text-center">구분</th>
-                        <th className="py-4 px-5 font-semibold text-gray-700 text-center">제출시간</th>
-                        <th className="py-4 px-5 font-semibold text-gray-700 text-center">녹음파일</th>
-                        <th className="py-4 px-5 font-semibold text-gray-700 text-center">상태</th>
-                        <th className="py-4 px-5 font-semibold text-gray-700 text-center w-28">작업</th>
+                        <th className="py-4 px-5 font-semibold text-gray-700 text-center align-middle">이름 (사번)</th>
+                        <th className="py-4 px-5 font-semibold text-gray-700 text-center align-middle">언어</th>
+                        <th className="py-4 px-5 font-semibold text-gray-700 text-center align-middle">구분</th>
+                        <th className="py-4 px-5 font-semibold text-gray-700 text-center align-middle">제출시간</th>
+                        <th className="py-4 px-5 font-semibold text-gray-700 text-center align-middle">녹음파일</th>
+                        <th className="py-4 px-5 font-semibold text-gray-700 text-center align-middle">상태</th>
+                        <th className="py-4 px-5 font-semibold text-gray-700 text-center align-middle">작업</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredCandidates.map((candidate) => (
                         <tr key={candidate.id} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-4 px-5 text-left align-middle">
+                          <td className="py-4 px-5 text-center align-middle">
                             <div>
                               <div className="font-semibold text-gray-900">{candidate.name}</div>
                               <div className="text-sm text-gray-500">{candidate.employeeId}</div>
                             </div>
                           </td>
                           <td className="py-4 px-5 text-center align-middle">
-                            <Badge variant="outline" className={`text-xs ${getLanguageColor(candidate.language)}`}>
-                              {getLanguageDisplay(candidate.language)}
-                            </Badge>
+                            <Badge variant="outline" className={`text-xs ${getLanguageColor(candidate.language)}`}>{getLanguageDisplay(candidate.language)}</Badge>
                           </td>
                           <td className="py-4 px-5 text-sm text-gray-700 text-center align-middle">{candidate.category}</td>
                           <td className="py-4 px-5 text-sm text-gray-600 text-center align-middle">{formatDate(candidate.submittedAt)}</td>
-                          <td className="py-4 px-5 text-sm text-blue-600 text-center align-middle">
-                            {Object.keys(candidate.recordings || {}).length}개
-                          </td>
+                          <td className="py-4 px-5 text-sm text-blue-600 text-center align-middle">{Object.keys(candidate.recordings || {}).length}개</td>
                           <td className="py-4 px-5 text-center align-middle">
-                            <div className="flex flex-col gap-1">
-                              <Badge className={`text-xs ${getStatusDisplay(candidate.status).color}`}>
-                                {getStatusDisplay(candidate.status).text}
-                              </Badge>
+                            <div className="flex flex-col gap-1 items-center">
+                              <Badge className={`text-xs ${getStatusDisplay(candidate.status).color}`}>{getStatusDisplay(candidate.status).text}</Badge>
                               {candidate.status === "review_requested" && candidate.reviewRequestedBy && (
-                                <span className="text-xs text-orange-600">
-                                  검토 요청: {candidate.reviewRequestedBy}
-                                </span>
+                                <span className="text-xs text-orange-600">검토 요청: {candidate.reviewRequestedBy}</span>
                               )}
                             </div>
                           </td>
-                          <td className="py-4 px-5 w-32 text-center align-middle">
+                          <td className="py-4 px-5 text-center align-middle">
                             {candidate.status === "submitted" && !candidate.approved ? (
-                              <Button size="sm" variant="outline" className="border-green-300 text-green-700"
-                                onClick={async ()=>{
-                                  await fetch("/api/evaluations/approve",{
-                                    method:"POST",
-                                    headers:{"Content-Type":"application/json"},
-                                    body:JSON.stringify({dropboxPath:candidate.dropboxPath,approvedBy:authenticatedUser?.name})
-                                  });
-                                  loadCandidates();
-                                }}>
+                              <Button size="sm" variant="outline" className="border-green-300 text-green-700" onClick={async ()=>{
+                                await fetch("/api/evaluations/approve",{
+                                  method:"POST",
+                                  headers:{"Content-Type":"application/json"},
+                                  body:JSON.stringify({dropboxPath:candidate.dropboxPath,approvedBy:authenticatedUser?.name})
+                                });
+                                loadCandidates();
+                              }}>
                                 승인
                               </Button>
                             ) : candidate.approved ? (
                               <Badge className="bg-green-100 text-green-700">승인됨</Badge>
                             ) : candidate.status === "review_requested" ? (
-                              <Button 
-                                onClick={() => handleSelectCandidate(candidate, true)}
-                                variant="outline"
-                                size="sm"
-                                className="border-orange-300 text-orange-700 hover:bg-orange-50 w-28"
-                                disabled={recordingsLoading[candidate.id]}
-                              >
-                                {recordingsLoading[candidate.id] ? (
-                                  <>
-                                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                                    로딩중
-                                  </>
-                                ) : (
-                                  "검토"
-                                )}
+                              <Button onClick={() => handleSelectCandidate(candidate, true)} variant="outline" size="sm" className="border-orange-300 text-orange-700 hover:bg-orange-50 w-28" disabled={recordingsLoading[candidate.id]}>
+                                {recordingsLoading[candidate.id] ? (<><RefreshCw className="w-4 h-4 mr-2 animate-spin" />로딩중</>) : ("검토")}
                               </Button>
                             ) : (
-                              <Button 
-                                onClick={() => handleSelectCandidate(candidate, false)}
-                                size="sm"
-                                className="w-28"
-                                disabled={recordingsLoading[candidate.id]}
-                              >
-                                {recordingsLoading[candidate.id] ? (
-                                  <>
-                                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                                    로딩중
-                                  </>
-                                ) : (
-                                  "평가 시작"
-                                )}
+                              <Button onClick={() => handleSelectCandidate(candidate, false)} size="sm" className="w-28" disabled={recordingsLoading[candidate.id]}>
+                                {recordingsLoading[candidate.id] ? (<><RefreshCw className="w-4 h-4 mr-2 animate-spin" />로딩중</>) : ("평가 시작")}
                               </Button>
                             )}
                           </td>
@@ -1298,6 +1295,108 @@ export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDas
           </Card>
 
           <p className="mt-4 text-center text-sm text-gray-600">총 {filteredCandidates.length}명 | 실시간 업데이트</p>
+
+          {/* 로그인 기록 카드 */}
+          <Card className="mt-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+            <CardHeader className="pb-4 bg-gray-50/80 rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-3 text-lg">
+                  <Activity className="w-6 h-6 text-purple-600" />
+                  <span className="text-xl font-bold text-gray-800">로그인 기록</span>
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    onClick={() => {
+                      setShowLoginLogs(!showLoginLogs);
+                      if (!showLoginLogs) {
+                        loadLoginLogs();
+                      }
+                    }}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <Activity className="w-4 h-4 mr-1" />
+                    {showLoginLogs ? '숨기기' : '보기'}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            {showLoginLogs && (
+              <CardContent className="pt-0">
+                {loginLogsLoading ? (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                    <p>로그인 기록 로딩 중...</p>
+                  </div>
+                ) : loginLogs.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>로그인 기록이 없습니다.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="h-10">
+                          <TableHead className="w-32 text-center">로그인 시간</TableHead>
+                          <TableHead className="w-24 text-center">이름</TableHead>
+                          <TableHead className="w-32 text-center">이메일</TableHead>
+                          <TableHead className="w-20 text-center">사번</TableHead>
+                          <TableHead className="w-20 text-center">부서</TableHead>
+                          <TableHead className="w-16 text-center">방법</TableHead>
+                          <TableHead className="w-16 text-center">결과</TableHead>
+                          <TableHead className="w-24 text-center">IP 주소</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {loginLogs.map((log, index) => (
+                          <TableRow key={log.id || index} className="h-12">
+                            <TableCell className="text-xs py-2 text-center">
+                              {formatDate(log.loginTime)}
+                            </TableCell>
+                            <TableCell className="py-2 text-center font-medium">
+                              {log.name}
+                            </TableCell>
+                            <TableCell className="py-2 text-center text-sm">
+                              {log.email}
+                            </TableCell>
+                            <TableCell className="py-2 text-center">
+                              {log.employeeId || '-'}
+                            </TableCell>
+                            <TableCell className="py-2 text-center text-sm">
+                              {log.department || '-'}
+                            </TableCell>
+                            <TableCell className="py-2 text-center">
+                              <Badge variant="outline" className="text-xs">
+                                {log.loginMethod === 'google' ? 'Google' : 
+                                 log.loginMethod === 'workspace' ? 'Workspace' : 
+                                 log.loginMethod === 'test' ? '테스트' : log.loginMethod}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="py-2 text-center">
+                              <Badge 
+                                variant={log.success ? "default" : "destructive"}
+                                className="text-xs"
+                              >
+                                {log.success ? '성공' : '실패'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="py-2 text-center text-xs">
+                              {log.ipAddress || '-'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    
+                    <div className="mt-3 text-sm text-gray-600 text-center">
+                      최근 {loginLogs.length}개의 로그인 기록
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            )}
+          </Card>
         </div>
       </div>
     )
@@ -1364,6 +1463,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDas
       : getLanguageTotalScore("english");
   }
 
+
+
   // showSummary가 true면 EvaluationSummary를 최상단에서 렌더링
   if (showSummary && selectedCandidate) {
     console.log("🔍 EvaluationSummary 렌더링 조건 만족:", { showSummary, selectedCandidate })
@@ -1388,7 +1489,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDas
           ? { korean: getCurrentComments().korean, english: getCurrentComments().english }
         : getCurrentComments().korean,
       evaluatedAt: new Date().toISOString(),
-      evaluatedBy: authenticatedUser?.name || '교관',
+      evaluatedBy: userInfo?.name || authenticatedUser?.name || '교관',
     }
 
     console.log("📊 evaluationResult 생성 완료:", evaluationResult)
@@ -1405,6 +1506,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDas
           authenticatedUser={authenticatedUser}
           dropboxPath={selectedCandidate?.dropboxPath}
           showPdfButton={false}
+          isReviewMode={false}
         />
         </div>
       </div>
@@ -1842,6 +1944,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser }: EvaluationDas
             </Card>
           </div>
         </div>
+
+
 
         {/* 제출 버튼 */}
         <div className="mt-6 text-center">

@@ -8,9 +8,10 @@ import { ArrowLeft, Download, User, Award, FileText } from "lucide-react"
 interface EvaluationResultReportProps {
   evaluation: any
   onBack: () => void
+  mode?: "evaluate" | "review" | "manage"
 }
 
-export function EvaluationResultReport({ evaluation, onBack }: EvaluationResultReportProps) {
+export function EvaluationResultReport({ evaluation, onBack, mode }: EvaluationResultReportProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString("ko-KR", {
       year: "numeric",
@@ -129,10 +130,12 @@ export function EvaluationResultReport({ evaluation, onBack }: EvaluationResultR
                   <span className="text-gray-600">평가일시:</span>
                   <span className="font-semibold">{formatDate(evaluation.evaluatedAt)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">평가자:</span>
-                  <span className="font-semibold">{evaluation.evaluatedBy}</span>
-                </div>
+                {mode !== "review" && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">평가자:</span>
+                    <span className="font-semibold">{evaluation.evaluatedBy}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-gray-600">평가 기준:</span>
                   <Badge className="bg-blue-100 text-blue-800">v85</Badge>

@@ -30,6 +30,8 @@ import {
   FileAudio,
   Globe,
   Users,
+  RotateCcw,
+  Activity,
 } from "lucide-react"
 import { getGradeInfo } from "@/lib/evaluation-criteria";
 
@@ -103,14 +105,19 @@ export default function AdminDashboard() {
   const [showFileUpload, setShowFileUpload] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    loadData()
-    setLastUpdate(new Date().toLocaleTimeString())
-    setSelectedMonth(new Date().toISOString().slice(0, 7))
-    setListMonth(new Date().toISOString().slice(0, 7))
+  // 로그인 기록 상태
+  const [loginLogs, setLoginLogs] = useState<any[]>([])
+  const [showLoginLogs, setShowLoginLogs] = useState(false)
+  const [loginLogsLoading, setLoginLogsLoading] = useState(false)
 
+  useEffect(() => {
+    loadData();
+    setLastUpdate(new Date().toLocaleTimeString());
+    setSelectedMonth(new Date().toISOString().slice(0, 7));
+    setListMonth(new Date().toISOString().slice(0, 7));
+    loadLoginLogs(); // 로그인 기록 자동 로드 추가
     // 자동 새로고침 제거, 수동 업데이트만 허용
-  }, [])
+  }, []);
 
   const loadData = async () => {
     setIsLoading(true)
@@ -201,25 +208,7 @@ export default function AdminDashboard() {
   }
 
   const getLanguageFlag = (language: string) => {
-    const flags: { [key: string]: React.ReactElement } = {
-      "korean-english": (
-        <div className="flex items-center gap-1 text-sm font-bold">
-          <span className="bg-red-500 text-white px-1 rounded">KR</span>
-          <span className="bg-blue-600 text-white px-1 rounded">GB</span>
-        </div>
-      ),
-      japanese: (
-        <div className="bg-red-500 text-white px-2 py-1 rounded text-sm font-bold">
-          JP
-        </div>
-      ),
-      chinese: (
-        <div className="bg-red-600 text-yellow-300 px-2 py-1 rounded text-sm font-bold">
-          CN
-        </div>
-      ),
-    }
-    return flags[language] || <></>;
+    return <></>;
   }
 
   // 평가대기목록과 동일하게 언어별 색상 뱃지 적용
@@ -793,6 +782,73 @@ export default function AdminDashboard() {
     setSelectedIds(new Set());
   };
 
+  const reevaluateMany = async () => {
+    const targets = submissions.filter((s) => selectedIds.has(s.id));
+    
+    // 재평가 가능한 항목만 필터링 (status가 'submitted'이고 approved가 false인 것만)
+    const reevaluateTargets = targets.filter(s => s.status === 'submitted' && !s.approved);
+    
+    if (reevaluateTargets.length === 0) {
+      alert('재평가할 수 있는 항목이 없습니다. (평가 완료되었지만 승인되지 않은 항목만 재평가 가능)');
+      return;
+    }
+
+    // 관리자 확인
+    const confirmed = window.confirm(
+      `정말로 ${reevaluateTargets.length}개 항목을 재평가 대기 상태로 되돌리시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.`
+    );
+    if (!confirmed) return;
+
+    try {
+      // 병렬로 재평가 처리
+      const reevaluatePromises = reevaluateTargets.map(async (submission) => {
+        const response = await fetch('/api/evaluations/reevaluate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dropboxPath: submission.dropboxPath,
+            reevaluatedBy: 'Admin',
+          }),
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+          throw new Error(`재평가 실패 (${submission.name}): ${result.error}`);
+        }
+        return result;
+      });
+
+      await Promise.all(reevaluatePromises);
+      
+      alert(`${reevaluateTargets.length}개 항목이 재평가 대기 상태로 변경되었습니다.`);
+      
+      // 목록 새로고침
+      await loadData();
+      setSelectedIds(new Set());
+      
+    } catch (error) {
+      console.error('재평가 처리 중 오류:', error);
+      alert(`재평가 처리 중 오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
+  };
+
+  // 로그인 기록 불러오기
+  const loadLoginLogs = async () => {
+    setLoginLogsLoading(true);
+    try {
+      const response = await fetch('/api/auth/login-log?limit=100');
+      const data = await response.json();
+      setLoginLogs(data.logs || []);
+    } catch (error) {
+      console.error('로그인 기록 로딩 실패:', error);
+      alert('로그인 기록을 불러오는데 실패했습니다.');
+    } finally {
+      setLoginLogsLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen p-3">
       <div className="max-w-7xl mx-auto">
@@ -828,7 +884,7 @@ export default function AdminDashboard() {
                         monthDate1.setMonth(monthDate1.getMonth() - i);
                         const monthStr1 = monthDate1.toISOString().slice(0, 7);
                         return (
-                          <SelectItem key={monthStr1} value={monthStr1}>
+                          <SelectItem key={`stats-${lang}-${monthStr1}-${i}`} value={monthStr1}>
                             {monthDate1.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
                           </SelectItem>
                         )
@@ -910,7 +966,7 @@ export default function AdminDashboard() {
                     date.setMonth(date.getMonth() - i);
                     const monthStr2 = date.toISOString().slice(0, 7);
                     return (
-                      <SelectItem key={monthStr2} value={monthStr2}>
+                      <SelectItem key={`export-${monthStr2}-${i}`} value={monthStr2}>
                         {date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
                       </SelectItem>
                     );
@@ -953,7 +1009,7 @@ export default function AdminDashboard() {
                       date.setMonth(date.getMonth() - i)
                       const monthStr3 = date.toISOString().slice(0, 7)
                       return (
-                        <SelectItem key={monthStr3} value={monthStr3}>
+                        <SelectItem key={`list-${monthStr3}-${i}`} value={monthStr3}>
                           {date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
                         </SelectItem>
                       )
@@ -1034,6 +1090,16 @@ export default function AdminDashboard() {
             </div>
             <div className="flex gap-3 mb-3">
               <Button size="sm" disabled={selectedIds.size===0} onClick={approveMany}>선택 항목 승인</Button>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                disabled={selectedIds.size === 0 || !submissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
+                onClick={reevaluateMany}
+                className="text-orange-600 border-orange-300 hover:bg-orange-50"
+              >
+                <RotateCcw className="w-3 h-3 mr-1" />
+                선택 항목 재평가
+              </Button>
               <Button size="sm" variant="destructive" disabled={selectedIds.size===0} onClick={deleteMany}>선택 항목 삭제</Button>
             </div>
             {isLoading ? (
@@ -1261,6 +1327,108 @@ export default function AdminDashboard() {
         {/* v85 PDF 동기화 */}
         <PDFSyncManager />
 
+        {/* v85 로그인 기록 */}
+        <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+          <CardHeader className="pb-4 bg-gray-50/80 rounded-t-2xl">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-3 text-lg">
+                <Activity className="w-6 h-6 text-purple-600" />
+                <span className="text-xl font-bold text-gray-800">로그인 기록</span>
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Button 
+                  onClick={() => {
+                    setShowLoginLogs(!showLoginLogs);
+                    if (!showLoginLogs) {
+                      loadLoginLogs();
+                    }
+                  }}
+                  variant="outline"
+                  size="sm"
+                >
+                  <Activity className="w-4 h-4 mr-1" />
+                  {showLoginLogs ? '숨기기' : '보기'}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          {showLoginLogs && (
+            <CardContent className="pt-0">
+              {loginLogsLoading ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                  <p>로그인 기록 로딩 중...</p>
+                </div>
+              ) : loginLogs.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>로그인 기록이 없습니다.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="h-10">
+                        <TableHead className="w-32 text-center">로그인 시간</TableHead>
+                        <TableHead className="w-24 text-center">이름</TableHead>
+                        <TableHead className="w-32 text-center">이메일</TableHead>
+                        <TableHead className="w-20 text-center">사번</TableHead>
+                        <TableHead className="w-20 text-center">부서</TableHead>
+                        <TableHead className="w-16 text-center">방법</TableHead>
+                        <TableHead className="w-16 text-center">결과</TableHead>
+                        <TableHead className="w-24 text-center">IP 주소</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {loginLogs.map((log, index) => (
+                        <TableRow key={log.id || index} className="h-12">
+                          <TableCell className="text-xs py-2 text-center">
+                            {formatDateTime(log.loginTime)}
+                          </TableCell>
+                          <TableCell className="py-2 text-center font-medium">
+                            {log.name}
+                          </TableCell>
+                          <TableCell className="py-2 text-center text-sm">
+                            {log.email}
+                          </TableCell>
+                          <TableCell className="py-2 text-center">
+                            {log.employeeId || '-'}
+                          </TableCell>
+                          <TableCell className="py-2 text-center text-sm">
+                            {log.department || '-'}
+                          </TableCell>
+                          <TableCell className="py-2 text-center">
+                            <Badge variant="outline" className="text-xs">
+                              {log.loginMethod === 'google' ? 'Google' : 
+                               log.loginMethod === 'workspace' ? 'Workspace' : 
+                               log.loginMethod === 'test' ? '테스트' : log.loginMethod}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-2 text-center">
+                            <Badge 
+                              variant={log.success ? "default" : "destructive"}
+                              className="text-xs"
+                            >
+                              {log.success ? '성공' : '실패'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-2 text-center text-xs">
+                            {log.ipAddress || '-'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  
+                  <div className="mt-3 text-sm text-gray-600 text-center">
+                    최근 {loginLogs.length}개의 로그인 기록
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+
         {/* 평가 결과 모달 */}
         {selectedResult && (
           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
@@ -1281,6 +1449,7 @@ export default function AdminDashboard() {
                   evaluationResult={selectedResult as any}
                   authenticatedUser={{ name: "Admin" }}
                   showPdfButton={true}
+                  isReviewMode={false}
                 />
               </div>
             </div>
