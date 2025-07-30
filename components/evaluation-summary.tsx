@@ -643,16 +643,29 @@ export function EvaluationSummary({
             </CardHeader>
             <CardContent className="p-4 md:p-6">
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
-                {(radarData.japaneseData || radarData.chineseData || []).map((item) => (
-                  <div key={item.label} className="p-2 border rounded bg-blue-50 border-blue-200">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-medium text-blue-900 text-sm">{item.label}</span>
-                      <Badge variant="outline" className="font-bold text-xs text-blue-700 border-blue-300">
-                        {item.value}/{item.maxValue}
-                      </Badge>
+                {(radarData.japaneseData || radarData.chineseData || []).map((item) => {
+                  const percentage = (item.value / item.maxValue) * 100;
+                  const isFail = percentage < 80;
+                  return (
+                    <div
+                      key={item.label}
+                      className={`p-2 border rounded ${
+                        isFail ? 'border-red-500 bg-red-50' : 'bg-blue-50 border-blue-200'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center mb-1">
+                        <span className={`font-medium text-sm ${
+                          isFail ? 'text-red-900' : 'text-blue-900'
+                        }`}>{item.label}</span>
+                        <Badge variant="outline" className={`font-bold text-xs ${
+                          isFail ? 'text-red-600 border-red-500' : 'text-blue-700 border-blue-300'
+                        }`}>
+                          {item.value}/{item.maxValue}
+                        </Badge>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>

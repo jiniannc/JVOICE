@@ -32,7 +32,16 @@ export async function GET(request: NextRequest) {
     const downloadPromises = evaluationFiles.map((file: any) => {
       return dropboxService
         .download({ path: file.path_display })
-        .then((evaluationData) => {
+        .then((evaluationDataString) => {
+          // 문자열을 JSON으로 파싱
+          let evaluationData;
+          try {
+            evaluationData = JSON.parse(evaluationDataString);
+          } catch (parseError) {
+            console.warn(`⚠️ [API] JSON 파싱 실패 (${file.name}):`, parseError);
+            return null;
+          }
+          
           return {
             ...evaluationData,
             dropboxFileId: file.id,

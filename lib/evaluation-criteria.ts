@@ -214,22 +214,41 @@ export function getGradeInfo(
       }
     }
 
-    // 신규는 80점 이상이면 B(신규PASS), 상위는 90점 이상이어야 A(상위PASS)
+    // 신규: 90점 이상이면 A, 80점 이상이면 B, 80점 미만이면 F
+    // 상위: 90점 이상이면 A, 90점 미만이면 F (기존 로직 유지)
     if (category === "신규") {
-      return {
-        grade: "B",
-        color: "text-blue-600",
-        bgColor: "bg-blue-50",
-        borderColor: "border-blue-200",
-      } // 신규PASS
-    } else {
       if (totalScore >= 90) {
         return {
           grade: "A",
           color: "text-green-600",
           bgColor: "bg-green-50",
           borderColor: "border-green-200",
-        } // 상위PASS
+        } // 신규 A등급
+      } else if (totalScore >= 80) {
+        return {
+          grade: "B",
+          color: "text-blue-600",
+          bgColor: "bg-blue-50",
+          borderColor: "border-blue-200",
+        } // 신규 B등급
+      } else {
+        return {
+          grade: "F",
+          color: "text-red-600",
+          bgColor: "bg-red-50",
+          borderColor: "border-red-200",
+          reason: "신규 자격은 80점 이상 필요",
+        }
+      }
+    } else {
+      // 상위 자격: 90점 이상이면 A, 90점 미만이면 F
+      if (totalScore >= 90) {
+        return {
+          grade: "A",
+          color: "text-green-600",
+          bgColor: "bg-green-50",
+          borderColor: "border-green-200",
+        } // 상위 A등급
       } else {
         return {
           grade: "F",

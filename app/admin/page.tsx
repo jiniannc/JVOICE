@@ -109,6 +109,7 @@ export default function AdminDashboard() {
   const [loginLogs, setLoginLogs] = useState<any[]>([])
   const [showLoginLogs, setShowLoginLogs] = useState(false)
   const [loginLogsLoading, setLoginLogsLoading] = useState(false)
+  const [loginLogsPagination, setLoginLogsPagination] = useState<any>({})
 
   useEffect(() => {
     loadData();
@@ -141,53 +142,65 @@ export default function AdminDashboard() {
       ];
 
       console.log(`✅ [관리자] Total ${allEvaluations.length}개 평가 데이터 로드 (Pending: ${pendingData.evaluations?.length}, Completed: ${completedData.evaluations?.length})`);
+      console.log('🔍 [관리자] 원본 데이터 샘플:', allEvaluations.slice(0, 2));
       
-      const formattedSubmissions: Submission[] = allEvaluations.map((ev: any) => {
-        // 데이터 구조 불일치 해결: infoSource를 통해 정규화
-        const infoSource = ev.candidateInfo || ev;
-        // 등급 계산: grade가 없거나 N/A면 클라이언트에서 계산
-        let grade = ev.grade;
-        if (!grade || grade === 'N/A') {
-          try {
-            const info = getGradeInfo(
-              typeof ev.totalScore === 'number' ? ev.totalScore : 0,
-              ev.categoryScores || {},
-              infoSource.language,
-              infoSource.category
-            );
-            grade = info.grade;
-          } catch (e) {
-            grade = 'N/A';
+      const formattedSubmissions: Submission[] = allEvaluations
+        .filter((ev: any) => {
+          // 유효하지 않은 데이터 필터링
+          const infoSource = ev.candidateInfo || ev;
+          if (!infoSource || !infoSource.id || !infoSource.name || !infoSource.employeeId) {
+            console.warn('유효하지 않은 평가 데이터 발견:', ev);
+            return false;
           }
-        }
-        return {
-          // candidateInfo 내용물
-          id: infoSource.id,
-          name: infoSource.name,
-          employeeId: infoSource.employeeId,
-          language: infoSource.language,
-          category: infoSource.category,
-          submittedAt: infoSource.submittedAt,
-          recordingCount: infoSource.recordingCount,
-          scriptNumbers: infoSource.scriptNumbers,
-          comment: infoSource.comment,
-          duration: infoSource.duration,
-          // evaluation 상위 내용물
-          status: ev.status,
-          scores: ev.scores,
-          categoryScores: ev.categoryScores,
-          koreanTotalScore: ev.koreanTotalScore,
-          englishTotalScore: ev.englishTotalScore,
-          totalScore: ev.totalScore,
-          grade, // 등급 반영 (중복 제거)
-          comments: ev.comments,
-          evaluatedAt: ev.evaluatedAt,
-          evaluatedBy: ev.evaluatedBy,
-          dropboxPath: ev.dropboxPath,
-          approved: ev.approved, // approved 필드 추가
-        }
-      });
+          return true;
+        })
+        .map((ev: any) => {
+          // 데이터 구조 불일치 해결: infoSource를 통해 정규화
+          const infoSource = ev.candidateInfo || ev;
+          // 등급 계산: grade가 없거나 N/A면 클라이언트에서 계산
+          let grade = ev.grade;
+          if (!grade || grade === 'N/A') {
+            try {
+              const info = getGradeInfo(
+                typeof ev.totalScore === 'number' ? ev.totalScore : 0,
+                ev.categoryScores || {},
+                infoSource.language,
+                infoSource.category
+              );
+              grade = info.grade;
+            } catch (e) {
+              grade = 'N/A';
+            }
+          }
+          return {
+            // candidateInfo 내용물
+            id: infoSource.id,
+            name: infoSource.name,
+            employeeId: infoSource.employeeId,
+            language: infoSource.language,
+            category: infoSource.category,
+            submittedAt: infoSource.submittedAt,
+            recordingCount: infoSource.recordingCount,
+            scriptNumbers: infoSource.scriptNumbers,
+            comment: infoSource.comment,
+            duration: infoSource.duration,
+            // evaluation 상위 내용물
+            status: ev.status,
+            scores: ev.scores,
+            categoryScores: ev.categoryScores,
+            koreanTotalScore: ev.koreanTotalScore,
+            englishTotalScore: ev.englishTotalScore,
+            totalScore: ev.totalScore,
+            grade, // 등급 반영 (중복 제거)
+            comments: ev.comments,
+            evaluatedAt: ev.evaluatedAt,
+            evaluatedBy: ev.evaluatedBy,
+            dropboxPath: ev.dropboxPath,
+            approved: ev.approved, // approved 필드 추가
+          }
+        });
 
+      console.log(`✅ [관리자] 필터링 후 유효한 데이터: ${formattedSubmissions.length}개`);
       setSubmissions(formattedSubmissions);
 
     } catch (error) {
@@ -310,6 +323,12 @@ export default function AdminDashboard() {
   const filteredSubmissions = useMemo(() => {
     return submissions
       .filter((sub) => {
+        // submittedAt이 없는 경우 필터링에서 제외
+        if (!sub.submittedAt) {
+          console.warn('submittedAt이 없는 제출물 발견:', sub);
+          return false;
+        }
+
         // 월별 필터
         if (!sub.submittedAt.startsWith(listMonth)) return false
 
@@ -369,6 +388,7 @@ export default function AdminDashboard() {
       const monthSubmissions = submissions.filter(
         (sub) =>
           sub.language === lang &&
+          sub.submittedAt &&
           sub.submittedAt.startsWith(selectedMonth)
       );
 
@@ -420,7 +440,7 @@ export default function AdminDashboard() {
 
   // 언어별 내보내기 함수들
   const exportKoreanEnglishSpreadsheet = () => {
-    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt.startsWith(selectedMonth) && sub.language === "korean-english");
+    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt && sub.submittedAt.startsWith(selectedMonth) && sub.language === "korean-english");
     if (monthlyData.length === 0) {
       alert("선택한 월에 해당하는 한/영 데이터가 없습니다.");
       return;
@@ -478,7 +498,7 @@ export default function AdminDashboard() {
   };
 
   const exportJapaneseSpreadsheet = () => {
-    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt.startsWith(selectedMonth) && sub.language === "japanese");
+    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt && sub.submittedAt.startsWith(selectedMonth) && sub.language === "japanese");
     if (monthlyData.length === 0) {
       alert("선택한 월에 해당하는 일본어 데이터가 없습니다.");
       return;
@@ -527,7 +547,7 @@ export default function AdminDashboard() {
   };
 
   const exportChineseSpreadsheet = () => {
-    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt.startsWith(selectedMonth) && sub.language === "chinese");
+    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt && sub.submittedAt.startsWith(selectedMonth) && sub.language === "chinese");
     if (monthlyData.length === 0) {
       alert("선택한 월에 해당하는 중국어 데이터가 없습니다.");
       return;
@@ -576,7 +596,7 @@ export default function AdminDashboard() {
   };
 
   const exportToSpreadsheet = () => {
-    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt.startsWith(selectedMonth));
+    const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt && sub.submittedAt.startsWith(selectedMonth));
 
     if (monthlyData.length === 0) {
       alert("선택한 월에 해당하는 데이터가 없습니다.")
@@ -835,12 +855,13 @@ export default function AdminDashboard() {
   };
 
   // 로그인 기록 불러오기
-  const loadLoginLogs = async () => {
+  const loadLoginLogs = async (page = 1) => {
     setLoginLogsLoading(true);
     try {
-      const response = await fetch('/api/auth/login-log?limit=100');
+      const response = await fetch(`/api/auth/login-log?limit=20&page=${page}`);
       const data = await response.json();
       setLoginLogs(data.logs || []);
+      setLoginLogsPagination(data.pagination || {});
     } catch (error) {
       console.error('로그인 기록 로딩 실패:', error);
       alert('로그인 기록을 불러오는데 실패했습니다.');
@@ -1178,7 +1199,7 @@ export default function AdminDashboard() {
                               return (
                                 <div className="flex flex-col items-center gap-1">
                                   <span className={isFail ? "font-bold text-red-600" : "font-bold text-blue-600"}>
-                                    {sub.language === 'korean-english' ? String(gradeInfo.grade).replace(/등급$/, '') : gradeInfo.grade}
+                                    {gradeInfo.grade === 'F' ? 'FAIL' : (sub.language === 'korean-english' ? String(gradeInfo.grade).replace(/등급$/, '') : gradeInfo.grade)}
                                   </span>
                                   {sub.language === 'korean-english' ? (
                                     <span className="text-xs text-gray-500">
@@ -1421,8 +1442,35 @@ export default function AdminDashboard() {
                   </Table>
                   
                   <div className="mt-3 text-sm text-gray-600 text-center">
-                    최근 {loginLogs.length}개의 로그인 기록
+                    최근 {loginLogs.length}개의 로그인 기록 (총 {loginLogsPagination.totalRecords || 0}개)
                   </div>
+                  
+                  {/* 페이지네이션 */}
+                  {loginLogsPagination.totalPages > 1 && (
+                    <div className="mt-4 flex justify-center items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadLoginLogs(loginLogsPagination.page - 1)}
+                        disabled={!loginLogsPagination.hasPrevPage}
+                      >
+                        이전
+                      </Button>
+                      
+                      <span className="text-sm text-gray-600">
+                        {loginLogsPagination.page} / {loginLogsPagination.totalPages}
+                      </span>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadLoginLogs(loginLogsPagination.page + 1)}
+                        disabled={!loginLogsPagination.hasNextPage}
+                      >
+                        다음
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>

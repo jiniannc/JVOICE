@@ -1,10 +1,46 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
+import { EmployeeDatabase } from "@/lib/employee-database"
 
 export async function GET(request: NextRequest) {
   try {
     console.log("🔍 [User API] 사용자 정보 요청 받음")
 
+    const { searchParams } = new URL(request.url)
+    const email = searchParams.get("email")
+
+    // 이메일 파라미터가 있으면 직원 정보 조회
+    if (email) {
+      console.log("🔍 [User API] 직원 정보 조회:", email)
+      try {
+        const employeeDB = new EmployeeDatabase()
+        const employee = await employeeDB.findEmployeeByEmail(email)
+        
+        if (employee) {
+          console.log("✅ [User API] 직원 정보 찾음:", employee.name)
+          return NextResponse.json({
+            name: employee.name,
+            employeeId: employee.employeeId,
+            department: employee.department,
+            email: employee.email
+          })
+        } else {
+          console.log("⚠️ [User API] 직원 정보 없음:", email)
+          return NextResponse.json({
+            name: email,
+            email: email
+          })
+        }
+      } catch (error) {
+        console.error("❌ [User API] 직원 정보 조회 실패:", error)
+        return NextResponse.json({
+          name: email,
+          email: email
+        })
+      }
+    }
+
+    // 이메일 파라미터가 없으면 현재 로그인한 사용자 정보 반환
     const cookieStore = await cookies()
     const authUser = cookieStore.get("auth_user")
     const authStatus = cookieStore.get("auth_status")

@@ -382,6 +382,23 @@ export default function HomePage() {
     console.log("[userInfo changed]", userInfo)
   }, [userInfo])
 
+  // ESC 키 이벤트 처리
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showRecordingSetup) setShowRecordingSetup(false);
+        if (showAdminAuth) setShowAdminAuth(false);
+        if (showEvaluationAuth) setShowEvaluationAuth(false);
+        if (showMyPage) setShowMyPage(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [showRecordingSetup, showAdminAuth, showEvaluationAuth, showMyPage]);
+
   // 로딩 중
   if (authenticatedUser === undefined) {
     return (
@@ -984,15 +1001,8 @@ export default function HomePage() {
 
       {/* 녹음 설정 모달 */}
       {showRecordingSetup && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === "Escape") setShowRecordingSetup(false);
-          }}
-          autoFocus
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 relative">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">녹음 설정</h2>
@@ -1008,15 +1018,8 @@ export default function HomePage() {
 
       {/* 관리자 인증 모달 */}
       {showAdminAuth && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === "Escape") setShowAdminAuth(false);
-          }}
-          autoFocus
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 relative">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">관리자 인증</h2>
@@ -1032,15 +1035,8 @@ export default function HomePage() {
 
       {/* 평가 인증 모달 */}
       {showEvaluationAuth && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === "Escape") setShowEvaluationAuth(false);
-          }}
-          autoFocus
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 relative">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">교관 인증</h2>
@@ -1237,9 +1233,30 @@ function MyPageModal({
   // 탭 상태 제거 (평가 내역, 녹음 기록 삭제)
   // const [activeTab, setActiveTab] = useState("profile")
 
+  // ESC 키 이벤트 처리
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden">
+    <div 
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
+      tabIndex={0}
+      onKeyDown={e => {
+        if (e.key === "Escape") onClose();
+      }}
+      autoFocus
+    >
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden relative">
         <div className="flex">
           {/* 사이드바 */}
           <div className="w-64 bg-gray-50 p-6 border-r border-gray-200">
@@ -1365,6 +1382,23 @@ function ReviewMode({
     onModeChange("recording")
   }
 
+  // ESC 키 이벤트 처리
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showRecordingSetup) setShowRecordingSetup(false);
+        if (showAdminAuth) setShowAdminAuth(false);
+        if (showEvaluationAuth) setShowEvaluationAuth(false);
+        if (showMyPage) setShowMyPage(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [showRecordingSetup, showAdminAuth, showEvaluationAuth, showMyPage]);
+
   return (
     <div className="min-h-screen">
       {/* 사이드바 네비게이션 */}
@@ -1430,9 +1464,22 @@ function ReviewMode({
             My Account
             <ChevronDown className="w-3 h-3 ml-auto" />
           </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-red-600 hover:bg-red-50 transition-colors">
-            <LogOut className="w-4 h-4" />
-            로그아웃
+          <button 
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-red-600 hover:bg-red-50 transition-colors"
+          >
+            {isLoggingOut ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Logging out...
+              </>
+            ) : (
+              <>
+                <LogOut className="w-4 h-4" />
+                Logout
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -1445,8 +1492,8 @@ function ReviewMode({
       {/* 모달들 재사용 */}
       {showRecordingSetup && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
-            <button onClick={() => setShowRecordingSetup(false)} className="p-2 hover:bg-gray-100 rounded-lg absolute top-4 right-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6 relative">
+            <button onClick={() => setShowRecordingSetup(false)} className="p-2 hover:bg-gray-100 rounded-lg absolute top-2 right-2">
               <X className="w-4 h-4" />
             </button>
             <RecordingSetup onComplete={handleRecordingSetupComplete} authenticatedUser={authenticatedUser} />
@@ -1455,8 +1502,8 @@ function ReviewMode({
       )}
       {showAdminAuth && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
-            <button onClick={() => setShowAdminAuth(false)} className="p-2 hover:bg-gray-100 rounded-lg absolute top-4 right-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6 relative">
+            <button onClick={() => setShowAdminAuth(false)} className="p-2 hover:bg-gray-100 rounded-lg absolute top-2 right-2">
               <X className="w-4 h-4" />
             </button>
             <AdminAuth onSuccess={handleAdminAuthSuccess} />
@@ -1465,8 +1512,8 @@ function ReviewMode({
       )}
       {showEvaluationAuth && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
-            <button onClick={() => setShowEvaluationAuth(false)} className="p-2 hover:bg-gray-100 rounded-lg absolute top-4 right-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6 relative">
+            <button onClick={() => setShowEvaluationAuth(false)} className="p-2 hover:bg-gray-100 rounded-lg absolute top-2 right-2">
               <X className="w-4 h-4" />
             </button>
             <EvaluationAuth onSuccess={handleEvaluationAuthSuccess} />
@@ -2031,6 +2078,22 @@ function AdminMode({
     onModeChange("recording")
   }
 
+  // ESC 키 이벤트 처리
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showRecordingSetup) setShowRecordingSetup(false);
+        if (showEvaluationAuth) setShowEvaluationAuth(false);
+        if (showMyPage) setShowMyPage(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [showRecordingSetup, showEvaluationAuth, showMyPage]);
+
   return (
     <div className="min-h-screen">
       {/* 사이드바 네비게이션 */}
@@ -2105,9 +2168,22 @@ function AdminMode({
             <ChevronDown className="w-3 h-3 ml-auto" />
           </button>
 
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-red-600 hover:bg-red-50 transition-colors">
-            <LogOut className="w-4 h-4" />
-            로그아웃
+          <button 
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-red-600 hover:bg-red-50 transition-colors"
+          >
+            {isLoggingOut ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Logging out...
+              </>
+            ) : (
+              <>
+                <LogOut className="w-4 h-4" />
+                Logout
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -2119,15 +2195,8 @@ function AdminMode({
 
       {/* 녹음 설정 모달 */}
       {showRecordingSetup && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === "Escape") setShowRecordingSetup(false);
-          }}
-          autoFocus
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 relative">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">녹음 설정</h2>
@@ -2143,15 +2212,8 @@ function AdminMode({
 
       {/* 평가 인증 모달 */}
       {showEvaluationAuth && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === "Escape") setShowEvaluationAuth(false);
-          }}
-          autoFocus
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 relative">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">교관 인증</h2>
@@ -2243,6 +2305,23 @@ function EvaluationMode({
     onModeChange("recording")
   }
 
+  // ESC 키 이벤트 처리
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showRecordingSetup) setShowRecordingSetup(false);
+        if (showAdminAuth) setShowAdminAuth(false);
+        if (showEvaluationAuth) setShowEvaluationAuth(false);
+        if (showMyPage) setShowMyPage(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [showRecordingSetup, showAdminAuth, showEvaluationAuth, showMyPage]);
+
   return (
     <div className="min-h-screen">
       {/* 사이드바 네비게이션 */}
@@ -2308,9 +2387,22 @@ function EvaluationMode({
             My Account
             <ChevronDown className="w-3 h-3 ml-auto" />
           </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-red-600 hover:bg-red-50 transition-colors">
-            <LogOut className="w-4 h-4" />
-            로그아웃
+          <button 
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-red-600 hover:bg-red-50 transition-colors"
+          >
+            {isLoggingOut ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Logging out...
+              </>
+            ) : (
+              <>
+                <LogOut className="w-4 h-4" />
+                Logout
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -2343,15 +2435,8 @@ function EvaluationMode({
       )}
       {/* 관리자 인증 모달 */}
       {showAdminAuth && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === "Escape") setShowAdminAuth(false);
-          }}
-          autoFocus
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 relative">
             <div className="p-6">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">관리자 인증</h2>

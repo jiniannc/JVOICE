@@ -63,6 +63,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
   const [loginLogs, setLoginLogs] = useState<any[]>([])
   const [showLoginLogs, setShowLoginLogs] = useState(false)
   const [loginLogsLoading, setLoginLogsLoading] = useState(false)
+  const [loginLogsPagination, setLoginLogsPagination] = useState<any>({})
 
   // 현재 선택된 후보자의 점수 가져오기
   const getCurrentScores = () => {
@@ -122,12 +123,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
   }, [])
 
   // 로그인 기록 불러오기
-  const loadLoginLogs = async () => {
+  const loadLoginLogs = async (page = 1) => {
     setLoginLogsLoading(true);
     try {
-      const response = await fetch('/api/auth/login-log?limit=100');
+      const response = await fetch(`/api/auth/login-log?limit=20&page=${page}`);
       const data = await response.json();
       setLoginLogs(data.logs || []);
+      setLoginLogsPagination(data.pagination || {});
     } catch (error) {
       console.error('로그인 기록 로딩 실패:', error);
       alert('로그인 기록을 불러오는데 실패했습니다.');
@@ -780,7 +782,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
   // 평가 완료 후 대시보드로 돌아가기
   const handleEvaluationComplete = () => {
     setShowSummary(false)
-    setSelectedCandidate(null)
+    // selectedCandidate를 null로 설정하지 않고 summary만 닫기
     // 후보자 목록 새로고침
     loadCandidates()
   }
@@ -1012,6 +1014,20 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
     return await loadCandidateData(candidate)
   }
 
+  // 직원 정보 가져오기 함수
+  const getEmployeeName = async (email: string) => {
+    try {
+      const response = await fetch(`/api/auth/user?email=${encodeURIComponent(email)}`);
+      if (response.ok) {
+        const data = await response.json();
+        return data.name || email;
+      }
+    } catch (error) {
+      console.warn('직원 정보 가져오기 실패:', error);
+    }
+    return email;
+  };
+
   // 검토 요청 함수 추가
   const handleRequestReview = async (result: any) => {
     console.log("🔍 [handleRequestReview] 받은 데이터:", result)
@@ -1024,11 +1040,14 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
     }
 
     try {
+      // 직원 정보에서 이름 가져오기
+      const employeeName = await getEmployeeName(authenticatedUser?.email || '');
+      
       // 기존 save-dropbox API를 사용하여 검토 요청 상태로 저장
       console.log("🔍 [handleRequestReview] 전송할 데이터:", {
         dropboxPath: result.dropboxPath,
         status: "review_requested",
-        reviewRequestedBy: authenticatedUser?.name || authenticatedUser?.email || "교관",
+        reviewRequestedBy: employeeName,
         reviewRequestedAt: new Date().toISOString(),
       });
       
@@ -1038,7 +1057,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
         body: JSON.stringify({
           ...result,
           status: "review_requested",
-          reviewRequestedBy: authenticatedUser?.name || authenticatedUser?.email || "교관",
+          reviewRequestedBy: employeeName,
           reviewRequestedAt: new Date().toISOString(),
         }),
       })
@@ -1390,8 +1409,35 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
                     </Table>
                     
                     <div className="mt-3 text-sm text-gray-600 text-center">
-                      최근 {loginLogs.length}개의 로그인 기록
+                      최근 {loginLogs.length}개의 로그인 기록 (총 {loginLogsPagination.totalRecords || 0}개)
                     </div>
+                    
+                    {/* 페이지네이션 */}
+                    {loginLogsPagination.totalPages > 1 && (
+                      <div className="mt-4 flex justify-center items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => loadLoginLogs(loginLogsPagination.page - 1)}
+                          disabled={!loginLogsPagination.hasPrevPage}
+                        >
+                          이전
+                        </Button>
+                        
+                        <span className="text-sm text-gray-600">
+                          {loginLogsPagination.page} / {loginLogsPagination.totalPages}
+                        </span>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => loadLoginLogs(loginLogsPagination.page + 1)}
+                          disabled={!loginLogsPagination.hasNextPage}
+                        >
+                          다음
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -1780,7 +1826,11 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4">
-                <div className="grid grid-cols-5 gap-4">
+                <div className={`grid gap-4 ${
+                  selectedCandidate.language === "korean-english" 
+                    ? "grid-cols-5" 
+                    : "grid-cols-3"
+                }`}>
                   {Object.entries(criteriaByLanguage || {}).map(([langKey, criteria]) => {
                     if (selectedCandidate.language === "korean-english" && langKey !== currentLanguage) {
                       return null;
@@ -1797,7 +1847,11 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
                           return (
                             <div
                               key={category}
-                              className="flex flex-col gap-3 border border-purple-100 rounded-lg bg-white hover:bg-purple-50 transition-colors duration-200 shadow-sm p-3 mb-4 relative cursor-pointer"
+                              className={`flex flex-col gap-3 border border-purple-100 rounded-lg bg-white hover:bg-purple-50 transition-colors duration-200 shadow-sm p-3 relative cursor-pointer ${
+                                selectedCandidate.language === "korean-english" 
+                                  ? "mb-4" 
+                                  : "mb-0"
+                              }`}
                             >
                               {/* 상단 컬러 바 */}
                               <div className="absolute top-0 left-0 w-full h-1 bg-purple-300 rounded-t" />
@@ -1906,7 +1960,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
                           setCurrentComments(newComments)
                         }}
                         placeholder="한국어 평가에 대한 의견을 입력하세요..."
-                        className="mt-1"
+                        className="mt-1 min-h-[115px]"
                       />
                     </div>
                     <div>
@@ -1920,7 +1974,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
                           setCurrentComments(newComments)
                         }}
                         placeholder="영어 평가에 대한 의견을 입력하세요..."
-                        className="mt-1"
+                        className="mt-1 min-h-[115px]"
                       />
                     </div>
                   </div>
@@ -1936,7 +1990,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
                         setCurrentComments(newComments)
                       }}
                       placeholder="평가에 대한 의견을 입력하세요..."
-                      className="mt-1"
+                      className="mt-1 min-h-[110px]"
                     />
                   </div>
                 )}

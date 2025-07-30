@@ -122,7 +122,7 @@ class DropboxService {
     return response.data.entries || [];
   }
 
-  public async download({ path }: { path: string; }): Promise<any> {
+  public async download({ path }: { path: string; }): Promise<string> {
     const token = await this.getAccessToken();
     const response = await axios.post(
       "https://content.dropboxapi.com/2/files/download",
@@ -136,7 +136,7 @@ class DropboxService {
         responseType: "text",
       }
     );
-    return JSON.parse(response.data);
+    return response.data; // JSON.parse() 제거 - 원본 텍스트 반환
   }
 
   public async move({ from, to }: { from: string; to: string; }): Promise<any> {
@@ -175,7 +175,7 @@ class DropboxService {
     const rev = response.headers["dropbox-api-result"]
       ? JSON.parse(response.headers["dropbox-api-result"]).rev
       : undefined;
-    return { entries: JSON.parse(response.data), rev };
+    return { entries: JSON.parse(response.data), rev }; // 여기는 올바른 JSON 파싱
   }
 
   // index.json overwrite (rev 체크)
