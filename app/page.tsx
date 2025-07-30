@@ -1569,6 +1569,7 @@ function AdminAuth({ onSuccess }: { onSuccess: () => void }) {
           placeholder="관리자 비밀번호를 입력하세요"
           className="border-orange-200 focus:border-orange-400"
           required
+          autoFocus
         />
       </div>
       <Button type="submit" disabled={isLoading} className="w-full bg-orange-600 hover:bg-orange-700 h-12">
@@ -1625,6 +1626,7 @@ function EvaluationAuth({ onSuccess }: { onSuccess: () => void }) {
           placeholder="교관 비밀번호를 입력하세요"
           className="border-purple-200 focus:border-purple-400"
           required
+          autoFocus
         />
       </div>
       <Button type="submit" disabled={isLoading} className="w-full bg-purple-600 hover:bg-purple-700 h-12">
