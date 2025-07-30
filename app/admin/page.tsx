@@ -779,19 +779,74 @@ export default function AdminDashboard() {
   }
 
   const approveOne = async (submission: Submission) => {
-    if (!submission.dropboxPath) return;
-    await fetch("/api/evaluations/approve", {
+    if (!submission.dropboxPath) {
+      throw new Error("Dropbox 경로가 없습니다.");
+    }
+    
+    const response = await fetch("/api/evaluations/approve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dropboxPath: submission.dropboxPath, approvedBy: "Admin" }),
     });
+    
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error(result.error || "승인 처리 실패");
+    }
+    
+    return result;
   };
 
   const approveMany = async () => {
     const targets = submissions.filter((s) => selectedIds.has(s.id));
-    await Promise.all(targets.map((t) => approveOne(t)));
-    await loadData();
-    setSelectedIds(new Set());
+    
+    // 승인 가능한 항목만 필터링 (status가 'submitted'이고 approved가 false인 것만)
+    const approveTargets = targets.filter(s => s.status === 'submitted' && !s.approved);
+    
+    if (approveTargets.length === 0) {
+      alert('승인할 수 있는 항목이 없습니다. (평가 완료되었지만 승인되지 않은 항목만 승인 가능)');
+      return;
+    }
+
+    // 관리자 확인
+    const confirmed = window.confirm(
+      `정말로 ${approveTargets.length}개 항목을 승인하시겠습니까?\n\n승인된 항목은 더 이상 수정할 수 없습니다.`
+    );
+    if (!confirmed) return;
+
+    try {
+      // 병렬로 승인 처리
+      const approvePromises = approveTargets.map(async (submission) => {
+        const response = await fetch('/api/evaluations/approve', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dropboxPath: submission.dropboxPath,
+            approvedBy: 'Admin',
+          }),
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+          throw new Error(`승인 실패 (${submission.name}): ${result.error}`);
+        }
+        return result;
+      });
+
+      await Promise.all(approvePromises);
+      
+      alert(`${approveTargets.length}개 항목이 성공적으로 승인되었습니다.`);
+      
+      // 목록 새로고침
+      await loadData();
+      setSelectedIds(new Set());
+      
+    } catch (error) {
+      console.error('승인 처리 중 오류:', error);
+      alert(`승인 처리 중 오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
   };
 
   const deleteMany = async () => {
@@ -1110,7 +1165,13 @@ export default function AdminDashboard() {
               )}
             </div>
             <div className="flex gap-3 mb-3">
-              <Button size="sm" disabled={selectedIds.size===0} onClick={approveMany}>선택 항목 승인</Button>
+              <Button 
+                size="sm" 
+                disabled={selectedIds.size === 0 || !submissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
+                onClick={approveMany}
+              >
+                선택 항목 승인
+              </Button>
               <Button 
                 size="sm" 
                 variant="outline" 

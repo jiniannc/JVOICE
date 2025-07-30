@@ -1230,6 +1230,55 @@ function MyPageModal({
   onLogout: () => void
   isLoggingOut: boolean
 }) {
+  const [activeTab, setActiveTab] = useState<"profile" | "qualifications">("profile")
+  const [employeeData, setEmployeeData] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+
+  // 직원 자격 정보 불러오기
+  useEffect(() => {
+    const loadEmployeeQualifications = async () => {
+      if (user?.email) {
+        setLoading(true)
+        try {
+          // 캐시를 무시하고 새로운 데이터를 강제로 불러오기
+          await employeeDB.refreshEmployeeData()
+          const employeeInfo = await employeeDB.findEmployeeByEmail(user.email)
+          console.log("🔍 [MyPageModal] 직원 정보 로드:", employeeInfo)
+          console.log("🔍 [MyPageModal] 한영 자격:", employeeInfo?.koreanEnglishGrade)
+          console.log("🔍 [MyPageModal] 한영 유효기간:", employeeInfo?.koreanEnglishExpiry)
+          setEmployeeData(employeeInfo)
+        } catch (error) {
+          console.error("직원 자격 정보 로드 실패:", error)
+        } finally {
+          setLoading(false)
+        }
+      }
+    }
+    loadEmployeeQualifications()
+  }, [user?.email])
+
+  // 자격 등급에서 알파벳만 추출하는 함수
+  const extractGrade = (gradeString: string) => {
+    if (!gradeString) return "-"
+    // ANNC_X, JP_X, CN_X 형태에서 X 부분만 추출
+    const match = gradeString.match(/(?:ANNC_|JP_|CN_)?([A-Z])/)
+    return match ? match[1] : gradeString
+  }
+
+  // 자격 등급별 스타일 함수
+  const getGradeStyle = (grade: string) => {
+    const cleanGrade = extractGrade(grade)
+    switch (cleanGrade) {
+      case "S":
+        return "bg-yellow-500 text-white font-bold"
+      case "A":
+        return "bg-blue-500 text-white font-bold"
+      case "B":
+        return "bg-green-500 text-white font-semibold"
+      default:
+        return "bg-gray-300 text-gray-700"
+    }
+  }
   // 탭 상태 제거 (평가 내역, 녹음 기록 삭제)
   // const [activeTab, setActiveTab] = useState("profile")
 
@@ -1270,10 +1319,24 @@ function MyPageModal({
             {/* 프로필 정보만 남김 */}
             <nav className="space-y-2">
               <button
-                className="w-full text-left px-3 py-2 rounded-lg bg-blue-100 text-blue-700 cursor-default"
-                disabled
+                onClick={() => setActiveTab("profile")}
+                className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
+                  activeTab === "profile"
+                    ? "bg-blue-100 text-blue-700"
+                    : "text-gray-600 hover:bg-gray-100"
+                }`}
               >
                 프로필 정보
+              </button>
+              <button
+                onClick={() => setActiveTab("qualifications")}
+                className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
+                  activeTab === "qualifications"
+                    ? "bg-blue-100 text-blue-700"
+                    : "text-gray-600 hover:bg-gray-100"
+                }`}
+              >
+                나의 방송 자격
               </button>
             </nav>
 
@@ -1294,37 +1357,118 @@ function MyPageModal({
             </div>
           </div>
 
-          {/* 메인 컨텐츠 - 프로필 정보만 */}
+          {/* 메인 컨텐츠 - 탭에 따라 다른 내용 표시 */}
           <div className="flex-1 p-10 flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
-            <div className="max-w-md w-full mx-auto bg-white/90 rounded-2xl shadow-2xl p-8 flex flex-col items-center border border-blue-100">
-              <div className="relative mb-6">
-                <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-blue-200 shadow-lg bg-white flex items-center justify-center">
-                  <img
-                    src={user?.picture || "/placeholder.svg?height=96&width=96&text=User"}
-                    alt={user?.name}
-                    className="w-full h-full object-cover"
-                  />
+            {activeTab === "profile" && (
+              <div className="max-w-md w-full mx-auto bg-white/90 rounded-2xl shadow-2xl p-8 flex flex-col items-center border border-blue-100">
+                <div className="relative mb-6">
+                  <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-blue-200 shadow-lg bg-white flex items-center justify-center">
+                    <img
+                      src={user?.picture || "/placeholder.svg?height=96&width=96&text=User"}
+                      alt={user?.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  {userInfo.isInstructor && (
+                    <span className="absolute -bottom-2 -right-2 bg-gradient-to-r from-green-400 to-blue-500 text-white font-bold px-4 py-1 rounded-full shadow-lg text-base tracking-widest border-2 border-blue-300 animate-pulse flex items-center gap-1">
+                      <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.286 3.967a1 1 0 00.95.69h4.178c.969 0 1.371 1.24.588 1.81l-3.385 2.46a1 1 0 00-.364 1.118l1.287 3.966c.3.922-.755 1.688-1.54 1.118l-3.385-2.46a1 1 0 00-1.175 0l-3.385 2.46c-.784.57-1.838-.196-1.54-1.118l1.287-3.966a1 1 0 00-.364-1.118l-3.385-2.46c-.783-.57-.38-1.81.588-1.81h4.178a1 1 0 00.95-.69l1.286-3.967z"/></svg>
+                      교관
+                    </span>
+                  )}
                 </div>
-                {userInfo.isInstructor && (
-                  <span className="absolute -bottom-2 -right-2 bg-gradient-to-r from-green-400 to-blue-500 text-white font-bold px-4 py-1 rounded-full shadow-lg text-base tracking-widest border-2 border-blue-300 animate-pulse flex items-center gap-1">
-                    <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.286 3.967a1 1 0 00.95.69h4.178c.969 0 1.371 1.24.588 1.81l-3.385 2.46a1 1 0 00-.364 1.118l1.287 3.966c.3.922-.755 1.688-1.54 1.118l-3.385-2.46a1 1 0 00-1.175 0l-3.385 2.46c-.784.57-1.838-.196-1.54-1.118l1.287-3.966a1 1 0 00-.364-1.118l-3.385-2.46c-.783-.57-.38-1.81.588-1.81h4.178a1 1 0 00.95-.69l1.286-3.967z"/></svg>
-                    교관
-                  </span>
+                <div className="w-full text-center mb-4">
+                  <h4 className="text-2xl font-extrabold text-gray-900 mb-1">{user?.name}</h4>
+                  <p className="text-base text-gray-500 mb-2">{user?.email}</p>
+                </div>
+                <div className="w-full grid grid-cols-2 gap-4 mb-2">
+                  <div className="text-right pr-2 text-gray-600 font-semibold">사번</div>
+                  <div className="text-left pl-2 text-gray-900 font-bold">{userInfo.employeeId || user?.broadcastCode}</div>
+                  <div className="text-right pr-2 text-gray-600 font-semibold">라인팀</div>
+                  <div className="text-left pl-2 text-gray-900 font-bold">{userInfo.department || '-'}</div>
+                  <div className="text-right pr-2 text-gray-600 font-semibold">방송코드</div>
+                  <div className="text-left pl-2 text-gray-900 font-bold">{userInfo.position || '-'}</div>
+                </div>
+              </div>
+            )}
+
+                        {activeTab === "qualifications" && (
+              <div className="max-w-3xl w-full mx-auto">
+                <div className="text-center mb-6">
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">{userInfo.name}({userInfo.employeeId}) 방송 자격 현황</h3>
+                  <p className="text-gray-600">{new Date().toLocaleString('ko-KR', { 
+                    year: 'numeric', 
+                    month: '2-digit', 
+                    day: '2-digit', 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    second: '2-digit'
+                  })}</p>
+                </div>
+
+                {loading ? (
+                  <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                    <p className="text-gray-600">자격 정보를 불러오는 중입니다...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* 한/영 자격 */}
+                    <div className="bg-white rounded-lg shadow-lg border border-gray-100 p-6 hover:shadow-xl transition-shadow duration-300">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-gradient-to-br from-slate-600 to-slate-800 rounded-full flex items-center justify-center shadow-md">
+                            <span className="text-lg text-white">🇰🇷🇺🇸</span>
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-semibold text-gray-900">한국어/영어</h4>
+                            <p className="text-sm text-gray-600">
+                              {employeeData?.koreanEnglishExpiry ? `유효기간: ${employeeData.koreanEnglishExpiry}` : "유효기간 정보 없음"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className={`px-4 py-2 rounded-full text-lg font-bold shadow-md ${getGradeStyle(employeeData?.koreanEnglishGrade || "")}`}>
+                          {extractGrade(employeeData?.koreanEnglishGrade || "")}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 일본어 자격 */}
+                    <div className="bg-white rounded-lg shadow-lg border border-gray-100 p-6 hover:shadow-xl transition-shadow duration-300">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-gradient-to-br from-slate-600 to-slate-800 rounded-full flex items-center justify-center shadow-md">
+                            <span className="text-lg text-white">🇯🇵</span>
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-semibold text-gray-900">일본어</h4>
+                          </div>
+                        </div>
+                        <div className={`px-4 py-2 rounded-full text-lg font-bold shadow-md ${getGradeStyle(employeeData?.japaneseGrade || "")}`}>
+                          {extractGrade(employeeData?.japaneseGrade || "")}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 중국어 자격 */}
+                    <div className="bg-white rounded-lg shadow-lg border border-gray-100 p-6 hover:shadow-xl transition-shadow duration-300">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-gradient-to-br from-slate-600 to-slate-800 rounded-full flex items-center justify-center shadow-md">
+                            <span className="text-lg text-white">🇨🇳</span>
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-semibold text-gray-900">중국어</h4>
+                          </div>
+                        </div>
+                        <div className={`px-4 py-2 rounded-full text-lg font-bold shadow-md ${getGradeStyle(employeeData?.chineseGrade || "")}`}>
+                          {extractGrade(employeeData?.chineseGrade || "")}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
-              <div className="w-full text-center mb-4">
-                <h4 className="text-2xl font-extrabold text-gray-900 mb-1">{user?.name}</h4>
-                <p className="text-base text-gray-500 mb-2">{user?.email}</p>
-              </div>
-              <div className="w-full grid grid-cols-2 gap-4 mb-2">
-                <div className="text-right pr-2 text-gray-600 font-semibold">사번</div>
-                <div className="text-left pl-2 text-gray-900 font-bold">{userInfo.employeeId || user?.broadcastCode}</div>
-                <div className="text-right pr-2 text-gray-600 font-semibold">라인팀</div>
-                <div className="text-left pl-2 text-gray-900 font-bold">{userInfo.department || '-'}</div>
-                <div className="text-right pr-2 text-gray-600 font-semibold">방송코드</div>
-                <div className="text-left pl-2 text-gray-900 font-bold">{userInfo.position || '-'}</div>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

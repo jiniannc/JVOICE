@@ -8,6 +8,10 @@ export interface Employee {
   position: string
   isActive: boolean
   isInstructor: boolean // 교관 여부 추가
+  koreanEnglishGrade?: string // G열: 한영 자격
+  koreanEnglishExpiry?: string // H열: 한영 유효기간
+  japaneseGrade?: string // I열: 일본어 자격
+  chineseGrade?: string // J열: 중국어 자격
 }
 
 export class EmployeeDatabase {
@@ -30,7 +34,7 @@ export class EmployeeDatabase {
       console.log("스프레드시트에서 승무원 정보 로딩 중...")
 
       const apiKey = getEnvValue("NEXT_PUBLIC_GOOGLE_API_KEY")
-      const range = "직원목록!A2:F1000" // 헤더 제외하고 데이터만
+      const range = "직원목록!A2:J1000" // A~J열까지 (자격 정보 포함)
 
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${range}?key=${apiKey}`
 
@@ -61,6 +65,10 @@ export class EmployeeDatabase {
             position: (row[4] || "").trim(), // E열 값만!
             isActive,
             isInstructor, // 교관 여부 추가
+            koreanEnglishGrade: (row[6] || "").trim(), // G열: 한영 자격
+            koreanEnglishExpiry: (row[7] || "").trim(), // H열: 한영 유효기간
+            japaneseGrade: (row[8] || "").trim(), // I열: 일본어 자격
+            chineseGrade: (row[9] || "").trim(), // J열: 중국어 자격
           }
           // 유효성 검사
           if (!employee.email || !employee.name || !employee.employeeId) {

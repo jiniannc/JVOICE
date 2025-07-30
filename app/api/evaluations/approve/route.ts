@@ -11,7 +11,8 @@ export async function POST(request: NextRequest) {
     /* 1. 평가 JSON 다운로드 */
     let evaluationData: any = {};
     try {
-      evaluationData = await dropboxService.download({ path: dropboxPath });
+      const evaluationDataString = await dropboxService.download({ path: dropboxPath });
+      evaluationData = JSON.parse(evaluationDataString);
     } catch (e) {
       return NextResponse.json({ error: "평가 파일을 읽지 못했습니다." }, { status: 404 });
     }
