@@ -755,10 +755,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
 
     console.log("최종 평가 결과:", result)
 
-    // Vercel Hobby 플랜 대응: 데이터 최적화
+    // Vercel Hobby 플랜 대응: 강력한 데이터 최적화
     const optimizedResult = {
-      ...result,
-      // 불필요한 메타데이터 제거
+      // 필수 필드만 포함
+      candidateId: result.candidateInfo?.id,
       candidateInfo: {
         id: result.candidateInfo?.id,
         name: result.candidateInfo?.name,
@@ -766,9 +766,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
         language: result.candidateInfo?.language,
         category: result.candidateInfo?.category,
         submittedAt: result.candidateInfo?.submittedAt,
-        // 불필요한 필드 제거
       },
-      // 평가 데이터만 유지
+      // 평가 데이터 (필수만)
       scores: result.scores,
       categoryScores: result.categoryScores,
       totalScore: result.totalScore,
@@ -779,8 +778,37 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
       evaluatedAt: result.evaluatedAt,
       dropboxPath: result.dropboxPath,
     };
+    
+    // 불필요한 필드들 제거 (타입 안전하게)
+    const cleanCandidateInfo = { ...optimizedResult.candidateInfo };
+    delete (cleanCandidateInfo as any).email;
+    delete (cleanCandidateInfo as any).department;
+    delete (cleanCandidateInfo as any).recordingCount;
+    delete (cleanCandidateInfo as any).scriptNumbers;
+    delete (cleanCandidateInfo as any).comment;
+    delete (cleanCandidateInfo as any).duration;
+    delete (cleanCandidateInfo as any).recordings;
+    delete (cleanCandidateInfo as any).recordingBlobs;
+    delete (cleanCandidateInfo as any).uploadedFiles;
+    delete (cleanCandidateInfo as any).driveFolder;
+    delete (cleanCandidateInfo as any).dropboxFiles;
+    
+    optimizedResult.candidateInfo = cleanCandidateInfo;
 
-    console.log("최적화된 평가 결과 크기:", JSON.stringify(optimizedResult).length, "bytes");
+    const dataSize = JSON.stringify(optimizedResult).length;
+    const dataSizeKB = (dataSize / 1024).toFixed(2);
+    const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
+    
+    console.log("📊 데이터 크기 분석:");
+    console.log(`- 원본 크기: ${JSON.stringify(result).length} bytes`);
+    console.log(`- 최적화 크기: ${dataSize} bytes (${dataSizeKB} KB, ${dataSizeMB} MB)`);
+    console.log(`- Vercel 제한: 4.5MB`);
+    console.log(`- 상태: ${dataSize > 4.5 * 1024 * 1024 ? '❌ 초과' : '✅ OK'}`);
+    
+    if (dataSize > 4.5 * 1024 * 1024) {
+      alert(`❌ 데이터가 너무 큽니다!\n\n현재 크기: ${dataSizeMB}MB\nVercel 제한: 4.5MB\n\n평가 데이터를 간소화해주세요.`);
+      return;
+    }
 
     try {
       const response = await fetch("/api/evaluations/save-dropbox", {
@@ -1097,15 +1125,42 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
         reviewRequestedAt: new Date().toISOString(),
       });
       
+      // 검토 요청 데이터도 최적화
+      const optimizedReviewData = {
+        candidateId: result.candidateInfo?.id,
+        candidateInfo: {
+          id: result.candidateInfo?.id,
+          name: result.candidateInfo?.name,
+          employeeId: result.candidateInfo?.employeeId,
+          language: result.candidateInfo?.language,
+          category: result.candidateInfo?.category,
+          submittedAt: result.candidateInfo?.submittedAt,
+        },
+        scores: result.scores,
+        categoryScores: result.categoryScores,
+        totalScore: result.totalScore,
+        grade: result.grade,
+        comments: result.comments,
+        status: "review_requested",
+        reviewRequestedBy: employeeName,
+        reviewRequestedAt: new Date().toISOString(),
+        dropboxPath: result.dropboxPath,
+      };
+
+      const reviewDataSize = JSON.stringify(optimizedReviewData).length;
+      const reviewDataSizeMB = (reviewDataSize / (1024 * 1024)).toFixed(2);
+      
+      console.log(`📊 검토 요청 데이터 크기: ${reviewDataSize} bytes (${reviewDataSizeMB} MB)`);
+      
+      if (reviewDataSize > 4.5 * 1024 * 1024) {
+        alert(`❌ 검토 요청 데이터가 너무 큽니다!\n\n현재 크기: ${reviewDataSizeMB}MB\nVercel 제한: 4.5MB`);
+        return;
+      }
+
       const response = await fetch("/api/evaluations/save-dropbox", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...result,
-          status: "review_requested",
-          reviewRequestedBy: employeeName,
-          reviewRequestedAt: new Date().toISOString(),
-        }),
+        body: JSON.stringify(optimizedReviewData),
       })
 
       console.log("📡 [handleRequestReview] API 응답 상태:", response.status, response.statusText)
