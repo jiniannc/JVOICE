@@ -9,17 +9,6 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  // API Route 크기 제한 증가
-  experimental: {
-    serverComponentsExternalPackages: [],
-  },
-  // API 요청 크기 제한 설정
-  api: {
-    bodyParser: {
-      sizeLimit: '50mb', // 10mb에서 50mb로 증가
-    },
-    responseLimit: '50mb',
-  },
   async headers() {
     return [
       {
