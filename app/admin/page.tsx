@@ -910,6 +910,16 @@ export default function AdminDashboard() {
     try {
       // 병렬로 재평가 처리
       const reevaluatePromises = reevaluateTargets.map(async (submission) => {
+        console.log(`🔄 [재평가] ${submission.name} 처리 시작:`, {
+          dropboxPath: submission.dropboxPath,
+          status: submission.status,
+          approved: submission.approved
+        });
+        
+        if (!submission.dropboxPath) {
+          throw new Error(`재평가 실패 (${submission.name}): dropboxPath가 없습니다.`);
+        }
+        
         const response = await fetch('/api/evaluations/reevaluate', {
           method: 'POST',
           headers: {
@@ -922,8 +932,12 @@ export default function AdminDashboard() {
         });
 
         const result = await response.json();
+        console.log(`📡 [재평가] ${submission.name} API 응답:`, result);
+        
         if (!result.success) {
-          throw new Error(`재평가 실패 (${submission.name}): ${result.error}`);
+          const errorDetails = result.details || result.error || "알 수 없는 오류";
+          const errorCode = result.code || "UNKNOWN";
+          throw new Error(`재평가 실패 (${submission.name}): ${errorDetails} [코드: ${errorCode}]`);
         }
         return result;
       });
