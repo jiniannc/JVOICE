@@ -27,8 +27,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL("/?error=missing_config", request.url))
     }
 
-    // 동적 redirect_uri 생성
-    const baseUrl = request.nextUrl.origin
+    // 강제로 Render URL 사용
+    const baseUrl = 'https://jvoice.onrender.com'
     const redirectUri = `${baseUrl}/api/auth/google/callback`
 
     console.log("🔄 [Google Callback] 토큰 교환 시작...")
