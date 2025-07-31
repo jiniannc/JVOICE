@@ -91,8 +91,33 @@ export default function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<string>("")
 
+  // 실제 데이터에서 사용 가능한 월들을 추출하여 드롭다운 생성
+  const monthOptions = useMemo(() => {
+    // submissions에서 고유한 월들을 추출
+    const uniqueMonths = new Set<string>();
+    
+    submissions.forEach(sub => {
+      if (sub.submittedAt) {
+        const month = sub.submittedAt.slice(0, 7); // YYYY-MM 형식
+        uniqueMonths.add(month);
+      }
+    });
+    
+    // 월별로 정렬 (최신순)
+    const sortedMonths = Array.from(uniqueMonths).sort().reverse();
+    
+    return sortedMonths.map(month => {
+      const date = new Date(month + '-01'); // 월의 첫째 날로 Date 객체 생성
+      return {
+        value: month,
+        label: date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })
+      };
+    });
+  }, [submissions]);
+
   // 필터 및 검색 상태
   const [searchTerm, setSearchTerm] = useState("")
+  const [searchMode, setSearchMode] = useState<"all" | "monthly">("all") // 전체 검색 또는 월별 검색
   const [languageFilter, setLanguageFilter] = useState<string>("all")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -114,8 +139,6 @@ export default function AdminDashboard() {
   useEffect(() => {
     loadData();
     setLastUpdate(new Date().toLocaleTimeString());
-    setSelectedMonth(new Date().toISOString().slice(0, 7));
-    setListMonth(new Date().toISOString().slice(0, 7));
     loadLoginLogs(); // 로그인 기록 자동 로드 추가
     // 자동 새로고침 제거, 수동 업데이트만 허용
   }, []);
@@ -136,6 +159,7 @@ export default function AdminDashboard() {
       const pendingData = await pendingRes.json();
       const completedData = await completedRes.json();
       
+      // 모든 데이터를 합치기 (pending + completed)
       const allEvaluations = [
         ...(pendingData.evaluations || []),
         ...(completedData.evaluations || []),
@@ -202,6 +226,15 @@ export default function AdminDashboard() {
 
       console.log(`✅ [관리자] 필터링 후 유효한 데이터: ${formattedSubmissions.length}개`);
       setSubmissions(formattedSubmissions);
+      
+      // 데이터가 로드된 후 첫 번째 월을 자동으로 선택
+      if (formattedSubmissions.length > 0) {
+        const firstMonth = formattedSubmissions[0].submittedAt?.slice(0, 7);
+        if (firstMonth) {
+          setSelectedMonth(firstMonth);
+          setListMonth(firstMonth);
+        }
+      }
 
     } catch (error) {
       console.error("❌ [관리자] 데이터 로딩 실패:", error)
@@ -329,8 +362,8 @@ export default function AdminDashboard() {
           return false;
         }
 
-        // 월별 필터
-        if (!sub.submittedAt.startsWith(listMonth)) return false
+        // 월별 필터 (검색 모드가 'monthly'일 때만 적용)
+        if (searchMode === "monthly" && !sub.submittedAt.startsWith(listMonth)) return false
 
         // 검색 필터 (이름 또는 사번)
         if (
@@ -353,7 +386,7 @@ export default function AdminDashboard() {
         return true
       })
       .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()) // 최신순 정렬
-  }, [submissions, listMonth, searchTerm, languageFilter, categoryFilter, statusFilter]);
+  }, [submissions, listMonth, searchTerm, searchMode, languageFilter, categoryFilter, statusFilter]);
 
   // 페이지네이션된 데이터
   const paginatedSubmissions = useMemo(() => {
@@ -373,7 +406,7 @@ export default function AdminDashboard() {
   // 필터나 검색이 변경될 때 페이지를 1로 리셋
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, languageFilter, categoryFilter, statusFilter, listMonth]);
+  }, [searchTerm, searchMode, languageFilter, categoryFilter, statusFilter, listMonth]);
 
   // v85 통계 계산 - 정확한 버전
   const monthlyStats = useMemo(() => {
@@ -955,16 +988,11 @@ export default function AdminDashboard() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 12 }, (_, i) => {
-                        const monthDate1 = new Date();
-                        monthDate1.setMonth(monthDate1.getMonth() - i);
-                        const monthStr1 = monthDate1.toISOString().slice(0, 7);
-                        return (
-                          <SelectItem key={`stats-${lang}-${monthStr1}-${i}`} value={monthStr1}>
-                            {monthDate1.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
-                          </SelectItem>
-                        )
-                      })}
+                      {monthOptions.map((option, i) => (
+                        <SelectItem key={`stats-${lang}-${option.value}`} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </CardTitle>
@@ -1037,16 +1065,11 @@ export default function AdminDashboard() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Array.from({ length: 12 }, (_, i) => {
-                    const date = new Date();
-                    date.setMonth(date.getMonth() - i);
-                    const monthStr2 = date.toISOString().slice(0, 7);
-                    return (
-                      <SelectItem key={`export-${monthStr2}-${i}`} value={monthStr2}>
-                        {date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
-                      </SelectItem>
-                    );
-                  })}
+                  {monthOptions.map((option, i) => (
+                    <SelectItem key={`export-${option.value}`} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1080,16 +1103,11 @@ export default function AdminDashboard() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Array.from({ length: 12 }, (_, i) => {
-                      const date = new Date()
-                      date.setMonth(date.getMonth() - i)
-                      const monthStr3 = date.toISOString().slice(0, 7)
-                      return (
-                        <SelectItem key={`list-${monthStr3}-${i}`} value={monthStr3}>
-                          {date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
-                        </SelectItem>
-                      )
-                    })}
+                    {monthOptions.map((option, i) => (
+                      <SelectItem key={`list-${option.value}`} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1111,6 +1129,16 @@ export default function AdminDashboard() {
                   className="pl-10 h-9"
                 />
               </div>
+
+              <Select value={searchMode} onValueChange={(value: "all" | "monthly") => setSearchMode(value)}>
+                <SelectTrigger className="w-32 h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">전체 검색</SelectItem>
+                  <SelectItem value="monthly">월별 검색</SelectItem>
+                </SelectContent>
+              </Select>
 
               <Select value={languageFilter} onValueChange={setLanguageFilter}>
                 <SelectTrigger className="w-32 h-9">
@@ -1147,12 +1175,13 @@ export default function AdminDashboard() {
                 </SelectContent>
               </Select>
 
-              {(searchTerm || languageFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all") && (
+              {(searchTerm || searchMode !== "all" || languageFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all") && (
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => {
                     setSearchTerm("")
+                    setSearchMode("all")
                     setLanguageFilter("all")
                     setCategoryFilter("all")
                     setStatusFilter("all")

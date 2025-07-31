@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useRef, useMemo } from "react"
+import React, { useState, useRef, useMemo, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { employeeDB } from "@/lib/employee-database"
 import { 
   Upload, 
   FileAudio, 
@@ -49,8 +50,8 @@ interface UploadedFile {
 
 export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: FileUploadEvaluationProps) {
   const [userInfo, setUserInfo] = useState<UserInfo>({
-    name: authenticatedUser?.name || "",
-    employeeId: authenticatedUser?.broadcastCode || "",
+    name: "",
+    employeeId: "",
     language: "",
     category: "",
     email: authenticatedUser?.email,
@@ -66,7 +67,29 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
   const [currentPlaying, setCurrentPlaying] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [showLanguageModal, setShowLanguageModal] = useState(false)
+  const [isDragOver, setIsDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 직원정보 스프레드시트에서 이름과 사번 가져오기
+  useEffect(() => {
+    const fetchEmployeeInfo = async () => {
+      if (authenticatedUser?.email) {
+        try {
+          const employeeInfo = await employeeDB.findEmployeeByEmail(authenticatedUser.email)
+          if (employeeInfo) {
+            setUserInfo(prev => ({
+              ...prev,
+              name: employeeInfo.name,
+              employeeId: employeeInfo.employeeId,
+            }))
+          }
+        } catch (error) {
+          console.error("직원정보 가져오기 실패:", error)
+        }
+      }
+    }
+    fetchEmployeeInfo()
+  }, [authenticatedUser?.email])
 
   const getCategoryOptions = useMemo(() => {
     if (userInfo.language === "korean-english") {
@@ -95,7 +118,10 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (!files) return
+    processFiles(Array.from(files))
+  }
 
+  const processFiles = (files: File[]) => {
     const newFiles: UploadedFile[] = []
     
     Array.from(files).forEach((file) => {
@@ -147,6 +173,24 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
 
     setUploadedFiles(prev => [...prev, ...newFiles])
     setError(null)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    
+    const files = Array.from(e.dataTransfer.files)
+    processFiles(files)
   }
 
   const removeFile = (key: string) => {
@@ -365,16 +409,20 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
   }, [requiredFiles, uploadedFiles, userInfo.language])
 
   return (
-    <div className="min-h-screen bg-white p-4">
+    <div className="bg-white p-4">
       <div className="max-w-4xl mx-auto">
-        <div className="mb-6">
-          <Button onClick={onBack} variant="outline" className="mb-4">
-            ← 돌아가기
-          </Button>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">PUS 녹음파일 업로드</h1>
-          <p className="text-gray-600">
-            기존 녹음 파일을 업로드하여 평가를 진행할 수 있습니다.
-          </p>
+        <div className="mb-6 relative" style={{ marginTop: '15px' }}>
+          <div className="flex justify-between items-start">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">📤 녹음 파일 제출(PUS)</h1>
+            <Button 
+              onClick={onBack} 
+              variant="ghost" 
+              size="sm"
+              className="p-2 hover:bg-gray-100 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </Button>
+          </div>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
@@ -394,7 +442,8 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                   value={userInfo.name}
                   onChange={(e) => setUserInfo(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="성명을 입력하세요"
-                  disabled={!!authenticatedUser?.name}
+                  disabled={authenticatedUser ? true : false}
+                  className={authenticatedUser ? "bg-gray-50" : ""}
                 />
               </div>
 
@@ -405,7 +454,8 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                   value={userInfo.employeeId}
                   onChange={(e) => setUserInfo(prev => ({ ...prev, employeeId: e.target.value }))}
                   placeholder="직원번호를 입력하세요"
-                  disabled={!!authenticatedUser?.broadcastCode}
+                  disabled={authenticatedUser ? true : false}
+                  className={authenticatedUser ? "bg-gray-50" : ""}
                 />
               </div>
 
@@ -458,29 +508,66 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-600 mb-2">
-                  녹음 파일을 선택하거나 여기로 드래그하세요
-                </p>
-                <p className="text-xs text-gray-500 mb-4">
-                  언어별로 1개 파일씩 업로드 (파일명 자유)
-                </p>
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  variant="outline"
-                  className="w-full"
-                >
-                  파일 선택
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept="audio/*"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
+              <div 
+                className={`border-2 border-dashed rounded-lg p-6 text-center transition-all duration-200 ${
+                  !userInfo.language 
+                    ? 'border-gray-200 bg-gray-50' 
+                    : isDragOver 
+                      ? 'border-blue-400 bg-blue-50' 
+                      : 'border-gray-300 hover:border-gray-400'
+                }`}
+                onDragOver={userInfo.language ? handleDragOver : undefined}
+                onDragLeave={userInfo.language ? handleDragLeave : undefined}
+                onDrop={userInfo.language ? handleDrop : undefined}
+              >
+                <Upload className={`w-8 h-8 mx-auto mb-2 transition-colors duration-200 ${
+                  !userInfo.language 
+                    ? 'text-gray-300' 
+                    : isDragOver 
+                      ? 'text-blue-500' 
+                      : 'text-gray-400'
+                }`} />
+                {!userInfo.language ? (
+                  <>
+                    <p className="text-sm text-gray-500 mb-2">
+                      먼저 언어를 선택해주세요
+                    </p>
+                    <p className="text-xs text-gray-400 mb-4">
+                      언어 선택 후 파일 업로드가 가능합니다
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-600 mb-2">
+                      녹음 파일을 선택하거나 여기로 드래그하세요
+                    </p>
+                    <p className="text-xs text-gray-500 mb-2">
+                      언어별로 1개 파일씩 업로드
+                    </p>
+                    <div className="text-xs text-gray-600 mb-4 text-left bg-gray-50 p-3 rounded border">
+                      <p className="font-medium mb-1">파일명 규칙:</p>
+                      <p className="text-gray-700">123456K 홍길동(한국어)</p>
+                      <p className="text-gray-700">123456K 홍길동(영어)</p>
+                      <p className="text-gray-700">123456K 홍길동(일본어)</p>
+                      <p className="text-gray-700">123456K 홍길동(중국어)</p>
+                    </div>
+                    <Button
+                      onClick={() => fileInputRef.current?.click()}
+                      variant="outline"
+                      className="w-full"
+                    >
+                      파일 선택
+                    </Button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="audio/*"
+                      onChange={handleFileSelect}
+                      className="hidden"
+                    />
+                  </>
+                )}
               </div>
 
               {/* 업로드된 파일 목록 */}
@@ -583,12 +670,12 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
             ) : (
               <>
                 <Upload className="w-4 h-4 mr-2" />
-                업로드 시작
+                제출하기
               </>
             )}
           </Button>
           
-          {missingFiles.length > 0 && (
+          {userInfo.language && missingFiles.length > 0 && (
             <p className="text-sm text-orange-600 mt-2">
               {missingFiles.length}개의 파일이 더 필요합니다: {missingFiles.join(", ")}
             </p>

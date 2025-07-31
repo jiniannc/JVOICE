@@ -755,11 +755,38 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
 
     console.log("최종 평가 결과:", result)
 
+    // Vercel Hobby 플랜 대응: 데이터 최적화
+    const optimizedResult = {
+      ...result,
+      // 불필요한 메타데이터 제거
+      candidateInfo: {
+        id: result.candidateInfo?.id,
+        name: result.candidateInfo?.name,
+        employeeId: result.candidateInfo?.employeeId,
+        language: result.candidateInfo?.language,
+        category: result.candidateInfo?.category,
+        submittedAt: result.candidateInfo?.submittedAt,
+        // 불필요한 필드 제거
+      },
+      // 평가 데이터만 유지
+      scores: result.scores,
+      categoryScores: result.categoryScores,
+      totalScore: result.totalScore,
+      grade: result.grade,
+      comments: result.comments,
+      status: result.status,
+      evaluatedBy: result.evaluatedBy,
+      evaluatedAt: result.evaluatedAt,
+      dropboxPath: result.dropboxPath,
+    };
+
+    console.log("최적화된 평가 결과 크기:", JSON.stringify(optimizedResult).length, "bytes");
+
     try {
       const response = await fetch("/api/evaluations/save-dropbox", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result), // result에 dropboxPath가 포함되어 있음
+        body: JSON.stringify(optimizedResult),
       })
 
       if (!response.ok) {
@@ -773,9 +800,28 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
       await loadCandidates(); // 목록 새로고침(상태 반영)
       handleEvaluationComplete(); // 요약 화면 닫기 및 상태 초기화
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("평가 결과 저장 중 오류 발생:", error)
-      // 사용자에게 오류 알림 (예: 토스트 메시지)
+      
+      // 413 에러 특별 처리
+      if (error.message?.includes('413') || error.status === 413) {
+        alert("❌ 평가 데이터가 너무 큽니다.\n\n평가 결과를 다시 시도해주세요.\n문제가 지속되면 관리자에게 문의하세요.")
+        return
+      }
+      
+      // 네트워크 에러 처리
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        alert("❌ 네트워크 연결 오류\n\n인터넷 연결을 확인하고 다시 시도해주세요.")
+        return
+      }
+      
+      // 기타 에러 처리
+      let errorMessage = "평가 결과 저장 중 오류가 발생했습니다."
+      if (error.message) {
+        errorMessage += `\n\n오류 내용: ${error.message}`
+      }
+      
+      alert(`❌ ${errorMessage}\n\n다시 시도해주세요.`)
     }
   }
 
@@ -1074,9 +1120,28 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo }: Eva
       console.log("검토 요청 성공:", apiResult)
 
       alert(`✅ 검토 요청이 성공적으로 처리되었습니다!\n\n다른 교관이 검토할 수 있도록 평가 대시보드에 표시됩니다.`)
-    } catch (error) {
+    } catch (error: any) {
       console.error("검토 요청 저장 실패:", error)
-      alert(`❌ 검토 요청 처리 중 오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`)
+      
+      // 413 에러 특별 처리
+      if (error.message?.includes('413') || error.status === 413) {
+        alert("❌ 검토 요청 데이터가 너무 큽니다.\n\n검토 요청을 다시 시도해주세요.\n문제가 지속되면 관리자에게 문의하세요.")
+        return
+      }
+      
+      // 네트워크 에러 처리
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        alert("❌ 네트워크 연결 오류\n\n인터넷 연결을 확인하고 다시 시도해주세요.")
+        return
+      }
+      
+      // 기타 에러 처리
+      let errorMessage = "검토 요청 처리 중 오류가 발생했습니다."
+      if (error.message) {
+        errorMessage += `\n\n오류 내용: ${error.message}`
+      }
+      
+      alert(`❌ ${errorMessage}\n\n다시 시도해주세요.`)
     }
 
     // 목록 새로고침하여 상태 변경 반영

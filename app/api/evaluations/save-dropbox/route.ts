@@ -4,6 +4,29 @@ import path from "path";
 
 export async function POST(request: NextRequest) {
   try {
+    // Vercel Hobby 플랜 대응: 스트리밍 처리
+    const isVercel = process.env.VERCEL === '1';
+    
+    // 요청 크기 확인 (Vercel Hobby 플랜: 4.5MB 제한)
+    const contentLength = request.headers.get('content-length');
+    const maxSize = isVercel ? 4.5 * 1024 * 1024 : 50 * 1024 * 1024;
+    
+    if (contentLength && parseInt(contentLength) > maxSize) {
+      const maxSizeMB = isVercel ? '4.5MB' : '50MB';
+      return NextResponse.json(
+        {
+          error: `평가 데이터가 너무 큽니다. (최대 ${maxSizeMB})`,
+          details: isVercel 
+            ? "Vercel Hobby 플랜에서는 4.5MB 제한이 적용됩니다. 평가 데이터를 간소화하거나 Pro 플랜으로 업그레이드하세요."
+            : "평가 결과를 다시 시도해주세요. 문제가 지속되면 관리자에게 문의하세요.",
+          code: "PAYLOAD_TOO_LARGE",
+          environment: isVercel ? "vercel-hobby" : "local"
+        },
+        { status: 413 }
+      );
+    }
+
+    // 스트리밍으로 데이터 읽기 (메모리 효율성)
     const evaluationData = await request.json();
 
     if (!evaluationData.dropboxPath) {
@@ -65,6 +88,19 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("❌ [API] Dropbox 평가 결과 저장 실패:", error);
+    
+    // 413 에러 특별 처리
+    if (error.message?.includes('413') || error.status === 413) {
+      return NextResponse.json(
+        {
+          error: "평가 데이터가 너무 큽니다. (최대 10MB)",
+          details: "평가 결과를 다시 시도해주세요. 문제가 지속되면 관리자에게 문의하세요.",
+          code: "PAYLOAD_TOO_LARGE"
+        },
+        { status: 413 }
+      );
+    }
+    
     const errorMessage =
       error.response?.data?.error_summary ||
       error.message ||

@@ -25,6 +25,7 @@ import {
   ClipboardCheck,
   LogIn,
   Globe,
+  Upload,
 } from "lucide-react"
 import { PDFViewer } from "@/components/pdf-viewer"
 import { AudioRecorder } from "@/components/audio-recorder"
@@ -36,6 +37,7 @@ import { TypographyAnimation } from "@/components/typography-animation"
 import HeroLottie from "@/components/hero-lottie"
 import ScrollDownLottie from "@/components/scroll-down-lottie"
 import { RecordingWaitingPage } from "@/components/recording-waiting-page"
+import { FileUploadEvaluation } from "@/components/file-upload-evaluation"
 import { pdfSyncService } from "@/lib/pdf-sync-service"
 import { employeeDB } from "@/lib/employee-database"
 import Image from "next/image"
@@ -140,6 +142,7 @@ export default function HomePage() {
   const [showMyPage, setShowMyPage] = useState(false)
   const [showRecordingSetup, setShowRecordingSetup] = useState(false)
   const [showRecordingWaiting, setShowRecordingWaiting] = useState(false)
+  const [showFileUpload, setShowFileUpload] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState("");
@@ -351,6 +354,12 @@ export default function HomePage() {
     }
   }
 
+  const handleFileUploadComplete = (result: any) => {
+    console.log("파일 업로드 완료:", result)
+    setShowFileUpload(false)
+    // 성공 메시지나 다른 처리를 여기에 추가할 수 있습니다
+  }
+
 
 
   const getLanguageDisplay = (language: string) => {
@@ -390,6 +399,7 @@ export default function HomePage() {
         if (showAdminAuth) setShowAdminAuth(false);
         if (showEvaluationAuth) setShowEvaluationAuth(false);
         if (showMyPage) setShowMyPage(false);
+        if (showFileUpload) setShowFileUpload(false);
       }
     };
 
@@ -397,7 +407,7 @@ export default function HomePage() {
     return () => {
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [showRecordingSetup, showAdminAuth, showEvaluationAuth, showMyPage]);
+  }, [showRecordingSetup, showAdminAuth, showEvaluationAuth, showMyPage, showFileUpload]);
 
   // 로딩 중
   if (authenticatedUser === undefined) {
@@ -818,7 +828,7 @@ export default function HomePage() {
                 <CardTitle className="text-xl font-bold text-slate-800 mb-2">Record</CardTitle>
                 <CardDescription className="text-slate-600">기내 방송 음성 녹음 및 제출</CardDescription>
               </CardHeader>
-              <CardContent className="px-8 pb-8">
+              <CardContent className="px-8 pb-8 relative overflow-hidden group-hover:pb-24 transition-all duration-300">
                 <Button
                   onClick={(e) => {
                     e.stopPropagation()
@@ -829,6 +839,29 @@ export default function HomePage() {
                   <Mic className="w-4 h-4 mr-2" />
                   녹음 시작하기
                 </Button>
+                
+                {/* 호버 시 나타나는 추가 버튼들 */}
+                <div className="absolute left-8 right-8 top-14 transform translate-y-full opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300 ease-out">
+                  {/* 구분선 */}
+                  <div className="relative mb-1.5 flex items-center">
+                    <div className="flex-1 border-t border-gray-200"></div>
+                    <span className="px-3 text-xs uppercase text-gray-400 font-medium">OR</span>
+                    <div className="flex-1 border-t border-gray-200"></div>
+                  </div>
+                  
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      console.log("녹음 제출하기 버튼 클릭됨")
+                      setShowFileUpload(true)
+                    }}
+                    variant="outline"
+                    className="w-full h-12 text-sm font-medium rounded-xl border border-blue-400 hover:border-blue-500 hover:bg-blue-50 transition-all duration-300 text-blue-700 hover:text-blue-800"
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    녹음 제출하기 (PUS)
+                  </Button>
+                </div>
               </CardContent>
             </div>
 
@@ -1064,6 +1097,19 @@ export default function HomePage() {
           <div className="flex flex-col text-right">
             <span className="text-xs font-semibold text-gray-800 leading-tight">{authenticatedUser.name}</span>
             <span className="text-[11px] text-gray-500 leading-tight">{authenticatedUser.email}</span>
+          </div>
+        </div>
+      )}
+
+      {/* 파일 업로드 모달 */}
+      {showFileUpload && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl w-[85%] max-w-5xl mx-4 max-h-[90vh] overflow-y-auto">
+            <FileUploadEvaluation 
+              onComplete={handleFileUploadComplete}
+              onBack={() => setShowFileUpload(false)}
+              authenticatedUser={authenticatedUser}
+            />
           </div>
         </div>
       )}
@@ -2613,6 +2659,8 @@ function EvaluationMode({
         />
         </div>
       )}
+
+
     </div>
   )
 }
