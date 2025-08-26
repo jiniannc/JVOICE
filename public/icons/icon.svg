@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="128" fill="#1e40af"/>
+  <circle cx="256" cy="200" r="80" fill="white" opacity="0.9"/>
+  <path d="M176 320 L336 320 L256 400 Z" fill="white" opacity="0.9"/>
+  <circle cx="256" cy="180" r="20" fill="#1e40af"/>
+  <path d="M236 200 L276 200 L256 220 Z" fill="#1e40af"/>
+  <text x="256" y="480" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="48" font-weight="bold">JINAIR</text>
+</svg>
+
+

@@ -6,8 +6,11 @@ export interface Employee {
   employeeId: string
   department: string
   position: string
+  lineTeam?: string // 라인팀 정보
   isActive: boolean
-  isInstructor: boolean // 교관 여부 추가
+  isInstructor: boolean // 교관 여부 (관리자도 포함)
+  isAdmin: boolean // 관리자 여부
+  roles: string[] // 역할 목록 (교관, 관리자 등)
   koreanEnglishGrade?: string // G열: 한영 자격
   koreanEnglishExpiry?: string // H열: 한영 유효기간
   japaneseGrade?: string // I열: 일본어 자격
@@ -34,7 +37,7 @@ export class EmployeeDatabase {
       console.log("스프레드시트에서 승무원 정보 로딩 중...")
 
       const apiKey = getEnvValue("NEXT_PUBLIC_GOOGLE_API_KEY")
-      const range = "직원목록!A2:J1000" // A~J열까지 (자격 정보 포함)
+      const range = "직원목록!A2:K1000" // A~K열까지 (라인팀 정보 포함)
 
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${range}?key=${apiKey}`
 
@@ -54,21 +57,38 @@ export class EmployeeDatabase {
 
       this.employees = rows
         .map((row: string[], index: number) => {
-          const activeValue = (row[5] || "Y").trim().toUpperCase()
-          const isActive = !row[5] || activeValue === "Y" || activeValue === "교관"
-          const isInstructor = activeValue === "교관"
+          const activeValue = (row[5] || "Y").trim()
+          const isActive = !row[5] || activeValue === "Y" || activeValue.includes("교관") || activeValue.includes("관리자")
+          
+          // F컬럼에서 역할 파싱 (쉼표로 구분된 여러 역할 지원)
+          const roles = activeValue.split(/[,，]/).map(role => role.trim()).filter(role => role && role !== "Y")
+          const isAdmin = roles.includes("관리자")
+          // 관리자는 교관 기능도 포함하므로, 관리자이거나 교관이면 isInstructor = true
+          const isInstructor = roles.includes("교관") || isAdmin
+          
           const employee = {
             email: (row[0] || "").trim().toLowerCase(),
             name: (row[1] || "").trim(),
             employeeId: (row[2] || "").trim(),
             department: (row[3] || "").trim(),
             position: (row[4] || "").trim(), // E열 값만!
+            lineTeam: (row[10] || "").trim(), // K열: 라인팀 정보
             isActive,
-            isInstructor, // 교관 여부 추가
+            isInstructor, // 교관 여부 (관리자도 포함)
+            isAdmin, // 관리자 여부
+            roles, // 역할 목록
             koreanEnglishGrade: (row[6] || "").trim(), // G열: 한영 자격
             koreanEnglishExpiry: (row[7] || "").trim(), // H열: 한영 유효기간
             japaneseGrade: (row[8] || "").trim(), // I열: 일본어 자격
             chineseGrade: (row[9] || "").trim(), // J열: 중국어 자격
+          }
+          
+          // 유대권 직원 데이터 디버깅
+          if (employee.email === 'dkyou@jinair.com' || employee.name.includes('유대권')) {
+            console.log('🔍 유대권 직원 원본 데이터:', {
+              row: row,
+              employee: employee
+            })
           }
           // 유효성 검사
           if (!employee.email || !employee.name || !employee.employeeId) {
@@ -127,6 +147,8 @@ export class EmployeeDatabase {
         position: "A10",
         isActive: true,
         isInstructor: false,
+        isAdmin: false,
+        roles: [],
       },
       {
         email: "park.hanggong@jinair.com",
@@ -136,6 +158,8 @@ export class EmployeeDatabase {
         position: "B20",
         isActive: true,
         isInstructor: false,
+        isAdmin: false,
+        roles: [],
       },
       {
         email: "test@gmail.com",
@@ -145,6 +169,8 @@ export class EmployeeDatabase {
         position: "T99",
         isActive: true,
         isInstructor: false,
+        isAdmin: false,
+        roles: [],
       },
     ]
   }
@@ -156,7 +182,7 @@ export class EmployeeDatabase {
     const found = employees.find((emp) => emp.email === normalizedEmail)
 
     if (found) {
-      console.log("✅ 승무원 정보 찾음:", found.name, found.employeeId)
+      console.log("✅ 승무원 정보 찾음:", found.name, found.employeeId, "역할:", found.roles)
     } else {
       console.warn("❌ 등록되지 않은 이메일:", email)
       console.log(

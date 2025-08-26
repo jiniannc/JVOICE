@@ -112,6 +112,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 파일 업로드 후 평가 목록 캐시 무효화
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/evaluations/load-dropbox?invalidate=true`, {
+        method: "DELETE",
+        cache: "no-store"
+      });
+      console.log("✅ [API] 평가 목록 캐시 무효화 요청 완료");
+    } catch (error) {
+      console.warn("⚠️ [API] 캐시 무효화 실패:", error);
+    }
+
     return NextResponse.json({
       success: true,
       message: "파일 업로드가 완료되었고, 평가 대기 목록에 추가되었습니다.",

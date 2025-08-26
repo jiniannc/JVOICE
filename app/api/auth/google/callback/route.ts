@@ -2,6 +2,11 @@ import { type NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
+  // 환경 변수에서 base URL 가져오기, 없으면 request.url에서 추출
+  const baseUrl = process.env.NEXTAUTH_URL || 
+                 process.env.NEXT_PUBLIC_BASE_URL || 
+                 `${request.nextUrl.protocol}//${request.nextUrl.host}`
+
   try {
     console.log("🔍 [Google Callback] OAuth 콜백 처리 시작...")
 
@@ -11,12 +16,12 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error("❌ [Google Callback] OAuth 오류:", error)
-      return NextResponse.redirect(new URL(`/?error=${error}`, request.url))
+      return NextResponse.redirect(new URL(`/?error=${error}`, baseUrl))
     }
 
     if (!code) {
       console.error("❌ [Google Callback] 인증 코드가 없음")
-      return NextResponse.redirect(new URL("/?error=no_code", request.url))
+      return NextResponse.redirect(new URL("/?error=no_code", baseUrl))
     }
 
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
@@ -24,11 +29,9 @@ export async function GET(request: NextRequest) {
 
     if (!clientId || !clientSecret) {
       console.error("❌ [Google Callback] Google 설정이 누락됨")
-      return NextResponse.redirect(new URL("/?error=missing_config", request.url))
+      return NextResponse.redirect(new URL("/?error=missing_config", baseUrl))
     }
 
-    // 강제로 Render URL 사용
-    const baseUrl = 'https://jvoice.onrender.com'
     const redirectUri = `${baseUrl}/api/auth/google/callback`
 
     console.log("🔄 [Google Callback] 토큰 교환 시작...")
@@ -51,7 +54,7 @@ export async function GET(request: NextRequest) {
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.text()
       console.error("❌ [Google Callback] 토큰 교환 실패:", errorData)
-      return NextResponse.redirect(new URL("/?error=token_exchange_failed", request.url))
+      return NextResponse.redirect(new URL("/?error=token_exchange_failed", baseUrl))
     }
 
     const tokenData = await tokenResponse.json()
@@ -66,7 +69,7 @@ export async function GET(request: NextRequest) {
 
     if (!userResponse.ok) {
       console.error("❌ [Google Callback] 사용자 정보 가져오기 실패")
-      return NextResponse.redirect(new URL("/?error=user_info_failed", request.url))
+      return NextResponse.redirect(new URL("/?error=user_info_failed", baseUrl))
     }
 
     const userData = await userResponse.json()
@@ -75,7 +78,7 @@ export async function GET(request: NextRequest) {
     // JINAIR 도메인 확인
     if (!userData.email.endsWith("@jinair.com")) {
       console.error("❌ [Google Callback] 허용되지 않은 도메인:", userData.email)
-      return NextResponse.redirect(new URL("/?error=domain_not_allowed", request.url))
+      return NextResponse.redirect(new URL("/?error=domain_not_allowed", baseUrl))
     }
 
     // 쿠키에 사용자 정보 저장
@@ -107,7 +110,7 @@ export async function GET(request: NextRequest) {
 
     // 로그인 기록 저장
     try {
-      await fetch(`${new URL(request.url).origin}/api/auth/login-log`, {
+      await fetch(`${baseUrl}/api/auth/login-log`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -121,9 +124,9 @@ export async function GET(request: NextRequest) {
       console.error("로그인 기록 저장 실패:", error)
     }
 
-    return NextResponse.redirect(new URL("/?login=success", request.url))
+    return NextResponse.redirect(new URL("/?login=success", baseUrl))
   } catch (error) {
     console.error("❌ [Google Callback] 콜백 처리 실패:", error)
-    return NextResponse.redirect(new URL("/?error=callback_failed", request.url))
+    return NextResponse.redirect(new URL("/?error=callback_failed", baseUrl))
   }
 }

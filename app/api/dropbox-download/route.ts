@@ -79,9 +79,10 @@ export async function POST(request: NextRequest) {
 
     console.log('파일 다운로드 시작:', filePath)
 
-    // Dropbox API Arg 생성 (한글 경로 그대로 사용)
+    // Dropbox API Arg 생성 (절대 경로로 변환)
+    const absolutePath = filePath.startsWith('/') ? filePath : `/${filePath}`
     const dropboxArgs = {
-      path: filePath
+      path: absolutePath
     };
     const dropboxApiArg = JSON.stringify(dropboxArgs);
     console.log('Dropbox-API-Arg:', dropboxApiArg);
@@ -97,26 +98,49 @@ export async function POST(request: NextRequest) {
     });
 
     if (!response.ok) {
-      console.error('Dropbox 다운로드 실패:', response.status);
+      const errorText = await response.text();
+      console.error('Dropbox 다운로드 실패:', response.status, errorText);
+      
+      if (response.status === 409 || errorText.includes('not_found') || errorText.includes('path/not_found')) {
+        // 파일이 없는 경우
+        console.log('파일 없음:', filePath);
+        return NextResponse.json(
+          { error: '파일을 찾을 수 없습니다', notFound: true },
+          { status: 404 }
+        )
+      }
+      
       return NextResponse.json(
         { error: '파일 다운로드 실패' },
         { status: 500 }
       )
     }
 
-    // ArrayBuffer로 받아서 Base64로 변환
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64 = buffer.toString('base64');
-    const base64Data = `data:audio/webm;base64,${base64}`;
+    // JSON 파일인 경우 텍스트로, 음성 파일인 경우 Base64로 처리
+    if (filePath.endsWith('.json')) {
+      const text = await response.text();
+      console.log('JSON 파일 다운로드 완료:', filePath, '크기:', text.length, 'chars');
+      
+      return NextResponse.json({
+        success: true,
+        content: text,
+        fileSize: text.length
+      });
+    } else {
+      // ArrayBuffer로 받아서 Base64로 변환 (음성 파일용)
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const base64 = buffer.toString('base64');
+      const base64Data = `data:audio/webm;base64,${base64}`;
 
-    console.log('파일 다운로드 완료:', filePath, '크기:', buffer.length, 'bytes');
+      console.log('파일 다운로드 완료:', filePath, '크기:', buffer.length, 'bytes');
 
-    return NextResponse.json({
-      success: true,
-      base64Data: base64Data,
-      fileSize: buffer.length
-    });
+      return NextResponse.json({
+        success: true,
+        base64Data: base64Data,
+        fileSize: buffer.length
+      });
+    }
 
   } catch (error: any) {
     console.error('Dropbox 다운로드 오류:', error.response?.data || error.message)

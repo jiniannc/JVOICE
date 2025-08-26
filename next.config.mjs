@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone', // Fly.io 배포를 위한 설정
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -23,7 +24,7 @@ const nextConfig = {
               img-src * blob: data:;
               connect-src 'self' https://www.googleapis.com https://accounts.google.com https://sheets.googleapis.com;
               frame-src 'self' https://drive.google.com https://docs.google.com https://dl.dropboxusercontent.com https://www.dropbox.com;
-              media-src 'self' blob:;
+              media-src 'self' blob: data:;
             `.replace(/\s{2,}/g, " ").trim(),
           },
         ],

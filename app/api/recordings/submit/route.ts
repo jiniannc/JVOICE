@@ -2,8 +2,33 @@ import { NextRequest, NextResponse } from "next/server";
 import dropboxService from "@/lib/dropbox-service";
 import { randomUUID } from "crypto";
 
+async function isIpAllowed(request: NextRequest): Promise<boolean> {
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/devices/allowlist?mode=check`, {
+      headers: {
+        "x-forwarded-for": request.headers.get("x-forwarded-for") || "",
+        "x-real-ip": request.headers.get("x-real-ip") || "",
+      },
+      cache: "no-store",
+    });
+    const data = await res.json();
+    return !!data.allowed;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
+    // 실시간 녹음 제출은 허용된 IP만 가능 (파일 업로드 경로는 별도 API로 예외)
+    // 임시로 IP 체크 비활성화 - 녹음 제출 테스트용
+    /*
+    const allowed = await isIpAllowed(request);
+    if (!allowed) {
+      return NextResponse.json({ error: "허용되지 않은 컴퓨터에서의 녹음 제출입니다." }, { status: 403 });
+    }
+    */
+
     const submissionData = await request.json();
     console.log("녹음 제출:", submissionData);
 
@@ -71,6 +96,17 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         retry++;
       }
+    }
+
+    // 녹음 제출 후 평가 목록 캐시 무효화
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/evaluations/load-dropbox?invalidate=true`, {
+        method: "DELETE",
+        cache: "no-store"
+      });
+      console.log("✅ [API] 평가 목록 캐시 무효화 요청 완료");
+    } catch (error) {
+      console.warn("⚠️ [API] 캐시 무효화 실패:", error);
     }
 
     return NextResponse.json({

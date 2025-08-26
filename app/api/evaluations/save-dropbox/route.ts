@@ -40,22 +40,43 @@ export async function POST(request: NextRequest) {
       });
       finalPath = moveResult.metadata.path_display;
       console.log(`✅ [API] 파일 이동 성공: ${finalPath}`);
-      /* index.json 의 dropboxPath 업데이트 */
+      /* index.json 업데이트 (dropboxPath + 상태 정보) */
       try {
         const idxPath = "/evaluations/index.json";
         const idx = await dropboxService.getIndexJson({ path: idxPath });
         const list = Array.isArray(idx.entries) ? idx.entries : [];
         const entry = list.find((e: any)=>e.dropboxPath===dropboxPath);
         if(entry){
+          // dropboxPath 업데이트
           entry.dropboxPath = finalPath;
+          // 상태 정보 추가 (빠른 조회를 위해)
+          entry.status = evaluationData.status || 'pending';
+          entry.approved = evaluationData.approved || false;
+          entry.totalScore = evaluationData.totalScore || 0;
+          entry.grade = evaluationData.grade || 'N/A';
+          entry.evaluatedAt = evaluationData.evaluatedAt || null;
+          entry.evaluatedBy = evaluationData.evaluatedBy || null;
+          
           const buf = Buffer.from(JSON.stringify(list, null, 2),"utf-8");
           if(idx.rev){
             await dropboxService.overwriteIndexJson({path:idxPath,content:buf,rev:idx.rev});
           }else{
             await dropboxService.overwrite({path:idxPath,content:buf});
           }
+          console.log(`✅ [API] index.json 상태 정보 업데이트 완료: ${finalPath}`);
         }
-      }catch(err){console.warn("index.json path update fail",err);}
+      }catch(err){console.warn("index.json update fail",err);}
+    }
+
+    // 평가 저장 후 캐시 무효화
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/evaluations/load-dropbox?invalidate=true`, {
+        method: "DELETE",
+        cache: "no-store"
+      });
+      console.log("✅ [API] 평가 목록 캐시 무효화 요청 완료");
+    } catch (error) {
+      console.warn("⚠️ [API] 캐시 무효화 실패:", error);
     }
 
     return NextResponse.json({

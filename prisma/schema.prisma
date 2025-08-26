@@ -1,0 +1,157 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 사용자 테이블 (직원 정보)
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  employeeId  String   @unique
+  department  String
+  position    String?
+  lineTeam    String?
+  isActive    Boolean  @default(true)
+  isInstructor Boolean @default(false)
+  isAdmin     Boolean  @default(false)
+  roles       String[] // JSON 배열로 저장
+  koreanEnglishGrade String?
+  koreanEnglishExpiry String?
+  japaneseGrade String?
+  chineseGrade String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 관계
+  evaluations Evaluation[]
+  requests    Request[]
+  loginLogs   LoginLog[]
+
+  @@map("users")
+}
+
+// 평가 테이블
+model Evaluation {
+  id              String   @id @default(cuid())
+  userId          String
+  language        String   // 'korean-english', 'japanese', 'chinese'
+  category        String   // '신규', '재자격', '공통', 'PUS'
+  status          String   @default("pending") // 'pending', 'review_requested', 'submitted'
+  submittedAt     DateTime @default(now())
+  evaluatedAt     DateTime?
+  evaluatedBy     String?
+  totalScore      Float    @default(0)
+  koreanTotalScore Float   @default(0)
+  englishTotalScore Float  @default(0)
+  grade           String   @default("N/A")
+  comments        Json?    // { korean: string, english: string }
+  approved        Boolean  @default(false)
+  recordingCount  Int?
+  scriptNumbers   Int[]    // JSON 배열로 저장
+  comment         String?
+  duration        Int      @default(0)
+  isFileUpload    Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // 관계
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scores          EvaluationScore[]
+  recordings      Recording[]
+
+  @@map("evaluations")
+}
+
+// 평가 점수 테이블
+model EvaluationScore {
+  id           String @id @default(cuid())
+  evaluationId String
+  criteriaKey  String // 예: 'korean-pronunciation', 'english-fluency'
+  score        Float
+  language     String? // 'korean', 'english', 'japanese', 'chinese'
+  createdAt    DateTime @default(now())
+
+  // 관계
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, criteriaKey, language])
+  @@map("evaluation_scores")
+}
+
+// 녹음 파일 테이블
+model Recording {
+  id           String @id @default(cuid())
+  evaluationId String
+  scriptNumber Int
+  language     String // 'korean', 'english', 'japanese', 'chinese'
+  filePath     String
+  fileName     String
+  fileSize     Int?
+  originalFileName String?
+  url          String?
+  dropboxPath  String?
+  dropboxFileId String?
+  fileData     String? // Base64 인코딩된 파일 데이터
+  success      Boolean @default(true)
+  createdAt    DateTime @default(now())
+
+  // 관계
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, scriptNumber, language])
+  @@map("recordings")
+}
+
+// 신청 테이블 (교육/녹음 신청)
+model Request {
+  id              String   @id @default(cuid())
+  userId          String
+  type            String   // 'education', 'recording'
+  date            String   // YYYY-MM-DD
+  slot            Int
+  details         Json     // 상세 정보 (언어, 모드, 카테고리 등)
+  status          String   @default("ACTIVE") // 'ACTIVE', 'CANCELED'
+  notes           String?
+  canceledTime    DateTime?
+  applicationTime DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // 관계
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("requests")
+}
+
+// 로그인 로그 테이블
+model LoginLog {
+  id           String @id @default(cuid())
+  userId       String?
+  email        String
+  name         String
+  employeeId   String?
+  department   String?
+  loginTime    DateTime @default(now())
+  ipAddress    String?
+  userAgent    String?
+  loginMethod  String // 'google', 'workspace', 'test'
+  success      Boolean @default(true)
+  errorMessage String?
+
+  // 관계
+  user         User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("login_logs")
+}

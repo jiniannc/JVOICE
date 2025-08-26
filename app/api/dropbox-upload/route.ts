@@ -80,40 +80,63 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const formData = await request.formData()
-    const file = formData.get('file') as File
-    const fileName = formData.get('fileName') as string
+    const contentType = request.headers.get('content-type') || ''
+    
+    let buffer: Buffer
+    let dropboxPath: string
+    
+    if (contentType.includes('application/json')) {
+      // JSON 데이터 처리 (신청 데이터)
+      const body = await request.json()
+      const { path, content, mode = 'add' } = body
+      
+      if (!path || !content) {
+        return NextResponse.json(
+          { error: 'path와 content가 필요합니다' },
+          { status: 400 }
+        )
+      }
+      
+      buffer = Buffer.from(content, 'utf-8')
+      dropboxPath = `/${path}`
+      
+      console.log('JSON 업로드:', path)
+    } else {
+      // 파일 업로드 처리 (기존 로직)
+      const formData = await request.formData()
+      const file = formData.get('file') as File
+      const fileName = formData.get('fileName') as string
 
-    if (!file || !fileName) {
-      return NextResponse.json(
-        { error: '파일과 파일명이 필요합니다' },
-        { status: 400 }
-      )
+      if (!file || !fileName) {
+        return NextResponse.json(
+          { error: '파일과 파일명이 필요합니다' },
+          { status: 400 }
+        )
+      }
+
+      // Blob/File → ArrayBuffer → Buffer 변환
+      const arrayBuffer = await file.arrayBuffer()
+      buffer = Buffer.from(arrayBuffer)
+
+      // 파일명 처리
+      const timestamp = Date.now()
+      
+      // 디버깅: 원본 파일명 확인
+      console.log('원본 fileName:', fileName)
+      console.log('원본 fileName 타입:', typeof fileName)
+      console.log('원본 fileName 길이:', fileName.length)
+      
+      // 한글 파일명을 JSON 내부에 유지 (UTF-8 인코딩)
+      dropboxPath = `/recordings/${timestamp}_${fileName}`
     }
-
-    // Blob/File → ArrayBuffer → Buffer 변환
-    const arrayBuffer = await file.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-
-    // 파일명 처리
-    const timestamp = Date.now()
     
-    // 디버깅: 원본 파일명 확인
-    console.log('원본 fileName:', fileName)
-    console.log('원본 fileName 타입:', typeof fileName)
-    console.log('원본 fileName 길이:', fileName.length)
-    
-    // 한글 파일명을 JSON 내부에 유지 (UTF-8 인코딩)
-    const dropboxPath = `/recordings/${timestamp}_${fileName}`
-    
-    console.log('원본 fileName:', fileName)
     console.log('dropboxPath:', dropboxPath)
 
     // Dropbox API Arg 생성 (ASCII-safe)
     const dropboxArgs = {
       path: dropboxPath,
-      mode: 'add',
-      autorename: true,
+      mode: 'overwrite', // JSON 파일은 덮어쓰기 모드
+      autorename: false,
       mute: false
     };
     
@@ -181,42 +204,57 @@ export async function POST(request: NextRequest) {
       dropboxResult = dropboxResponse.data
     }
     
-    // 공유 링크 생성
-    const shareResponse = await axios.post('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
-      path: dropboxResult.path_display,
-      settings: {
-        requested_visibility: 'public',
-        audience: 'public',
-        access: 'viewer'
-      }
-    }, {
-      headers: {
-        'Authorization': `Bearer ${validToken}`,
-        'Content-Type': 'application/json'
-      }
-    })
-
-    if (shareResponse.status !== 200) {
-      console.error('Dropbox 공유 링크 생성 실패')
-      return NextResponse.json(
-        { error: '공유 링크 생성 실패' },
-        { status: 500 }
-      )
-    }
-
-    const shareResult = shareResponse.data
+    let downloadUrl = ''
     
-    // 다운로드 URL로 변환 (공유 링크를 다운로드 URL로)
-    const downloadUrl = shareResult.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+    // 파일 업로드인 경우에만 공유 링크 생성
+    if (!contentType.includes('application/json')) {
+      // 공유 링크 생성
+      const shareResponse = await axios.post('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
+        path: dropboxResult.path_display,
+        settings: {
+          requested_visibility: 'public',
+          audience: 'public',
+          access: 'viewer'
+        }
+      }, {
+        headers: {
+          'Authorization': `Bearer ${validToken}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (shareResponse.status !== 200) {
+        console.error('Dropbox 공유 링크 생성 실패')
+        return NextResponse.json(
+          { error: '공유 링크 생성 실패' },
+          { status: 500 }
+        )
+      }
+
+      const shareResult = shareResponse.data
+      
+      // 다운로드 URL로 변환 (공유 링크를 다운로드 URL로)
+      downloadUrl = shareResult.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+    }
 
     const responseData = {
       success: true,
       fileId: dropboxResult.id,
-      fileName: `${timestamp}_${fileName}`, // 원본 한글 파일명 반환
-      url: downloadUrl,
       path: dropboxResult.path_display, // Dropbox 내 실제 경로
-      originalFileName: fileName, // 원본 파일명도 함께 반환
       dropboxPath: dropboxPath // Dropbox 경로도 함께 반환
+    }
+    
+    // 파일 업로드인 경우에만 파일 관련 정보 추가
+    if (!contentType.includes('application/json')) {
+      const fileName = dropboxPath.split('/').pop() || ''
+      const timestamp = fileName.split('_')[0]
+      const originalFileName = fileName.substring(timestamp.length + 1)
+      
+      Object.assign(responseData, {
+        fileName: fileName,
+        url: downloadUrl,
+        originalFileName: originalFileName
+      })
     }
     
     console.log('응답 데이터:', responseData)

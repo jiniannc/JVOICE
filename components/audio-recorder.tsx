@@ -14,6 +14,9 @@ export function AudioRecorder({ onRecordingComplete, existingRecording }: AudioR
   const [isPlaying, setIsPlaying] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [isAllowed, setIsAllowed] = useState<boolean | null>(null)
+  const [isCheckingAllowed, setIsCheckingAllowed] = useState<boolean>(true)
+  const [clientIp, setClientIp] = useState<string | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -28,7 +31,33 @@ export function AudioRecorder({ onRecordingComplete, existingRecording }: AudioR
     }
   }, [existingRecording])
 
+  // 허용 IP 확인
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        const res = await fetch("/api/devices/allowlist?mode=check", { cache: "no-store" })
+        const data = await res.json()
+        if (mounted) {
+          setIsAllowed(!!data.allowed)
+          setClientIp(data.ip || null)
+        }
+      } catch (e) {
+        if (mounted) setIsAllowed(false)
+      } finally {
+        if (mounted) setIsCheckingAllowed(false)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   const startRecording = async () => {
+    if (isAllowed !== true) {
+      alert("등록된 컴퓨터에서만 실시간 녹음이 가능합니다. 관리자에게 등록을 요청하세요.")
+      return
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -110,9 +139,9 @@ export function AudioRecorder({ onRecordingComplete, existingRecording }: AudioR
       {/* 녹음 컨트롤 */}
       <div className="flex gap-2">
         {!isRecording ? (
-          <Button onClick={startRecording} className="flex-1">
+          <Button onClick={startRecording} className="flex-1" disabled={isCheckingAllowed || isAllowed !== true}>
             <Mic className="w-4 h-4 mr-2" />
-            녹음 시작
+            {isCheckingAllowed ? "검증 중..." : isAllowed !== true ? "허용되지 않은 컴퓨터" : "녹음 시작"}
           </Button>
         ) : (
           <Button onClick={stopRecording} variant="destructive" className="flex-1">
@@ -157,6 +186,12 @@ export function AudioRecorder({ onRecordingComplete, existingRecording }: AudioR
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
             <span className="text-red-700 font-medium">녹음 중... {formatTime(recordingTime)}</span>
           </div>
+        </div>
+      )}
+
+      {isAllowed === false && (
+        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
+          이 컴퓨터({clientIp || "IP 확인 불가"})는 등록되지 않아 실시간 녹음을 사용할 수 없습니다. 관리자에게 등록을 요청하세요.
         </div>
       )}
     </div>

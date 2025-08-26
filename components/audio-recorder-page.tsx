@@ -83,22 +83,50 @@ export function AudioRecorderPage({ userInfo, onBack }: AudioRecorderPageProps) 
       setIsSubmitting(true)
       setError(null)
 
-      // 녹음 파일들을 FormData로 준비
-      const formData = new FormData()
-      formData.append("userInfo", JSON.stringify(userInfo))
+      // 녹음 파일이 있는지 확인
+      const validRecordings = Object.entries(recordings).filter(([_, blob]) => blob !== null)
+      if (validRecordings.length === 0) {
+        throw new Error("녹음 파일이 없습니다.")
+      }
 
-      Object.entries(recordings).forEach(([key, blob]) => {
-        formData.append(`recording_${key}`, blob, `${userInfo.name}_${userInfo.employeeId}_${key}.webm`)
-      })
+      // Blob을 Base64로 변환
+      const base64Recordings: { [key: string]: string } = {}
+      for (const [key, blob] of Object.entries(recordings)) {
+        if (blob) {
+          try {
+            const arrayBuffer = await blob.arrayBuffer()
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+            base64Recordings[key] = `data:audio/webm;base64,${base64}`
+          } catch (error) {
+            console.error(`Blob 변환 실패 (${key}):`, error)
+          }
+        }
+      }
 
-      const response = await fetch("/api/recordings/submit", {
+      // 제출 데이터 준비
+      const submissionData = {
+        ...userInfo,
+        id: `submission-${Date.now()}-${Math.random()}`,
+        submittedAt: new Date().toISOString(),
+        recordings: base64Recordings,
+        recordingCount: validRecordings.length,
+        scriptNumbers: Array.from({ length: totalScripts }, (_, i) => i + 1),
+        status: "submitted",
+      }
+
+      const response = await fetch("/api/recordings/submit-database", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(submissionData),
       })
 
       if (!response.ok) {
-        throw new Error("제출 실패")
+        const errorData = await response.json()
+        throw new Error(errorData.details || "제출 실패")
       }
+
+      const result = await response.json()
+      console.log('✅ [handleSubmit] 서버 응답:', result)
 
       // 성공 시 홈으로 이동
       alert("녹음이 성공적으로 제출되었습니다!")

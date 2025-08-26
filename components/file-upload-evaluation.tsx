@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { employeeDB } from "@/lib/employee-database"
+import { PDFSyncService } from "@/lib/pdf-sync-service"
 import { 
   Upload, 
   FileAudio, 
@@ -37,6 +38,7 @@ interface FileUploadEvaluationProps {
   onComplete: (evaluationData: any) => void
   onBack: () => void
   authenticatedUser?: any
+  hideHeader?: boolean
 }
 
 interface UploadedFile {
@@ -48,7 +50,7 @@ interface UploadedFile {
   isPlaying?: boolean
 }
 
-export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: FileUploadEvaluationProps) {
+export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hideHeader = false }: FileUploadEvaluationProps) {
   const [userInfo, setUserInfo] = useState<UserInfo>({
     name: "",
     employeeId: "",
@@ -65,10 +67,13 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentPlaying, setCurrentPlaying] = useState<string | null>(null)
+  const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [showLanguageModal, setShowLanguageModal] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isProcessingLanguage, setIsProcessingLanguage] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pdfSyncService = useRef(new PDFSyncService())
 
   // 직원정보 스프레드시트에서 이름과 사번 가져오기
   useEffect(() => {
@@ -91,6 +96,16 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
     fetchEmployeeInfo()
   }, [authenticatedUser?.email])
 
+  // 컴포넌트 언마운트 시 오디오 정리
+  useEffect(() => {
+    return () => {
+      if (currentAudio) {
+        currentAudio.pause()
+        currentAudio.currentTime = 0
+      }
+    }
+  }, [currentAudio])
+
   const getCategoryOptions = useMemo(() => {
     if (userInfo.language === "korean-english") {
       return [
@@ -109,6 +124,8 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
   const getLanguageDisplay = (language: string) => {
     const displays: { [key: string]: string } = {
       "korean-english": "한/영",
+      "korean": "한국어",
+      "english": "영어",
       japanese: "일본어",
       chinese: "중국어",
     }
@@ -129,10 +146,19 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
       const fileName = file.name.toLowerCase()
       const extension = fileName.split('.').pop()
       
-      // 지원되는 오디오 형식 체크
+      // 지원되는 오디오 형식 체크 (확장자 + MIME 타입)
       const supportedFormats = ['mp3', 'wav', 'webm', 'm4a', 'ogg', 'aac']
-      if (!extension || !supportedFormats.includes(extension)) {
-        setError(`지원되지 않는 파일 형식입니다: ${extension}. 지원 형식: ${supportedFormats.join(', ')}`)
+      const supportedMimeTypes = [
+        'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/webm', 
+        'audio/mp4', 'audio/m4a', 'audio/ogg', 'audio/aac',
+        'audio/x-m4a', 'audio/x-wav' // iOS 추가 MIME 타입
+      ]
+      
+      const isValidExtension = extension && supportedFormats.includes(extension)
+      const isValidMimeType = supportedMimeTypes.includes(file.type)
+      
+      if (!isValidExtension && !isValidMimeType) {
+        setError(`지원되지 않는 파일 형식입니다. 파일: ${file.name} (${file.type})\n지원 형식: ${supportedFormats.join(', ')}`)
         return
       }
       
@@ -203,34 +229,71 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
     })
   }
 
-  const handleLanguageSelect = (language: string) => {
-    if (!selectedFile) return
-
-    const key = `1-${language}`
+  const handleLanguageSelect = async (language: string) => {
+    console.log("🔍 [FileUpload] 언어 선택:", language, "파일:", selectedFile?.name)
     
-    // 중복 체크
-    const existingLanguage = uploadedFiles.find(f => f.language === language)
-    if (existingLanguage) {
-      setError(`${getLanguageDisplay(language)} 파일이 이미 업로드되었습니다.`)
-      setShowLanguageModal(false)
-      setSelectedFile(null)
+    if (!selectedFile) {
+      console.error("❌ [FileUpload] 선택된 파일이 없습니다")
       return
     }
+
+    setIsProcessingLanguage(true)
     
-    const audioUrl = URL.createObjectURL(selectedFile)
-    const newFile: UploadedFile = {
-      file: selectedFile,
-      key,
-      scriptNum: 1,
-      language,
-      audioUrl,
-      isPlaying: false
+    try {
+      const key = `1-${language}`
+      console.log("🔍 [FileUpload] 생성된 키:", key)
+      
+      // 중복 체크
+      const existingLanguage = uploadedFiles.find(f => f.language === language)
+      if (existingLanguage) {
+        console.log("❌ [FileUpload] 중복 언어 감지:", language)
+        setError(`${getLanguageDisplay(language)} 파일이 이미 업로드되었습니다.`)
+        setShowLanguageModal(false)
+        setSelectedFile(null)
+        return
+      }
+      
+      // 파일 처리 지연 (UI 반응성 향상)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      const audioUrl = URL.createObjectURL(selectedFile)
+      console.log("🔍 [FileUpload] 오디오 URL 생성:", audioUrl.substring(0, 50) + "...")
+      
+      const newFile: UploadedFile = {
+        file: selectedFile,
+        key,
+        scriptNum: 1,
+        language,
+        audioUrl,
+        isPlaying: false
+      }
+      
+      console.log("🔍 [FileUpload] 새 파일 객체 생성:", {
+        key: newFile.key,
+        language: newFile.language,
+        fileName: newFile.file.name,
+        fileSize: newFile.file.size
+      })
+      
+      setUploadedFiles(prev => {
+        const updated = [...prev, newFile]
+        console.log("🔍 [FileUpload] 업로드된 파일 목록 업데이트:", updated.map(f => ({ key: f.key, language: f.language })))
+        return updated
+      })
+      
+      setShowLanguageModal(false)
+      setSelectedFile(null)
+      setError(null)
+      
+      console.log("✅ [FileUpload] 언어 선택 처리 완료")
+    } catch (error) {
+      console.error("❌ [FileUpload] 언어 선택 처리 중 오류:", error)
+      setError("파일 처리 중 오류가 발생했습니다.")
+      setShowLanguageModal(false)
+      setSelectedFile(null)
+    } finally {
+      setIsProcessingLanguage(false)
     }
-    
-    setUploadedFiles(prev => [...prev, newFile])
-    setShowLanguageModal(false)
-    setSelectedFile(null)
-    setError(null)
   }
 
   const playAudio = (key: string) => {
@@ -238,10 +301,20 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
     if (!file?.audioUrl) return
 
     if (currentPlaying === key) {
-      // 정지
+      // 일시정지
+      if (currentAudio) {
+        currentAudio.pause()
+        setCurrentAudio(null)
+      }
       setCurrentPlaying(null)
       setUploadedFiles(prev => prev.map(f => ({ ...f, isPlaying: false })))
     } else {
+      // 다른 오디오가 재생 중이면 정지
+      if (currentAudio) {
+        currentAudio.pause()
+        currentAudio.currentTime = 0
+      }
+      
       // 재생
       setCurrentPlaying(key)
       setUploadedFiles(prev => prev.map(f => ({ ...f, isPlaying: f.key === key })))
@@ -249,8 +322,15 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
       const audio = new Audio(file.audioUrl)
       audio.onended = () => {
         setCurrentPlaying(null)
+        setCurrentAudio(null)
         setUploadedFiles(prev => prev.map(f => ({ ...f, isPlaying: false })))
       }
+      audio.onpause = () => {
+        setCurrentPlaying(null)
+        setCurrentAudio(null)
+        setUploadedFiles(prev => prev.map(f => ({ ...f, isPlaying: false })))
+      }
+      setCurrentAudio(audio)
       audio.play()
     }
   }
@@ -373,6 +453,9 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
       const result = await response.json()
       console.log("파일 업로드 성공:", result)
 
+      // 제출 완료 팝업창 표시
+      alert(`✅ 녹음 파일 제출이 완료되었습니다!\n\n${userInfo.name} (${userInfo.employeeId}) 님의 녹음 파일이 성공적으로 제출되었습니다.\n\n결과는 월말 공지를 통해 확인해 주세요.`)
+
       // 성공 시 간단한 데이터만 전달
       onComplete({
         success: true,
@@ -399,31 +482,41 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
   
   const missingFiles = useMemo(() => {
     const currentUploadedLanguages = uploadedFiles.map(f => f.language)
+    console.log("🔍 [FileUpload] 현재 업로드된 언어:", currentUploadedLanguages)
+    console.log("🔍 [FileUpload] 필요한 파일:", requiredFiles)
+    console.log("🔍 [FileUpload] 선택된 언어:", userInfo.language)
+    
     return requiredFiles.filter((_: string, index: number) => {
       if (userInfo.language === "korean-english") {
-        return index === 0 ? !currentUploadedLanguages.includes("korean") : !currentUploadedLanguages.includes("english")
+        const isMissing = index === 0 ? !currentUploadedLanguages.includes("korean") : !currentUploadedLanguages.includes("english")
+        console.log(`🔍 [FileUpload] ${index === 0 ? '한국어' : '영어'} 파일 ${isMissing ? '누락' : '있음'}`)
+        return isMissing
       } else {
-        return !currentUploadedLanguages.includes(userInfo.language)
+        const isMissing = !currentUploadedLanguages.includes(userInfo.language)
+        console.log(`🔍 [FileUpload] ${userInfo.language} 파일 ${isMissing ? '누락' : '있음'}`)
+        return isMissing
       }
     })
   }, [requiredFiles, uploadedFiles, userInfo.language])
 
   return (
-    <div className="bg-white p-4">
+    <div className={hideHeader ? "p-4" : "bg-white p-4"}>
       <div className="max-w-4xl mx-auto">
-        <div className="mb-6 relative" style={{ marginTop: '15px' }}>
-          <div className="flex justify-between items-start">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">📤 녹음 파일 제출(PUS)</h1>
-            <Button 
-              onClick={onBack} 
-              variant="ghost" 
-              size="sm"
-              className="p-2 hover:bg-gray-100 rounded-lg"
-            >
-              <X className="w-5 h-5" />
-            </Button>
+        {!hideHeader && (
+          <div className="mb-6 relative" style={{ marginTop: '15px' }}>
+            <div className="flex justify-between items-start">
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">📤 녹음 파일 제출(PUS)</h1>
+              <Button 
+                onClick={onBack} 
+                variant="ghost" 
+                size="sm"
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* 사용자 정보 입력 */}
@@ -463,7 +556,11 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                 <Label htmlFor="language">언어 선택</Label>
                 <Select
                   value={userInfo.language}
-                  onValueChange={(value) => setUserInfo(prev => ({ ...prev, language: value, category: "" }))}
+                  onValueChange={(value) => {
+                    // 언어 변경 시 스크립트 캐시 초기화
+                    pdfSyncService.current.clearScriptCache()
+                    setUserInfo(prev => ({ ...prev, language: value, category: "" }))
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="평가 언어를 선택하세요" />
@@ -542,7 +639,7 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                       녹음 파일을 선택하거나 여기로 드래그하세요
                     </p>
                     <p className="text-xs text-gray-500 mb-2">
-                      언어별로 1개 파일씩 업로드
+                      <span className="text-red-600 font-bold">언어별로 1개 파일씩 업로드</span>
                     </p>
                     <div className="text-xs text-gray-600 mb-4 text-left bg-gray-50 p-3 rounded border">
                       <p className="font-medium mb-1">파일명 규칙:</p>
@@ -562,7 +659,7 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                       ref={fileInputRef}
                       type="file"
                       multiple
-                      accept="audio/*"
+                      accept="audio/*,.mp3,.wav,.webm,.m4a,.ogg,.aac"
                       onChange={handleFileSelect}
                       className="hidden"
                     />
@@ -621,6 +718,8 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                       const isUploaded = userInfo.language === "korean-english" 
                         ? (index === 0 ? currentUploadedLanguages.includes("korean") : currentUploadedLanguages.includes("english"))
                         : currentUploadedLanguages.includes(userInfo.language)
+                      
+                      console.log(`🔍 [FileUpload] 파일 상태 확인: ${fileType} - ${isUploaded ? '업로드됨' : '누락'}`)
                       
                       return (
                         <div
@@ -692,10 +791,13 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                 <h2 className="text-xl font-bold text-gray-900">언어 선택</h2>
                 <button 
                   onClick={() => {
-                    setShowLanguageModal(false)
-                    setSelectedFile(null)
+                    if (!isProcessingLanguage) {
+                      setShowLanguageModal(false)
+                      setSelectedFile(null)
+                    }
                   }} 
-                  className="p-2 hover:bg-gray-100 rounded-lg"
+                  className={`p-2 rounded-lg ${isProcessingLanguage ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-100'}`}
+                  disabled={isProcessingLanguage}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -706,11 +808,24 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                 <p className="text-sm text-gray-600">이 파일이 어떤 언어로 녹음되었는지 선택해주세요.</p>
               </div>
               
+              {isProcessingLanguage && (
+                <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="flex items-center gap-3">
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-blue-200 border-t-blue-600"></div>
+                    <div>
+                      <p className="text-sm font-medium text-blue-800">문안을 불러오는 중입니다...</p>
+                      <p className="text-xs text-blue-600">잠시만 기다려주세요</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
               <div className="space-y-3">
                 <Button
                   onClick={() => handleLanguageSelect("korean")}
                   className="w-full h-12 text-left justify-start"
                   variant="outline"
+                  disabled={isProcessingLanguage}
                 >
                   <div className="flex items-center gap-3">
                     <div className="bg-red-500 text-white px-2 py-1 rounded text-sm font-bold">KR</div>
@@ -725,6 +840,7 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser }: 
                   onClick={() => handleLanguageSelect("english")}
                   className="w-full h-12 text-left justify-start"
                   variant="outline"
+                  disabled={isProcessingLanguage}
                 >
                   <div className="flex items-center gap-3">
                     <div className="bg-blue-600 text-white px-2 py-1 rounded text-sm font-bold">GB</div>

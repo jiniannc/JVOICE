@@ -217,7 +217,6 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
               <div className="text-6xl font-bold text-orange-600 animate-pulse">
                 {countdown}
               </div>
-                             <p className="text-xl text-gray-600">곧 녹음 시험이 시작됩니다...</p>
             </div>
                            ) : (
                    <Button

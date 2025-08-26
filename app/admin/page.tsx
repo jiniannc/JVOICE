@@ -90,6 +90,7 @@ export default function AdminDashboard() {
   const [listMonth, setListMonth] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<string>("")
+  // (관리자) 응시 목록 상태 제거됨
 
   // 실제 데이터에서 사용 가능한 월들을 추출하여 드롭다운 생성
   const monthOptions = useMemo(() => {
@@ -106,18 +107,33 @@ export default function AdminDashboard() {
     // 월별로 정렬 (최신순)
     const sortedMonths = Array.from(uniqueMonths).sort().reverse();
     
-    return sortedMonths.map(month => {
+    const options = sortedMonths.map(month => {
       const date = new Date(month + '-01'); // 월의 첫째 날로 Date 객체 생성
       return {
         value: month,
         label: date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })
       };
     });
+    // 테이블용 '전체' 옵션 지원을 위해 상단에 공통 옵션 추가 (selectedMonth는 통계/다운로드용이라 유지)
+    return options;
   }, [submissions]);
 
+  // 월 선택 시 드롭다운 목록이 비는 문제 방지: 로드된 월도 합산해 보존
+  const [loadedMonths, setLoadedMonths] = useState<string[]>([])
+  useEffect(() => {
+    const months = Array.from(new Set([...
+      loadedMonths,
+      ...submissions
+        .filter(s => s.submittedAt)
+        .map(s => s.submittedAt!.slice(0,7))
+    ])).sort().reverse()
+    setLoadedMonths(months)
+  }, [submissions])
+
   // 필터 및 검색 상태
+  // 검색 기능 제거
   const [searchTerm, setSearchTerm] = useState("")
-  const [searchMode, setSearchMode] = useState<"all" | "monthly">("all") // 전체 검색 또는 월별 검색
+  const [searchMode, setSearchMode] = useState<"all" | "monthly">("monthly")
   const [languageFilter, setLanguageFilter] = useState<string>("all")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -125,6 +141,10 @@ export default function AdminDashboard() {
   // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(10)
+  const [hasNextPage, setHasNextPage] = useState(false)
+  const [totalPagesServer, setTotalPagesServer] = useState(1)
+  const [totalCountServer, setTotalCountServer] = useState(0)
+  const isServerPaging = true
   
   // 파일 업로드 상태
   const [showFileUpload, setShowFileUpload] = useState(false)
@@ -135,47 +155,125 @@ export default function AdminDashboard() {
   const [showLoginLogs, setShowLoginLogs] = useState(false)
   const [loginLogsLoading, setLoginLogsLoading] = useState(false)
   const [loginLogsPagination, setLoginLogsPagination] = useState<any>({})
+  // 등록된 컴퓨터 목록 상태
+  const [allowedDevices, setAllowedDevices] = useState<{ ip: string; label?: string; createdAt: string; createdBy?: string }[]>([])
+  const [loadingDevices, setLoadingDevices] = useState(false)
+  const [registering, setRegistering] = useState(false)
+  const [deviceLabel, setDeviceLabel] = useState("")
+  const [currentIp, setCurrentIp] = useState<string>("")
+  // Request 노출 토글 관리 (월별)
+  const [requestMonth, setRequestMonth] = useState<string>(new Date().toISOString().slice(0,7))
+  const [requestVisible, setRequestVisible] = useState<boolean | null>(null)
 
   useEffect(() => {
-    loadData();
+    loadData(1, itemsPerPage, "replace");
     setLastUpdate(new Date().toLocaleTimeString());
     loadLoginLogs(); // 로그인 기록 자동 로드 추가
+    loadRequestVisibility().catch(()=>{})
     // 자동 새로고침 제거, 수동 업데이트만 허용
   }, []);
 
-  const loadData = async () => {
+  // 월 변경 시점에 해당 월 데이터만 새로 로드 (선택 시 다운로드)
+  useEffect(() => {
+    if (listMonth && listMonth.length === 7) {
+      loadData(1, itemsPerPage, "replace");
+    }
+  }, [listMonth]);
+  // (관리자) 응시 목록 로드 제거됨
+
+  const loadData = async (page: number = 1, limit: number = itemsPerPage, mode: "append" | "replace" = "replace") => {
     setIsLoading(true)
+    
+    // 재시도 로직
+    const retryFetch = async (url: string, retries = 3) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(url);
+          if (response.ok) {
+            return response;
+          }
+          console.warn(`⚠️ [관리자] API 호출 실패 (시도 ${i + 1}/${retries}):`, response.status);
+        } catch (error) {
+          console.warn(`⚠️ [관리자] API 호출 오류 (시도 ${i + 1}/${retries}):`, error);
+        }
+        if (i < retries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // 지수 백오프
+        }
+      }
+      throw new Error(`API 호출 실패 (${retries}회 시도 후)`);
+    };
+    
     try {
-      // pending 목록과 completed 목록을 병렬로 가져오기
+      // 최신 월의 모든 데이터만 로드 (month 미지정일 때는 최신 10개만)
+      const selectedYm = listMonth && listMonth.length === 7 ? listMonth : undefined
+      
+      // 캐시 버스터 제거 (성능 최적화)
+      const cacheBuster = '';
+      
       const [pendingRes, completedRes] = await Promise.all([
-        fetch("/api/evaluations/load-dropbox"), // Pending+Review Requested
-        fetch("/api/evaluations/load-completed"), // Submitted
+        retryFetch(`/api/evaluations/load-dropbox?${selectedYm ? `month=${selectedYm}` : `limit=${itemsPerPage}&page=1`}${cacheBuster}`),
+        retryFetch(`/api/evaluations/load-completed?${selectedYm ? `month=${selectedYm}` : `limit=${itemsPerPage}&page=1`}${cacheBuster}`),
       ]);
 
-      if (!pendingRes.ok || !completedRes.ok) {
-        throw new Error("데이터 로딩 실패");
+      if (!pendingRes.ok) {
+        const errorText = await pendingRes.text();
+        console.error('❌ [관리자] pending API 오류:', pendingRes.status, errorText);
+        throw new Error(`pending 데이터 로딩 실패: ${pendingRes.status}`);
+      }
+      
+      if (!completedRes.ok) {
+        const errorText = await completedRes.text();
+        console.error('❌ [관리자] completed API 오류:', completedRes.status, errorText);
+        throw new Error(`completed 데이터 로딩 실패: ${completedRes.status}`);
       }
 
       const pendingData = await pendingRes.json();
       const completedData = await completedRes.json();
       
-      // 모든 데이터를 합치기 (pending + completed)
-      const allEvaluations = [
+      // 모든 데이터를 합치기 (pending + completed) → 최신순 정렬 후 현재 페이지 구간만 슬라이스
+      let mergedEvaluations = [
         ...(pendingData.evaluations || []),
         ...(completedData.evaluations || []),
-      ];
+      ] as any[]
+      mergedEvaluations = mergedEvaluations.filter(Boolean)
+      // 1) 유효성 필터를 먼저 적용하여 총합/페이지 계산과 일치시키기
+      const isValid = (ev: any): boolean => {
+        const infoSource = ev?.candidateInfo || ev
+        return Boolean(infoSource && infoSource.id && infoSource.name && infoSource.employeeId)
+      }
+      const safeDate = (ev: any): number => {
+        const raw = ev?.candidateInfo?.submittedAt || ev?.submittedAt || ev?.dropboxCreatedTime || 0
+        // 다양한 형식 대응: ISO, 'YYYY-MM-DD', 'YYYY년 M월 D일 ...'
+        if (typeof raw === 'number') return raw
+        if (typeof raw !== 'string') return 0
+        // ISO/표준
+        const t1 = Date.parse(raw)
+        if (!Number.isNaN(t1)) return t1
+        // 'YYYY년 M월 D일 HH:MM' 또는 'YYYY년 M월 D일'
+        const m = raw.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일(?:\s*(\d{1,2}):(\d{1,2}))?/)
+        if (m) {
+          const y = parseInt(m[1], 10)
+          const mo = parseInt(m[2], 10) - 1
+          const d = parseInt(m[3], 10)
+          const hh = m[4] ? parseInt(m[4], 10) : 0
+          const mm = m[5] ? parseInt(m[5], 10) : 0
+          return new Date(y, mo, d, hh, mm, 0).getTime()
+        }
+        return 0
+      }
 
-      console.log(`✅ [관리자] Total ${allEvaluations.length}개 평가 데이터 로드 (Pending: ${pendingData.evaluations?.length}, Completed: ${completedData.evaluations?.length})`);
-      console.log('🔍 [관리자] 원본 데이터 샘플:', allEvaluations.slice(0, 2));
+      const validMerged = mergedEvaluations.filter(isValid)
+      // 2) 최신순 정렬 (월 무관, 상태 무관)
+      validMerged.sort((a: any, b: any) => safeDate(b) - safeDate(a))
+      // 3) 현재 페이지 구간만 추출
+      const pageEvaluations = validMerged // 월 선택 시 전체 표출
+
+      console.log(`✅ [관리자] Page ${page} 로드 완료 (합계: ${pageEvaluations.length})`);
+      console.log('🔍 [관리자] 원본 데이터 샘플:', pageEvaluations.slice(0, 2));
       
-      const formattedSubmissions: Submission[] = allEvaluations
+      const formattedSubmissions: Submission[] = pageEvaluations
         .filter((ev: any) => {
-          // 유효하지 않은 데이터 필터링
-          const infoSource = ev.candidateInfo || ev;
-          if (!infoSource || !infoSource.id || !infoSource.name || !infoSource.employeeId) {
-            console.warn('유효하지 않은 평가 데이터 발견:', ev);
-            return false;
-          }
+          // 위에서 유효성 필터를 이미 적용했으므로 true
           return true;
         })
         .map((ev: any) => {
@@ -203,7 +301,7 @@ export default function AdminDashboard() {
             employeeId: infoSource.employeeId,
             language: infoSource.language,
             category: infoSource.category,
-            submittedAt: infoSource.submittedAt,
+            submittedAt: infoSource.submittedAt || ev.dropboxCreatedTime,
             recordingCount: infoSource.recordingCount,
             scriptNumbers: infoSource.scriptNumbers,
             comment: infoSource.comment,
@@ -225,15 +323,20 @@ export default function AdminDashboard() {
         });
 
       console.log(`✅ [관리자] 필터링 후 유효한 데이터: ${formattedSubmissions.length}개`);
-      setSubmissions(formattedSubmissions);
+      setSubmissions(prev => mode === "append" ? [...prev, ...formattedSubmissions] : formattedSubmissions);
+      const totalMerged = validMerged.length
+      setTotalCountServer(totalMerged)
+      setHasNextPage(page * limit < totalMerged)
+      setTotalPagesServer(Math.max(1, Math.ceil(totalMerged / limit)))
       
-      // 데이터가 로드된 후 첫 번째 월을 자동으로 선택
-      if (formattedSubmissions.length > 0) {
+      // 데이터가 로드된 후 통계/다운로드용 월은 자동 선택하되, 목록 필터는 기본 '전체'
+      if (page === 1 && formattedSubmissions.length > 0) {
         const firstMonth = formattedSubmissions[0].submittedAt?.slice(0, 7);
         if (firstMonth) {
           setSelectedMonth(firstMonth);
-          setListMonth(firstMonth);
         }
+        // 기본 월 선택은 첫 데이터의 월로 설정
+        setListMonth(firstMonth || "");
       }
 
     } catch (error) {
@@ -241,6 +344,58 @@ export default function AdminDashboard() {
       setSubmissions([]); // 실패 시 데이터 비우기
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // 월별 Request 공개 여부 로딩
+  const loadRequestVisibility = async () => {
+    try {
+      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY as string
+      const sheetId = process.env.NEXT_PUBLIC_SCHEDULE_SHEET_ID as string
+      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent('Config')}!A1:B100?key=${apiKey}`, { cache: 'no-store' })
+      if (!res.ok) { setRequestVisible(null); return }
+      const json = await res.json()
+      const rows: string[][] = json?.values || []
+      let vis: boolean | null = null
+      for (let i=1;i<rows.length;i++){
+        const ym = (rows[i]?.[0]||'').trim()
+        const v = (rows[i]?.[1]||'').trim().toUpperCase()
+        if (ym === requestMonth){
+          vis = (v==='ON'||v==='TRUE'||v==='1'||v==='OPEN') ? true : (v==='OFF'||v==='FALSE'||v==='0'||v==='CLOSE'? false : null)
+          break
+        }
+      }
+      setRequestVisible(vis)
+    } catch {
+      setRequestVisible(null)
+    }
+  }
+
+  const saveRequestVisibility = async (visible: boolean) => {
+    try {
+      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY as string
+      const sheetId = process.env.NEXT_PUBLIC_SCHEDULE_SHEET_ID as string
+      // Config 시트에 (월, ON/OFF) upsert
+      // 간단히 전체 읽고, 클라이언트에서 재작성 (동시성 낮음 가정)
+      const getRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent('Config')}!A1:B100?key=${apiKey}`, { cache: 'no-store' })
+      const getJson = await getRes.json()
+      const rows: string[][] = getJson?.values || []
+      const header = rows[0] && rows[0].length>=2 ? rows[0] : ['월','공개']
+      const map: Record<string,string> = {}
+      for (let i=1;i<rows.length;i++){
+        const ym = (rows[i]?.[0]||'').trim(); const v = (rows[i]?.[1]||'').trim()
+        if (ym) map[ym]=v
+      }
+      map[requestMonth] = visible ? 'ON' : 'OFF'
+      const all = Object.entries(map).sort(([a],[b])=>a.localeCompare(b))
+      const values = [header, ...all.map(([ym,v])=>[ym,v])]
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent('Config')}!A1:B100?valueInputOption=RAW&key=${apiKey}`,{
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ values })
+      })
+      setRequestVisible(visible)
+      alert('Request 공개 설정이 저장되었습니다.')
+    } catch (e:any) {
+      alert(`저장 실패: ${e?.message||e}`)
     }
   }
 
@@ -362,8 +517,8 @@ export default function AdminDashboard() {
           return false;
         }
 
-        // 월별 필터 (검색 모드가 'monthly'일 때만 적용)
-        if (searchMode === "monthly" && !sub.submittedAt.startsWith(listMonth)) return false
+        // 월별 필터: 'all'이 아니면 해당 월만
+        if (listMonth !== "all" && !sub.submittedAt.startsWith(listMonth)) return false
 
         // 검색 필터 (이름 또는 사번)
         if (
@@ -380,8 +535,22 @@ export default function AdminDashboard() {
         // 구분 필터
         if (categoryFilter !== "all" && sub.category !== categoryFilter) return false
 
-        // 상태 필터 수정
-        if (statusFilter !== "all" && sub.status !== statusFilter) return false;
+        // 상태 필터 수정: UI 값과 내부 상태 매핑 + 승인 필터 추가
+        if (statusFilter !== "all") {
+          if (statusFilter === "completed") {
+            // "평가완료"는 제출 완료이되, 아직 승인되지 않은 항목만
+            if (!(sub.status === "submitted" && !sub.approved)) return false;
+          } else if (statusFilter === "pending") {
+            // UI의 "평가대기"는 submitted가 아닌 모든 상태 포함 (pending, review_requested 등)
+            if (sub.status === "submitted") return false;
+          } else if (statusFilter === "approved") {
+            // 승인 완료 항목만
+            if (!sub.approved) return false;
+          } else {
+            // 기타 직접 매칭 (혹시 UI에 원시 상태가 추가될 경우 대비)
+            if (sub.status !== statusFilter) return false;
+          }
+        }
 
         return true
       })
@@ -389,24 +558,20 @@ export default function AdminDashboard() {
   }, [submissions, listMonth, searchTerm, searchMode, languageFilter, categoryFilter, statusFilter]);
 
   // 페이지네이션된 데이터
-  const paginatedSubmissions = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return filteredSubmissions.slice(startIndex, endIndex);
-  }, [filteredSubmissions, currentPage, itemsPerPage]);
+  // 페이지네이션 제거: 필터 결과 전체 표시
+  const paginatedSubmissions = filteredSubmissions;
 
   // 총 페이지 수 계산
-  const totalPages = Math.ceil(filteredSubmissions.length / itemsPerPage);
+  // 페이지네이션 제거: 총 페이지 1
+  const totalPages = 1;
+  // 필터/검색 변경 시 페이지 이동 로직 제거 (보정용 useEffect 삭제)
 
   // 페이지 변경 시 스크롤을 맨 위로
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [currentPage]);
 
-  // 필터나 검색이 변경될 때 페이지를 1로 리셋
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, searchMode, languageFilter, categoryFilter, statusFilter, listMonth]);
+  // 페이지네이션 제거에 따라 보정 로직도 제거
 
   // v85 통계 계산 - 정확한 버전
   const monthlyStats = useMemo(() => {
@@ -831,10 +996,14 @@ export default function AdminDashboard() {
   };
 
   const approveMany = async () => {
-    const targets = submissions.filter((s) => selectedIds.has(s.id));
+    const targets = filteredSubmissions.filter((s) => selectedIds.has(s.id));
+    
+    console.log('🔍 [approveMany] 선택된 항목들:', targets.map(t => ({ id: t.id, name: t.name, status: t.status, approved: t.approved })));
     
     // 승인 가능한 항목만 필터링 (status가 'submitted'이고 approved가 false인 것만)
     const approveTargets = targets.filter(s => s.status === 'submitted' && !s.approved);
+    
+    console.log('✅ [approveMany] 승인 가능한 항목들:', approveTargets.map(t => ({ id: t.id, name: t.name, status: t.status, approved: t.approved })));
     
     if (approveTargets.length === 0) {
       alert('승인할 수 있는 항목이 없습니다. (평가 완료되었지만 승인되지 않은 항목만 승인 가능)');
@@ -883,7 +1052,7 @@ export default function AdminDashboard() {
   };
 
   const deleteMany = async () => {
-    const targets = submissions.filter((s) => selectedIds.has(s.id));
+    const targets = filteredSubmissions.filter((s) => selectedIds.has(s.id));
     for (const t of targets) {
       await handleDelete(t.id);
     }
@@ -891,7 +1060,7 @@ export default function AdminDashboard() {
   };
 
   const reevaluateMany = async () => {
-    const targets = submissions.filter((s) => selectedIds.has(s.id));
+    const targets = filteredSubmissions.filter((s) => selectedIds.has(s.id));
     
     // 재평가 가능한 항목만 필터링 (status가 'submitted'이고 approved가 false인 것만)
     const reevaluateTargets = targets.filter(s => s.status === 'submitted' && !s.approved);
@@ -958,19 +1127,124 @@ export default function AdminDashboard() {
     }
   };
 
+  // 등록된 컴퓨터 목록 불러오기
+  const loadAllowedDevices = async () => {
+    setLoadingDevices(true)
+    try {
+      const res = await fetch('/api/devices/allowlist', { cache: 'no-store' })
+      const data = await res.json()
+      setAllowedDevices(data.devices || [])
+    } catch (e) {
+      console.error('등록된 컴퓨터 목록 로딩 실패:', e)
+      alert('등록된 컴퓨터 목록을 불러오는데 실패했습니다.')
+    } finally {
+      setLoadingDevices(false)
+    }
+  }
+
+  // 현재 접속 IP 확인
+  const loadCurrentIp = async () => {
+    try {
+      const res = await fetch('/api/devices/allowlist?mode=check', { cache: 'no-store' })
+      const data = await res.json()
+      setCurrentIp(data.ip || '')
+    } catch (e) {
+      setCurrentIp('')
+    }
+  }
+
+  // 현재 접속 컴퓨터를 등록
+  const registerCurrentComputer = async () => {
+    setRegistering(true)
+    try {
+      const res = await fetch('/api/devices/allowlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: deviceLabel || undefined, createdBy: 'Admin', ip: currentIp || undefined })
+      })
+      const result = await res.json()
+      if (!result.success) {
+        throw new Error(result.error || '등록 실패')
+      }
+      await loadAllowedDevices()
+      await loadCurrentIp()
+      setDeviceLabel("")
+      alert(`등록 완료: ${result.ip}`)
+    } catch (e: any) {
+      console.error('등록 실패:', e)
+      alert(e?.message || '등록 실패')
+    } finally {
+      setRegistering(false)
+    }
+  }
+
+  const deleteAllowedDevice = async (ip: string) => {
+    if (!confirm(`정말로 ${ip}을(를) 삭제하시겠습니까?`)) return
+    try {
+      const res = await fetch(`/api/devices/allowlist?ip=${encodeURIComponent(ip)}`, { method: 'DELETE' })
+      const result = await res.json()
+      if (!result.success) throw new Error(result.error || '삭제 실패')
+      await loadAllowedDevices()
+    } catch (e) {
+      console.error('삭제 실패:', e)
+      alert('삭제 실패')
+    }
+  }
+
   return (
     <div className="min-h-screen p-3">
       <div className="max-w-7xl mx-auto">
         {/* v85 헤더 */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 mt-10">
           <div className="flex items-center gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">관리자 대시보드</h1>
               <p className="text-sm text-gray-600">마지막 업데이트: {lastUpdate} | 실시간 모니터링 중</p>
             </div>
           </div>
-          <Button onClick={() => { loadData(); setLastUpdate(new Date().toLocaleTimeString()); }} className="ml-2" variant="outline">Update</Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={async () => { 
+                // 캐시 무효화 후 데이터 다시 로드
+                try {
+                  await fetch("/api/evaluations/load-dropbox?invalidate=true", { method: "DELETE" });
+                  console.log("✅ 캐시 무효화 완료");
+                } catch (error) {
+                  console.warn("⚠️ 캐시 무효화 실패:", error);
+                }
+                await loadData(); 
+                setLastUpdate(new Date().toLocaleTimeString()); 
+              }} 
+              className="ml-2 bg-green-600 hover:bg-green-700 text-white font-semibold" 
+              size="sm"
+            >
+              <RefreshCw className="w-4 h-4 mr-1" />
+              즉시 새로고침
+            </Button>
+            <Button onClick={() => { loadData(); setLastUpdate(new Date().toLocaleTimeString()); }} className="ml-2" variant="outline" size="sm">
+              일반 업데이트
+            </Button>
+            {/* Request 공개 토글 */}
+            <Select value={requestMonth} onValueChange={(v)=>{ setRequestMonth(v); setTimeout(()=>loadRequestVisibility(),0) }}>
+              <SelectTrigger className="w-32 h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from(new Set([new Date().toISOString().slice(0,7), ...loadedMonths])).sort().map(ym=>{
+                  const d = new Date(ym+'-01')
+                  return (
+                    <SelectItem key={`req-${ym}`} value={ym}>{d.toLocaleDateString('ko-KR',{year:'numeric',month:'long'})}</SelectItem>
+                  )
+                })}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant={requestVisible? 'default':'outline'} onClick={()=> saveRequestVisibility(!(requestVisible===true))}>
+              {requestVisible ? 'Request 공개: ON → OFF' : (requestVisible===false ? 'Request 공개: OFF → ON' : 'Request 공개 설정')}
+            </Button>
+          </div>
         </div>
+
+        
 
         {/* v85 언어별 현황 카드 */}
         <div className="grid md:grid-cols-3 gap-6 mb-6">
@@ -1099,15 +1373,17 @@ export default function AdminDashboard() {
                   <span className="text-xl font-bold text-gray-800">제출 인원 현황</span>
                 </CardTitle>
                 <Select value={listMonth} onValueChange={setListMonth}>
-                  <SelectTrigger className="w-40">
-                    <SelectValue />
+                  <SelectTrigger className="w-40 h-8">
+                    <SelectValue placeholder="월 선택" />
                   </SelectTrigger>
                   <SelectContent>
-                    {monthOptions.map((option, i) => (
-                      <SelectItem key={`list-${option.value}`} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    {(loadedMonths.length ? loadedMonths : monthOptions.map(o=>o.value)).map((ym) => {
+                      const date = new Date(ym + '-01')
+                      const label = date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' })
+                      return (
+                        <SelectItem key={`list-${ym}`} value={ym}>{label}</SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -1118,100 +1394,77 @@ export default function AdminDashboard() {
             </div>
           </CardHeader>
           <CardContent className="pt-0">
-            {/* v85 검색 및 필터 */}
-            <div className="flex flex-wrap gap-3 mb-4">
-              <div className="relative flex-1 min-w-64">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <Input
-                  placeholder="이름 또는 사번 검색..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 h-9"
-                />
+            {/* 선택 버튼과 필터를 같은 라인에 배치 */}
+            <div className="flex justify-between items-center mb-3">
+              {/* 왼쪽: 선택 버튼들 */}
+              <div className="flex gap-3">
+                <Button 
+                  size="sm" 
+                  disabled={selectedIds.size === 0 || !filteredSubmissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
+                  onClick={approveMany}
+                >
+                  선택 항목 승인
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  disabled={selectedIds.size === 0 || !filteredSubmissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
+                  onClick={reevaluateMany}
+                  className="text-orange-600 border-orange-300 hover:bg-orange-50"
+                >
+                  <RotateCcw className="w-3 h-3 mr-1" />
+                  선택 항목 재평가
+                </Button>
+                <Button size="sm" variant="destructive" disabled={selectedIds.size===0} onClick={deleteMany}>선택 항목 삭제</Button>
               </div>
+              
+              {/* 오른쪽: 필터 드롭다운들 */}
+              <div className="flex gap-2 items-center">
+                <Select value={languageFilter} onValueChange={setLanguageFilter}>
+                  <SelectTrigger className="w-28 h-8">
+                    <SelectValue placeholder="언어" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">전체</SelectItem>
+                    <SelectItem value="korean-english">한/영</SelectItem>
+                    <SelectItem value="japanese">일본어</SelectItem>
+                    <SelectItem value="chinese">중국어</SelectItem>
+                  </SelectContent>
+                </Select>
 
-              <Select value={searchMode} onValueChange={(value: "all" | "monthly") => setSearchMode(value)}>
-                <SelectTrigger className="w-32 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">전체 검색</SelectItem>
-                  <SelectItem value="monthly">월별 검색</SelectItem>
-                </SelectContent>
-              </Select>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="w-24 h-8">
+                    <SelectValue placeholder="구분" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">전체</SelectItem>
+                    <SelectItem value="신규">신규</SelectItem>
+                    <SelectItem value="재자격">재자격</SelectItem>
+                    <SelectItem value="상위">상위</SelectItem>
+                  </SelectContent>
+                </Select>
 
-              <Select value={languageFilter} onValueChange={setLanguageFilter}>
-                <SelectTrigger className="w-32 h-9">
-                  <SelectValue placeholder="언어" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">모든 언어</SelectItem>
-                  <SelectItem value="korean-english">한/영</SelectItem>
-                  <SelectItem value="japanese">일본어</SelectItem>
-                  <SelectItem value="chinese">중국어</SelectItem>
-                </SelectContent>
-              </Select>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-28 h-8">
+                    <SelectValue placeholder="상태" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">전체</SelectItem>
+                    <SelectItem value="completed">평가완료</SelectItem>
+                    <SelectItem value="pending">평가대기</SelectItem>
+                    <SelectItem value="approved">승인 완료</SelectItem>
+                  </SelectContent>
+                </Select>
 
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="w-28 h-9">
-                  <SelectValue placeholder="구분" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">모든 구분</SelectItem>
-                  <SelectItem value="신규">신규</SelectItem>
-                  <SelectItem value="재자격">재자격</SelectItem>
-                  <SelectItem value="상위">상위</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-32 h-9">
-                  <SelectValue placeholder="상태" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">모든 상태</SelectItem>
-                  <SelectItem value="completed">평가완료</SelectItem>
-                  <SelectItem value="pending">평가대기</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {(searchTerm || searchMode !== "all" || languageFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all") && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setSearchTerm("")
-                    setSearchMode("all")
-                    setLanguageFilter("all")
-                    setCategoryFilter("all")
-                    setStatusFilter("all")
-                  }}
-                  className="h-9"
+                  onClick={() => { setLanguageFilter("all"); setCategoryFilter("all"); setStatusFilter("all"); }}
+                  className="h-8"
                 >
-                  <Filter className="w-3 h-3 mr-1" />
-                  초기화
+                  <Filter className="w-3 h-3 mr-1" /> 초기화
                 </Button>
-              )}
-            </div>
-            <div className="flex gap-3 mb-3">
-              <Button 
-                size="sm" 
-                disabled={selectedIds.size === 0 || !submissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
-                onClick={approveMany}
-              >
-                선택 항목 승인
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline" 
-                disabled={selectedIds.size === 0 || !submissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
-                onClick={reevaluateMany}
-                className="text-orange-600 border-orange-300 hover:bg-orange-50"
-              >
-                <RotateCcw className="w-3 h-3 mr-1" />
-                선택 항목 재평가
-              </Button>
-              <Button size="sm" variant="destructive" disabled={selectedIds.size===0} onClick={deleteMany}>선택 항목 삭제</Button>
+              </div>
             </div>
             {isLoading ? (
               <div className="text-center py-8">
@@ -1250,7 +1503,7 @@ export default function AdminDashboard() {
                   </TableHeader>
                   <TableBody>
                     {paginatedSubmissions.map((sub, index) => (
-                      <TableRow key={sub.id || sub.dropboxPath || index} className="h-12">
+                      <TableRow key={sub.id || sub.dropboxPath || index} className="h-8">
                         <TableCell className="text-center">
                           <input type="checkbox" checked={selectedIds.has(sub.id)} onChange={e=>{
                             const copy=new Set(selectedIds);
@@ -1258,16 +1511,16 @@ export default function AdminDashboard() {
                             setSelectedIds(copy);
                           }}/>
                         </TableCell>
-                        <TableCell className="font-medium py-2 text-center">{sub.name}</TableCell>
-                        <TableCell className="py-2 text-center">{sub.employeeId}</TableCell>
-                        <TableCell className="py-2 text-center">
-                          <Badge variant="outline" className={`text-xs px-2 py-0 ${getLanguageColor(sub.language)}`}>
+                        <TableCell className="font-medium py-1 text-center text-sm">{sub.name}</TableCell>
+                        <TableCell className="py-1 text-center text-sm">{sub.employeeId}</TableCell>
+                        <TableCell className="py-1 text-center">
+                          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${getLanguageColor(sub.language)}`}>
                             {getLanguageDisplay(sub.language)}
                           </Badge>
                         </TableCell>
-                        <TableCell className="py-2 text-center">{sub.category}</TableCell>
-                        <TableCell className="text-xs py-2 text-center">{formatDateTime(sub.submittedAt)}</TableCell>
-                        <TableCell className="py-2 text-center">
+                        <TableCell className="py-1 text-center text-sm">{sub.category}</TableCell>
+                        <TableCell className="text-[11px] py-1 text-center">{formatDateTime(sub.submittedAt)}</TableCell>
+                        <TableCell className="py-1 text-center">
                           {sub.approved ? (
                             <Badge className="bg-green-100 text-green-700 border-green-300">승인 완료</Badge>
                           ) : (
@@ -1304,28 +1557,28 @@ export default function AdminDashboard() {
                               );
                             })()}</>)
                           ) : (
-                            <span className="text-gray-500">대기중</span>
+                              <span className="text-xs text-gray-500">대기</span>
                           )}
                         </TableCell>
                         <TableCell className="text-center">
                           {sub.status === 'submitted' ? (
-                            <Button variant="outline" size="sm" onClick={() => viewEvaluationResult(sub.id)}>
+                            <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => viewEvaluationResult(sub.id)}>
                               <Eye className="w-4 h-4 mr-1" />
                               결과 확인
                             </Button>
                           ) : (
-                            <span className="text-sm text-gray-400">평가 미완료</span>
+                            <span className="text-xs text-gray-400">-</span>
                           )}
                         </TableCell>
                         <TableCell className="text-center">
                           {sub.status === 'submitted' ? (
-                            <span className="text-sm text-gray-400">삭제 불가</span>
+                            <span className="text-xs text-gray-400">삭제 불가</span>
                           ) : (
                             <Button 
                               variant="outline" 
-                              size="sm" 
+                              size="sm"
+                              className="h-7 px-2 text-red-600 border-red-300 hover:bg-red-50"
                               onClick={() => handleDelete(sub.id)}
-                              className="text-red-600 border-red-300 hover:bg-red-50"
                             >
                               <Trash2 className="w-4 h-4 mr-1" />
                               삭제
@@ -1337,67 +1590,10 @@ export default function AdminDashboard() {
                   </TableBody>
                 </Table>
 
-                {/* 결과 개수 표시 */}
+                {/* 결과 개수 표시 (페이지네이션 제거) */}
                 <div className="mt-3 text-sm text-gray-600 text-center">
                   총 {filteredSubmissions.length}명의 제출 기록
                 </div>
-
-                {/* 페이지네이션 컨트롤 */}
-                {totalPages > 1 && (
-                  <div className="mt-4 flex items-center justify-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                      disabled={currentPage === 1}
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </Button>
-                    
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                        let pageNum: number;
-                        if (totalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (currentPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (currentPage >= totalPages - 2) {
-                          pageNum = totalPages - 4 + i;
-                        } else {
-                          pageNum = currentPage - 2 + i;
-                        }
-                        
-                        return (
-                          <Button
-                            key={pageNum}
-                            variant={currentPage === pageNum ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setCurrentPage(pageNum)}
-                            className="w-8 h-8 p-0"
-                          >
-                            {pageNum}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                    
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                      disabled={currentPage === totalPages}
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </Button>
-                  </div>
-                )}
-
-                {/* 페이지 정보 표시 */}
-                {totalPages > 1 && (
-                  <div className="mt-2 text-sm text-gray-500 text-center">
-                    {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredSubmissions.length)} / {filteredSubmissions.length}개
-                  </div>
-                )}
               </div>
             )}
           </CardContent>
@@ -1416,7 +1612,7 @@ export default function AdminDashboard() {
               <div className="flex-1">
                 <p className="text-sm text-gray-600 mb-3">
                   기존 녹음 파일을 업로드하여 평가를 진행할 수 있습니다. 
-                  언어별로 1개 파일씩 업로드하면 됩니다.
+                  <span className="text-red-600 font-bold">언어별로 1개 파일씩 업로드하면 됩니다.</span>
                 </p>
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <span>• 지원 형식: MP3, WAV, WEBM, M4A, OGG, AAC</span>
@@ -1565,6 +1761,67 @@ export default function AdminDashboard() {
               )}
             </CardContent>
           )}
+        </Card>
+
+        {/* 등록된 컴퓨터 목록 (IP 허용 목록) */}
+        <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+          <CardHeader className="pb-4 bg-gray-50/80 rounded-t-2xl">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-3 text-lg">
+                <Globe className="w-6 h-6 text-purple-600" />
+                <span className="text-xl font-bold text-gray-800">등록된 컴퓨터 목록</span>
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="라벨(선택): 예) 교육실 1번 PC"
+                  value={deviceLabel}
+                  onChange={(e) => setDeviceLabel(e.target.value)}
+                  className="h-9 w-64"
+                />
+                <Button variant="outline" size="sm" onClick={() => { loadAllowedDevices(); loadCurrentIp(); }}>
+                  새로고침
+                </Button>
+                <Button size="sm" onClick={registerCurrentComputer} disabled={registering}>
+                  {registering ? '등록 중...' : '이 컴퓨터 등록'}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-2">
+            <div className="text-sm text-gray-600 mb-3">현재 접속 IP: {currentIp || '확인 중...'}</div>
+            {loadingDevices ? (
+              <div className="text-center py-6">불러오는 중...</div>
+            ) : allowedDevices.length === 0 ? (
+              <div className="text-center py-6 text-gray-500">등록된 컴퓨터가 없습니다.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-40 text-center">IP</TableHead>
+                      <TableHead className="w-64 text-center">라벨</TableHead>
+                      <TableHead className="w-40 text-center">등록일</TableHead>
+                      <TableHead className="w-32 text-center">관리</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {allowedDevices.map((d) => (
+                      <TableRow key={d.ip}>
+                        <TableCell className="text-center font-mono">{d.ip}</TableCell>
+                        <TableCell className="text-center">{d.label || '-'}</TableCell>
+                        <TableCell className="text-center text-sm">
+                          {new Date(d.createdAt).toLocaleString('ko-KR')}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Button size="sm" variant="destructive" onClick={() => deleteAllowedDevice(d.ip)}>삭제</Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
         </Card>
 
         {/* 평가 결과 모달 */}

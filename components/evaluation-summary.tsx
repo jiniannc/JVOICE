@@ -45,6 +45,7 @@ interface EvaluationSummaryProps {
   dropboxPath?: string; // 🔑 dropboxPath prop 추가
   showPdfButton?: boolean; // 관리자 모드에서만 PDF 다운로드 노출
   isReviewMode?: boolean; // 리뷰 모드 여부
+  hideHeader?: boolean; // 모바일에서 헤더 숨기기
 }
 
 export function EvaluationSummary({
@@ -57,6 +58,7 @@ export function EvaluationSummary({
   dropboxPath, // 🔑 dropboxPath prop 받기
   showPdfButton = false,
   isReviewMode = false,
+  hideHeader = false,
 }: EvaluationSummaryProps) {
   console.log("🔍 EvaluationSummary 렌더링 시작:", { isOpen, evaluationResult })
   
@@ -237,13 +239,13 @@ export function EvaluationSummary({
       const englishCategories = ["발음_자음", "발음_모음", "억양", "강세", "전달력"];
       koreanCategories.forEach(cat => {
         const score = categoryScores[`korean-${cat}`] || 0;
-        if (score < 16) failReasons.push(`한국어 ${cat} 항목 점수 부족 (${score}/20)`);
+        if (score < 16) failReasons.push(`한국어 ${cat}`);
       });
       englishCategories.forEach(cat => {
         const score = categoryScores[`english-${cat}`] || 0;
-        if (score < 16) failReasons.push(`영어 ${cat.replace('_', ' ')} 항목 점수 부족 (${score}/20)`);
+        if (score < 16) failReasons.push(`영어 ${cat.replace('_', ' ')}`);
       });
-      if (failReasons.length > 0) return failReasons.join(', ');
+      if (failReasons.length > 0) return failReasons.join(', ') + ' 점수 부족';
     }
     return gradeInfo.reason;
   }
@@ -437,27 +439,29 @@ export function EvaluationSummary({
   };
 
   return (
-    <div className="min-h-screen p-4">
+    <div className={`${isReviewMode ? '' : 'min-h-screen'} p-4`}>
       {/* PDF 1페이지: 응시자 정보, 평가 결과, 카테고리별 상세 점수 */}
       <div id="pdf-page1" className="max-w-4xl mx-auto">
         {/* 헤더 */}
-        <div className="relative flex items-center justify-between mb-6">
-            <Button onClick={onClose} variant="outline">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-            돌아가기
-            </Button>
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <h1 className="text-3xl font-bold text-gray-900 whitespace-nowrap">상세 평가 리포트</h1>
+        {!hideHeader && (
+          <div className="relative flex items-center justify-between mb-6">
+              <Button onClick={onClose} variant="outline">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+              돌아가기
+              </Button>
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+              <h1 className="text-3xl font-bold text-gray-900 whitespace-nowrap">상세 평가 리포트</h1>
+            </div>
+            <div>
+            {showPdfButton && (
+              <Button onClick={generatePDF} className="bg-blue-600 hover:bg-blue-700">
+                <FileText className="w-4 h-4 mr-2" />
+                PDF 다운로드
+              </Button>
+            )}
+            </div>
           </div>
-          <div>
-          {showPdfButton && (
-            <Button onClick={generatePDF} className="bg-blue-600 hover:bg-blue-700">
-              <FileText className="w-4 h-4 mr-2" />
-              PDF 다운로드
-            </Button>
-          )}
-          </div>
-        </div>
+        )}
 
         {/* 통합 정보 카드 (기존 응시자 정보 + 평가 결과) */}
         <Card className="mb-6 bg-white shadow-lg rounded-2xl overflow-hidden border-purple-100">
@@ -506,46 +510,39 @@ export function EvaluationSummary({
             </div>
 
             {/* 오른쪽: 평가 결과 */}
-            <div className="relative md:w-1/2 p-6 flex flex-col items-center justify-center bg-gray-50 overflow-hidden">
-              {/* Animated background */}
-              <div
-                className="absolute inset-0 w-full h-full bg-gradient-to-tl from-purple-200 via-pink-200 to-blue-200 animate-background-pan opacity-50"
-                style={{ backgroundSize: '400% 400%' }}
-              />
-              {/* Shimmer Effect */}
-              <div className="absolute inset-0 w-full h-full overflow-hidden">
-                <div className="absolute top-0 left-0 w-1/2 h-full bg-white/30 animate-shimmer" />
-              </div>
-              <div className="absolute inset-0 w-full h-full backdrop-blur-sm" />
+            <div className="relative md:w-1/2 p-6 flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-purple-50 overflow-hidden">
+              {/* 단순한 배경 효과 (모바일 호환성 개선) */}
+              <div className="absolute inset-0 w-full h-full bg-gradient-to-tl from-purple-100/30 via-pink-100/30 to-blue-100/30 opacity-60" />
               
               <div className="relative z-10 text-center w-full">
                 <div className="mb-3">
                   <span className="text-lg font-semibold text-gray-700">최종 등급</span>
-                  </div>
+                </div>
                 <Badge
-                  className={`text-6xl font-bold px-10 py-5 mb-4 border-2 shadow-xl rounded-full ${gradeInfo.borderColor} ${gradeInfo.bgColor} ${gradeInfo.color}`}
+                  className={`text-5xl md:text-6xl font-bold px-8 md:px-10 py-4 md:py-5 mb-4 border-2 shadow-xl rounded-full ${gradeInfo.borderColor} ${gradeInfo.bgColor} ${gradeInfo.color} drop-shadow-lg`}
+                  style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.3)' }}
                 >
                   {language === "korean-english"
                     ? String(gradeInfo.grade).replace(/등급$/, "")
                     : gradeInfo.grade}
                 </Badge>
-                {gradeInfo.reason && <div className="text-sm text-gray-600 font-medium mt-2 max-w-xs mx-auto bg-white/20 p-1 rounded-md">{getAllFailReasons()}</div>}
+                {gradeInfo.reason && <div className="text-sm text-gray-600 font-medium mt-2 max-w-xs mx-auto bg-white/60 p-2 rounded-md border border-gray-200">{getAllFailReasons()}</div>}
                 
                 <div className={`mt-6 w-full grid gap-2 text-center ${language === "korean-english" ? "grid-cols-2" : "grid-cols-1"}`}>
                   {language === "korean-english" ? (
                     <>
-                      <div className="p-3 bg-white/70 rounded-lg shadow-sm border border-gray-200">
-                          <div className="text-2xl font-bold text-green-600">{koreanTotalScore}</div>
+                      <div className="p-3 bg-white/80 rounded-lg shadow-md border border-gray-300 backdrop-blur-none">
+                          <div className="text-2xl font-bold text-green-600 drop-shadow-sm">{koreanTotalScore}</div>
                           <div className="text-xs text-green-800 font-semibold">한국어 점수 (100점)</div>
                       </div>
-                      <div className="p-3 bg-white/70 rounded-lg shadow-sm border border-gray-200">
-                          <div className="text-2xl font-bold text-purple-600">{englishTotalScore}</div>
+                      <div className="p-3 bg-white/80 rounded-lg shadow-md border border-gray-300 backdrop-blur-none">
+                          <div className="text-2xl font-bold text-purple-600 drop-shadow-sm">{englishTotalScore}</div>
                           <div className="text-xs text-purple-800 font-semibold">영어 점수 (100점)</div>
                       </div>
                     </>
-                  ) : (
-                    <div className="p-3 bg-white/70 rounded-lg shadow-sm border border-gray-200">
-                        <div className="text-2xl font-bold text-blue-600">{totalScore}</div>
+                  ) : !isReviewMode && (
+                    <div className="p-3 bg-white/80 rounded-lg shadow-md border border-gray-300 backdrop-blur-none">
+                        <div className="text-2xl font-bold text-blue-600 drop-shadow-sm">{totalScore}</div>
                         <div className="text-xs text-blue-900 font-semibold">총점 (100점)</div>
                     </div>
                   )}

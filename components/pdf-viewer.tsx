@@ -9,9 +9,10 @@ interface PDFViewerProps {
   scriptNumber: number
   currentLanguageMode?: "korean" | "english"
   className?: string
+  onLoadComplete?: () => void
 }
 
-export function PDFViewer({ language, scriptNumber, currentLanguageMode, className = "" }: PDFViewerProps) {
+export function PDFViewer({ language, scriptNumber, currentLanguageMode, className = "", onLoadComplete }: PDFViewerProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
@@ -19,16 +20,16 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
 
   useEffect(() => {
     loadPDF()
-  }, [language, scriptNumber, currentLanguageMode])
+  }, [language, scriptNumber]) // currentLanguageMode 제거 - 한/영 언어에서 한국어/영어 전환 시 PDF 리로드 방지
 
     const loadPDF = async () => {
     setIsLoading(true)
     setError(null)
 
     try {
-      console.log(`🔍 PDF 로드 시도: ${language} ${scriptNumber}번`)
+      console.log(`🔍 PDF 로드 시도: ${language} ${scriptNumber}번 (현재 모드: ${currentLanguageMode || 'N/A'})`)
       
-      // 파일명 생성
+      // 파일명 생성 (한/영 언어는 동일한 PDF 파일 사용)
       let fileName = ""
       if (language === "korean-english") {
         fileName = `한영_문안${scriptNumber}.pdf`
@@ -73,8 +74,7 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
         setError("PDF 공유 링크 생성 중 오류가 발생했습니다.")
       }
       
-      // 로딩 시간을 줄이기 위해 즉시 완료 처리
-      setIsLoading(false)
+      // 로딩 종료는 iframe onLoad에서 처리
     } catch (err) {
       console.error("❌ PDF 로드 오류:", err)
       setError("PDF 로딩 중 오류가 발생했습니다.")
@@ -139,17 +139,7 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
 
   return (
     <div className={`relative ${className}`}>
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-lg z-10">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-            <p className="text-sm text-gray-600">PDF 로딩 중...</p>
-            <p className="text-xs text-gray-500 mt-1">{language} {scriptNumber}번</p>
-          </div>
-        </div>
-      )}
-
-      {/* PDF iframe */}
+      {/* PDF 컨테이너 */}
       <div className={`bg-white rounded-lg overflow-hidden ${isFullscreen ? "fixed inset-0 z-50" : ""}`}>
         {isFullscreen && (
           <div className="flex justify-end p-2 bg-gray-50">
@@ -158,8 +148,17 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
             </Button>
           </div>
         )}
-        {pdfUrl && (
-          <div className="relative bg-white">
+        <div className="relative">
+          {/* 로딩 오버레이 */}
+          {isLoading && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80">
+              <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-200 border-t-blue-600 mb-3"></div>
+              <div className="text-sm text-gray-600">문안을 불러오는 중입니다...</div>
+            </div>
+          )}
+
+          {/* iframe 또는 플레이스홀더 */}
+          {pdfUrl ? (
             <iframe
               src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1&statusbar=0&menubar=0&view=Fit`}
               className={`w-full border-0 ${isFullscreen ? "h-screen" : "h-[760px] md:h-[860px] lg:h-[960px]"}`}
@@ -167,6 +166,7 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
               onLoad={() => {
                 console.log("✅ PDF iframe 로드 완료")
                 setIsLoading(false)
+                onLoadComplete?.() // 부모 컴포넌트에 로딩 완료 알림
               }}
               onError={handleIframeError}
               style={{
@@ -174,8 +174,10 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
                 backgroundColor: 'white'
               }}
             />
-          </div>
-        )}
+          ) : (
+            <div className={`${isFullscreen ? "h-screen" : "h-[400px]"}`}></div>
+          )}
+        </div>
       </div>
     </div>
   )

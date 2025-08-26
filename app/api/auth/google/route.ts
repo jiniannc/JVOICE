@@ -10,8 +10,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL("/?error=missing_client_id", request.url))
     }
 
-    // 강제로 Render URL 사용
-    const baseUrl = 'https://jvoice.onrender.com'
+    // 환경 변수에서 base URL 가져오기, 없으면 request.url에서 추출
+    const baseUrl = process.env.NEXTAUTH_URL || 
+                   process.env.NEXT_PUBLIC_BASE_URL || 
+                   `${request.nextUrl.protocol}//${request.nextUrl.host}`
     const redirectUri = `${baseUrl}/api/auth/google/callback`
 
     console.log("📍 [Google OAuth] Redirect URI:", redirectUri)

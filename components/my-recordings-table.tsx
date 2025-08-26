@@ -19,9 +19,10 @@ interface MyRecordingEntry {
 interface MyRecordingsTableProps {
   employeeId: string;
   searchTerm?: string;
+  hideHeader?: boolean;
 }
 
-export default function MyRecordingsTable({ employeeId, searchTerm = "" }: MyRecordingsTableProps) {
+export default function MyRecordingsTable({ employeeId, searchTerm = "", hideHeader = false }: MyRecordingsTableProps) {
   const [records, setRecords] = useState<MyRecordingEntry[]>([]);
   const [selectedEval, setSelectedEval] = useState<any|null>(null);
   const [loading, setLoading] = useState(false);
@@ -93,12 +94,14 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "" }: MyRec
   return (
     <>
     <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
-        <CardHeader className="bg-gray-50/80">
-          <div className="flex items-center gap-3">
-            <History className="w-6 h-6 text-purple-600" />
-            <CardTitle className="text-xl font-bold text-gray-800">내 녹음 기록</CardTitle>
-          </div>
-      </CardHeader>
+        {!hideHeader && (
+          <CardHeader className="bg-gray-50/80">
+            <div className="flex items-center gap-3">
+              <History className="w-6 h-6 text-purple-600" />
+              <CardTitle className="text-xl font-bold text-gray-800">내 녹음 기록</CardTitle>
+            </div>
+          </CardHeader>
+        )}
       <CardContent className="p-6">
         {loading ? (
             <div className="text-center py-12">
@@ -108,13 +111,13 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "" }: MyRec
         ) : filtered.length === 0 ? (
           <div className="text-center py-12 text-gray-500">녹음 기록이 없습니다.</div>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 gap-4">
                 {filtered.map((rec, idx) => (
               <Card 
                 key={idx}
                 className={`shadow-md rounded-lg overflow-hidden flex flex-col justify-between transition-all duration-300
-                  hover:scale-[1.03] hover:shadow-xl cursor-pointer
-                  ${idx === mostRecentIdx ? 'ring-4 ring-green-400/60 bg-green-50/60 z-10' : 'bg-white'}`}
+                  hover:shadow-xl cursor-pointer
+                  ${idx === mostRecentIdx ? 'ring-2 ring-green-400/60 bg-green-50/60' : 'bg-white'}`}
               >
                 <CardHeader className="p-4 bg-gray-50 border-b">
                   <CardTitle className="text-base font-semibold text-gray-800 flex items-center gap-2">
@@ -173,12 +176,12 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "" }: MyRec
       </CardContent>
       </Card>
       <Dialog open={!!selectedEval} onOpenChange={()=>setSelectedEval(null)}>
-        <DialogContent className="max-w-[46rem] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>평가 결과</DialogTitle>
+            <DialogTitle></DialogTitle>
           </DialogHeader>
           {selectedEval && (
-            <EvaluationSummary isOpen={true} onClose={()=>setSelectedEval(null)} evaluationResult={selectedEval} authenticatedUser={{name:"User"}} onSubmit={()=>{}} onRequestReview={()=>{}} showPdfButton={false} isReviewMode={true} />
+            <EvaluationSummary isOpen={true} onClose={()=>setSelectedEval(null)} evaluationResult={selectedEval} authenticatedUser={{name:"User"}} onSubmit={()=>{}} onRequestReview={()=>{}} showPdfButton={false} isReviewMode={true} hideHeader={hideHeader} />
           )}
         </DialogContent>
       </Dialog>

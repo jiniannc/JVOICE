@@ -45,6 +45,17 @@ export async function POST(request: NextRequest) {
       console.warn("index.json 업데이트 실패", err);
     }
 
+    // 평가 승인 후 캐시 무효화
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/evaluations/load-dropbox?invalidate=true`, {
+        method: "DELETE",
+        cache: "no-store"
+      });
+      console.log("✅ [API] 평가 목록 캐시 무효화 요청 완료");
+    } catch (error) {
+      console.warn("⚠️ [API] 캐시 무효화 실패:", error);
+    }
+
     return NextResponse.json({ success: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "error" }, { status: 500 });

@@ -79,12 +79,12 @@ export const evaluationCriteria = {
 
   // 일본어/중국어 기존 6개 항목 유지
   japanese: {
-    발음: 20,
+    발음: 30,
     억양: 20,
-    Pause: 20,
-    Speed: 20,
+    Pause: 25,
+    Speed: 10,
     Tone: 10,
-    Volume: 10,
+    Volume: 5,
   }, // 총 100점
   chinese: {
     성조: 20,
@@ -123,7 +123,7 @@ export function getGradeInfo(
           color: "text-red-600",
           bgColor: "bg-red-50",
           borderColor: "border-red-200",
-          reason: `${cat.replace("korean-", "").replace("english-", "")} 항목 점수 부족 (${score}/20)`,
+          reason: `${cat.replace("korean-", "").replace("english-", "")} 항목 점수 부족`,
         }
       }
     }
@@ -135,7 +135,7 @@ export function getGradeInfo(
         color: "text-red-600",
         bgColor: "bg-red-50",
         borderColor: "border-red-200",
-        reason: "총점 부족 (160점 미만)",
+        reason: "총점 부족",
       }
     }
 
@@ -191,7 +191,7 @@ export function getGradeInfo(
           color: "text-red-600",
           bgColor: "bg-red-50",
           borderColor: "border-red-200",
-          reason: `${cat} 항목 점수 부족 (${score}/20)`,
+          reason: `${cat} 항목 점수 부족`,
         }
       } else if (maxScore === 10 && score < 8) {
         return {
@@ -199,7 +199,7 @@ export function getGradeInfo(
           color: "text-red-600",
           bgColor: "bg-red-50",
           borderColor: "border-red-200",
-          reason: `${cat} 항목 점수 부족 (${score}/10)`,
+          reason: `${cat} 항목 점수 부족`,
         }
       }
     }
@@ -210,7 +210,7 @@ export function getGradeInfo(
         color: "text-red-600",
         bgColor: "bg-red-50",
         borderColor: "border-red-200",
-        reason: "총점 부족 (80점 미만)",
+        reason: "총점 부족",
       }
     }
 
@@ -237,7 +237,7 @@ export function getGradeInfo(
           color: "text-red-600",
           bgColor: "bg-red-50",
           borderColor: "border-red-200",
-          reason: "신규 자격은 80점 이상 필요",
+          reason: "신규 자격 기준 미달",
         }
       }
     } else {
@@ -272,4 +272,9 @@ export function calculateCategoryScore(scores: { [key: string]: number }, catego
 // 총점 계산
 export function calculateTotalScore(scores: { [key: string]: number }): number {
   return Object.values(scores).reduce((sum, score) => sum + score, 0)
+}
+
+// 언어별 평가 기준 가져오기
+export function getEvaluationCriteria(language: string) {
+  return evaluationCriteria[language as keyof typeof evaluationCriteria] || {}
 }
