@@ -335,30 +335,14 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
     }
   }
 
-  // 안전한 File → DataURL(Base64) 변환 헬퍼 (대용량도 스택 오버플로우 없음)
-  const fileToDataURL = (file: File): Promise<string> =>
+  // 파일을 Base64로 변환하는 헬퍼 함수
+  const fileToBase64 = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => resolve(reader.result as string)
       reader.onerror = () => reject(reader.error)
       reader.readAsDataURL(file)
     })
-
-  // 클라이언트 Dropbox 업로드 헬퍼 (사용자 인증 필요 없음, 서버 중계 API 사용)
-  const uploadToDropboxClient = async (file: File, fileName: string) => {
-    const formData = new FormData()
-    formData.append("file", file)
-    formData.append("fileName", fileName)
-    const res = await fetch("/api/dropbox-upload", {
-      method: "POST",
-      body: formData,
-    })
-    if (!res.ok) {
-      const err = await res.json()
-      throw new Error(err.error || "Dropbox 업로드 실패")
-    }
-    return res.json() // {url, fileName, path, fileId}
-  }
 
   const handleSubmit = async () => {
     if (!userInfo.name || !userInfo.employeeId || !userInfo.language || !userInfo.category) {
@@ -377,30 +361,21 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
     try {
       // 파일들을 Base64로 변환하고 5개 스크립트로 복제
       const recordings: { [key: string]: string } = {}
-      const dropboxFiles: any[] = []
       const originalFiles: { [key: string]: string } = {}
 
       for (const uploadedFile of uploadedFiles) {
-        // Dropbox에 실제 파일 업로드
-        const safeFileName = `${userInfo.employeeId}_${uploadedFile.language}_${Date.now()}_${uploadedFile.file.name}`
-        const uploadInfo = await uploadToDropboxClient(uploadedFile.file, safeFileName)
-        // uploadInfo: {url, fileName, path, fileId}
-        // dropboxFiles에 저장 (scriptKey 기준)
-        dropboxFiles.push({
-          scriptKey: `1-${uploadedFile.language}`,
-          ...uploadInfo,
-        })
-
-        const audioData = uploadInfo.url // 공유 링크 URL을 recordings 값으로 사용 (dashboard에서 fetch)
+        // 파일을 Base64로 변환
+        const base64Data = await fileToBase64(uploadedFile.file)
         
         // 1개 파일을 5개 스크립트로 복제 (기존 시스템 호환성)
         for (let i = 1; i <= 5; i++) {
           const scriptKey = `${i}-${uploadedFile.language}`
-          recordings[scriptKey] = audioData
+          recordings[scriptKey] = base64Data
         }
+        
         // 디버깅: 파일 크기 및 DataURL 길이 확인
         console.log(`파일 크기: ${uploadedFile.file.name} - ${(uploadedFile.file.size / 1024 / 1024).toFixed(2)}MB`)
-        console.log(`DataURL 길이: ${audioData.length} characters`)
+        console.log(`Base64 길이: ${base64Data.length} characters`)
         
         // original file list for reference
         originalFiles[uploadedFile.key] = uploadedFile.file.name
@@ -416,14 +391,12 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
         recordingCount: 5,
         scriptNumbers: [1, 2, 3, 4, 5],
         recordings: recordings,
-        dropboxFiles: dropboxFiles,
         status: "pending",
         comment: "",
-        driveFolder: "1cdUwgx4z3BrCqrp8tt8e8T6OQhFMvqLF",
         isFileUpload: true,
       }
 
-      // API를 통해 서버에 저장 (간단한 데이터만 전송)
+      // API를 통해 서버에 저장
       const uploadData = {
         name: userInfo.name,
         employeeId: userInfo.employeeId,
@@ -433,11 +406,10 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
         recordingCount: 5,
         scriptNumbers: [1, 2, 3, 4, 5],
         recordings: recordings,
-        dropboxFiles: dropboxFiles,
         comment: "",
       }
 
-      const response = await fetch("/api/evaluations/upload", {
+      const response = await fetch("/api/recordings/submit-database", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
