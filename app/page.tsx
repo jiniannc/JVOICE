@@ -1370,27 +1370,79 @@ function RequestMode({
     }
   }, [selectedDate, authenticatedUser])
 
-  // 해당 월의 모든 날짜 가용성 미리 로드
+  // 해당 월의 모든 날짜 가용성 미리 로드 (Bulk API 사용)
   const preloadMonthAvailability = async (scheduleData: any[]) => {
     if (!authenticatedUser) return
-    
-    console.log('🚀 [데스크톱] 월 가용성 미리 로드 시작', { scheduleData: Array.isArray(scheduleData), length: scheduleData?.length })
-    
+
+    console.log('🚀 [데스크톱] 월 가용성 미리 로드 시작 (Bulk API)')
+
     // 스케줄 데이터 유효성 검사
     if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
       console.warn('⚠️ [데스크톱] 스케줄 데이터가 유효하지 않음:', scheduleData)
       return
     }
-    
-    // 스케줄 데이터에서 고유한 날짜들 추출
+
+    try {
+      // Bulk API로 모든 가용성 데이터 한 번에 조회
+      const employeeId = userInfo.employeeId || 'TEMP001'
+      console.log('📡 [데스크톱] Bulk API 호출 시작:', employeeId)
+
+      const response = await fetch(`/api/requests/bulk-availability?employeeId=${employeeId}`)
+      const bulkData = await response.json()
+
+      if (bulkData.success && bulkData.data) {
+        console.log(`✅ [데스크톱] Bulk API 응답: ${Object.keys(bulkData.data).length}개 날짜`)
+
+        // Bulk 데이터를 기존 캐시 형식으로 변환
+        const transformedData: Record<string, any> = {}
+
+        Object.entries(bulkData.data).forEach(([date, dateData]: [string, any]) => {
+          transformedData[date] = {
+            // 교육 가용성 변환
+            slotAvailability: dateData.education?.slots || [],
+            educationHasExistingApplication: dateData.education?.hasExistingApplication || false,
+
+            // 녹음 가용성 변환
+            recordingSlotAvailability: dateData.recording?.slots || [],
+            recordingHasExistingApplication: dateData.recording?.hasExistingApplication || false,
+
+            // 추가 메타데이터
+            lastUpdated: dateData.lastUpdated,
+            fromBulkApi: true
+          }
+        })
+
+        // 변환된 데이터를 캐시에 저장
+        setAvailabilityCache(prev => ({
+          ...prev,
+          ...transformedData
+        }))
+
+        console.log('💾 [데스크톱] Bulk 데이터 변환 및 캐시 저장 완료')
+      } else {
+        console.warn('⚠️ [데스크톱] Bulk API 실패, 기존 방식으로 폴백')
+        // 기존 방식으로 폴백
+        await loadAvailabilityFallback(scheduleData)
+      }
+    } catch (error) {
+      console.warn('⚠️ [데스크톱] Bulk API 에러, 기존 방식으로 폴백:', error)
+      // 기존 방식으로 폴백
+      await loadAvailabilityFallback(scheduleData)
+    }
+
+    console.log('✅ [데스크톱] 월 가용성 미리 로드 완료')
+  }
+
+  // 폴백: 기존 방식으로 가용성 로드
+  const loadAvailabilityFallback = async (scheduleData: any[]) => {
     const uniqueDates = [...new Set(scheduleData.map((item: any) => item.date).filter(Boolean))]
-    console.log(`📅 [데스크톱] 미리 로드할 날짜: ${uniqueDates.length}개`, uniqueDates.slice(0, 5))
-    
+    console.log(`📅 [데스크톱] 폴백 모드: ${uniqueDates.length}개 날짜 처리`)
+
     // 각 날짜의 가용성을 병렬로 로드 (최대 5개씩 배치 처리)
     const batchSize = 5
     for (let i = 0; i < uniqueDates.length; i += batchSize) {
       const batch = uniqueDates.slice(i, i + batchSize)
-      
+
       await Promise.all(
         batch.map(async (date: string) => {
           try {
@@ -1400,14 +1452,12 @@ function RequestMode({
           }
         })
       )
-      
+
       // 배치 간 짧은 딜레이 (서버 부하 방지)
       if (i + batchSize < uniqueDates.length) {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
     }
-    
-    console.log('✅ [데스크톱] 월 가용성 미리 로드 완료')
   }
 
   // 신청 기한 체크 함수 (2일 전 14:00 기준)
