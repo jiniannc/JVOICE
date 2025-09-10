@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
         comment: submissionData.comment || '',
         duration: submissionData.duration || 0,
         isFileUpload: false
+        // 새로운 필드들은 기본값으로 설정되므로 명시적으로 지정하지 않음
       }
     });
 
@@ -81,11 +82,10 @@ export async function POST(request: NextRequest) {
               filePath: `database://${evaluationRecord.id}/${fileName}`, // 데이터베이스 내 경로 표시
               fileName: fileName,
               originalFileName: fileName,
-              url: base64Data, // Base64 데이터를 URL 필드에 저장
+              url: base64Data as string, // Base64 데이터를 URL 필드에 저장
               dropboxPath: null, // Dropbox 사용 안함
               dropboxFileId: null, // Dropbox 사용 안함
-              success: true,
-              fileData: base64Data // Base64 데이터를 별도 필드에도 저장
+              success: true
             }
           });
           

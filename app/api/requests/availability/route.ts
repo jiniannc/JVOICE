@@ -55,7 +55,12 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    // Request 객체에서 호스트 정보 추출
+    const protocol = request.headers.get('x-forwarded-proto') || 'https'
+    const host = request.headers.get('host') || request.headers.get('x-forwarded-host')
+    const baseUrl = host ? `${protocol}://${host}` : 'http://localhost:3000'
+    
+    console.log(`🔍 [availability] baseUrl: ${baseUrl}`)
     
     // 해당 월의 교육 신청 현황 가져오기
     const fileName = `requests/${month}/education.json`

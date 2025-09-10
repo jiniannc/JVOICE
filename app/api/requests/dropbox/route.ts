@@ -68,6 +68,26 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 신청 가능 시간 체크: 해당 날짜 기준 전전날 오후 2시까지만 신청 가능
+    const scheduleDate = new Date(date)
+    const twoDaysBefore = new Date(scheduleDate)
+    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+    twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+    
+    const now = new Date()
+    
+    if (now > twoDaysBefore) {
+      return NextResponse.json(
+        { 
+          error: '신청기간만료',
+          message: '신청 기간이 만료되었습니다.',
+          scheduleDate: date,
+          deadline: twoDaysBefore.toISOString()
+        },
+        { status: 400 }
+      )
+    }
+
     // 스프레드시트에서 추가 직원 정보 조회
     let employeeInfo = null
     try {

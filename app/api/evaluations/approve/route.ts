@@ -1,63 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
-import dropboxService from "@/lib/dropbox-service";
+import { PrismaClient } from '../../../../lib/generated/prisma';
+
+const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
-    const { dropboxPath, approvedBy } = await request.json();
-    if (!dropboxPath) {
-      return NextResponse.json({ error: "dropboxPath 누락" }, { status: 400 });
-    }
+    const { evaluationId, approvedBy } = await request.json();
+    
+    console.log(`📝 [API] 승인: ${evaluationId}, 승인자: ${approvedBy}`);
 
-    /* 1. 평가 JSON 다운로드 */
-    let evaluationData: any = {};
-    try {
-      const evaluationDataString = await dropboxService.download({ path: dropboxPath });
-      evaluationData = JSON.parse(evaluationDataString);
-    } catch (e) {
-      return NextResponse.json({ error: "평가 파일을 읽지 못했습니다." }, { status: 404 });
-    }
-
-    /* 2. approved 플래그 추가 */
-    evaluationData.approved = true;
-    evaluationData.approvedAt = new Date().toISOString();
-    if (approvedBy) evaluationData.approvedBy = approvedBy;
-
-    const evalBuffer = Buffer.from(JSON.stringify(evaluationData, null, 2), "utf-8");
-    await dropboxService.overwrite({ path: dropboxPath, content: evalBuffer });
-
-    /* 3. index.json 업데이트 (같은 dropboxPath entry 찾아 approved:true 추가) */
-    const indexPath = "/evaluations/index.json";
-    try {
-      const idx = await dropboxService.getIndexJson({ path: indexPath });
-      const list = Array.isArray(idx.entries) ? idx.entries : [];
-      const found = list.find((e: any) => e.dropboxPath === dropboxPath);
-      if (found) {
-        found.approved = true;
-        found.approvedAt = evaluationData.approvedAt;
-        const buf = Buffer.from(JSON.stringify(list, null, 2), "utf-8");
-        if (idx.rev) {
-          await dropboxService.overwriteIndexJson({ path: indexPath, content: buf, rev: idx.rev });
-        } else {
-          await dropboxService.overwrite({ path: indexPath, content: buf });
-        }
+    const evaluation = await prisma.evaluation.update({
+      where: { id: evaluationId },
+      data: {
+        status: 'approved',
+        approved: true,
+        approvedAt: new Date(),
+        approvedBy: approvedBy
       }
-    } catch (err) {
-      console.warn("index.json 업데이트 실패", err);
-    }
+    });
 
-    // 평가 승인 후 캐시 무효화
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/evaluations/load-dropbox?invalidate=true`, {
-        method: "DELETE",
-        cache: "no-store"
-      });
-      console.log("✅ [API] 평가 목록 캐시 무효화 요청 완료");
-    } catch (error) {
-      console.warn("⚠️ [API] 캐시 무효화 실패:", error);
-    }
+    console.log(`✅ [API] 승인 완료: ${evaluationId}`);
 
-    return NextResponse.json({ success: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message || "error" }, { status: 500 });
+    return NextResponse.json({
+      success: true,
+      message: "승인이 완료되었습니다.",
+      evaluation: evaluation
+    });
+
+  } catch (error: any) {
+    console.error("❌ [API] 승인 실패:", error);
+    return NextResponse.json(
+      { success: false, error: error.message || "알 수 없는 오류" },
+      { status: 500 }
+    );
+  } finally {
+    await prisma.$disconnect();
   }
 } 

@@ -94,11 +94,40 @@ export function AudioRecorderPage({ userInfo, onBack }: AudioRecorderPageProps) 
       for (const [key, blob] of Object.entries(recordings)) {
         if (blob) {
           try {
-            const arrayBuffer = await blob.arrayBuffer()
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-            base64Recordings[key] = `data:audio/webm;base64,${base64}`
+            // 🔥 FileReader API를 사용한 안전한 Base64 변환 (큰 파일 지원)
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => {
+                const result = reader.result as string
+                resolve(result)
+              }
+              reader.onerror = () => reject(reader.error)
+              reader.readAsDataURL(blob)
+            })
+            
+            base64Recordings[key] = base64
+            console.log(`✅ 큰 파일 Base64 변환 성공 (${key}): ${(blob.size / 1024).toFixed(1)}KB, 시간: ${blob.size > 1024 * 1024 ? '1MB+' : 'normal'}`)
           } catch (error) {
             console.error(`Blob 변환 실패 (${key}):`, error)
+            // 폴백: 청크 방식으로 재시도
+            try {
+              console.log(`🔄 청크 방식으로 재시도 중... (${key})`)
+              const arrayBuffer = await blob.arrayBuffer()
+              const bytes = new Uint8Array(arrayBuffer)
+              let binary = ''
+              const chunkSize = 8192 // 8KB 청크로 처리
+              
+              for (let i = 0; i < bytes.length; i += chunkSize) {
+                const chunk = bytes.slice(i, i + chunkSize)
+                binary += String.fromCharCode.apply(null, Array.from(chunk))
+              }
+              
+              const base64 = btoa(binary)
+              base64Recordings[key] = `data:audio/webm;base64,${base64}`
+              console.log(`✅ 청크 방식 Base64 변환 성공 (${key})`)
+            } catch (fallbackError) {
+              console.error(`청크 방식도 실패 (${key}):`, fallbackError)
+            }
           }
         }
       }
@@ -106,7 +135,6 @@ export function AudioRecorderPage({ userInfo, onBack }: AudioRecorderPageProps) 
       // 제출 데이터 준비
       const submissionData = {
         ...userInfo,
-        id: `submission-${Date.now()}-${Math.random()}`,
         submittedAt: new Date().toISOString(),
         recordings: base64Recordings,
         recordingCount: validRecordings.length,

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getEnvValue } from "@/lib/env-config"
+import { prisma } from '@/lib/database'
 
 /**
- * 신청 취소 API
+ * 신청 취소 API (Database 우선, Google Sheets fallback)
  * POST { type: 'education'|'recording', date: 'YYYY-MM-DD', slot: number, employeeId: string }
- * 규칙: 교육/녹음 시작 48시간 전까지만 취소 허용
+ * 규칙: 해당 날짜 기준  오후 2시까지만 취소 허용
  */
 export async function POST(req: NextRequest) {
   try {
@@ -12,15 +13,90 @@ export async function POST(req: NextRequest) {
     const { type, date, slot, employeeId } = body || {}
     if (!type || !date || !slot || !employeeId) return NextResponse.json({ success: false, error: 'Invalid payload' }, { status: 400 })
 
-    // 48시간 규칙 체크: slot 시간을 고정 맵으로 계산
-    const slotTimes: Record<number, string> = {
-      1: '08:30', 2: '09:30', 3: '10:30', 4: '11:30', 5: '13:40', 6: '14:40', 7: '15:40', 8: '16:40'
-    }
-    const target = new Date(`${date}T${slotTimes[slot]}:00+09:00`)
+    console.log(`🗑️ [취소 요청] type: ${type}, date: ${date}, slot: ${slot}, employeeId: ${employeeId}`)
+
+    // 취소 시간 제한 체크: 교육/녹음 날짜 이틀 전 오후 2시까지만 취소 가능
+    const scheduleDate = new Date(date)
+    const twoDaysBefore = new Date(scheduleDate)
+    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+    twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+    
     const now = new Date()
-    if (target.getTime() - now.getTime() < 48*60*60*1000) {
-      return NextResponse.json({ success: false, error: '시작 48시간 전 이후에는 취소할 수 없습니다.' }, { status: 400 })
+    
+    if (now > twoDaysBefore) {
+      return NextResponse.json({ 
+        success: false, 
+        error: '기간만료',
+        message: '취소 기간이 만료되었습니다.',
+        contactRequired: true,
+        scheduleDate: date,
+        deadline: twoDaysBefore.toISOString()
+      }, { status: 400 })
     }
+
+    // 1. Database에서 먼저 취소 시도
+    console.log('📋 [취소] Database에서 신청 찾기 중...')
+    
+    // type과 slot으로 신청 찾기 (더 넓은 검색)
+    let application = null
+    
+    if (type === 'recording') {
+      // 녹음인 경우 type이 'recording'인 스케줄 찾기
+      application = await prisma.scheduleApplication.findFirst({
+        where: {
+          employeeId,
+          slot: Number(slot),
+          status: 'ACTIVE',
+          schedule: {
+            date: date,
+            type: 'recording'
+          }
+        },
+        include: {
+          schedule: true
+        }
+      })
+    } else {
+      // 교육인 경우 모든 교육 타입에서 찾기 (korean-english, japanese, chinese)
+      const educationTypes = ['korean-english', 'japanese', 'chinese']
+      for (const eduType of educationTypes) {
+        application = await prisma.scheduleApplication.findFirst({
+          where: {
+            employeeId,
+            slot: Number(slot),
+            status: 'ACTIVE',
+            schedule: {
+              date: date,
+              type: eduType
+            }
+          },
+          include: {
+            schedule: true
+          }
+        })
+        if (application) break
+      }
+    }
+
+    if (application) {
+      console.log(`✅ [취소] Database에서 신청 발견: ${application.id}`)
+      
+      // Database에서 취소 처리
+      await prisma.scheduleApplication.update({
+        where: { id: application.id },
+        data: {
+          status: 'CANCELED',
+          canceledAt: new Date()
+        }
+      })
+      
+      console.log(`✅ [취소] Database 취소 완료: ${application.id}`)
+      return NextResponse.json({ success: true, source: 'database' })
+    }
+
+    console.log('⚠️ [취소] Database에서 신청을 찾을 수 없음, Google Sheets 확인 중...')
+
+    // 2. Database에서 찾지 못하면 Google Sheets에서 취소 시도 (fallback)
 
     const apiKey = getEnvValue('NEXT_PUBLIC_GOOGLE_API_KEY')
     const sheetId = type === 'education' ? getEnvValue('NEXT_PUBLIC_EDU_APP_SHEET_ID') : getEnvValue('NEXT_PUBLIC_REC_APP_SHEET_ID')
@@ -48,7 +124,12 @@ export async function POST(req: NextRequest) {
         break
       }
     }
-    if (targetRow < 0) return NextResponse.json({ success: false, error: '신청 내역을 찾을 수 없습니다.' }, { status: 404 })
+    if (targetRow < 0) {
+      console.log('❌ [취소] Google Sheets에서도 신청을 찾을 수 없음')
+      return NextResponse.json({ success: false, error: '신청 내역을 찾을 수 없습니다.' }, { status: 404 })
+    }
+
+    console.log(`✅ [취소] Google Sheets에서 신청 발견: row ${targetRow}`)
 
     // 상태를 CANCELED 로 업데이트 (헤더 포함하여 targetRow+1 행)
     const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(title)}!A${targetRow+1}:Z${targetRow+1}?valueInputOption=RAW&key=${apiKey}`
@@ -60,9 +141,13 @@ export async function POST(req: NextRequest) {
     }
     await fetch(updateUrl, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ values: [row] }) })
 
-    return NextResponse.json({ success: true })
+    console.log(`✅ [취소] Google Sheets 취소 완료`)
+    return NextResponse.json({ success: true, source: 'sheets' })
   } catch (e: any) {
+    console.error('❌ [취소] 오류:', e)
     return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 })
+  } finally {
+    await prisma.$disconnect()
   }
 }
 

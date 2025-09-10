@@ -88,6 +88,8 @@ export function EvaluationSummary({
     englishTotalScore = 0, // 누락된 속성 추가
   } = evaluationResult;
 
+
+
   const gradeInfo = getGradeInfo(totalScore, categoryScores, language, category);
 
   const getLanguageDisplay = (language: string) => {
@@ -175,6 +177,23 @@ export function EvaluationSummary({
 
   const radarData = prepareRadarData(language, categoryScores);
 
+  // 상세 리포트 표시용: 소항목 점수 안전 조회 (categoryScores 우선 → scores → 기본 80%)
+  const getSubScore = (
+    langPrefix: 'korean' | 'english',
+    mainCategory: string,
+    subCategory: string,
+    maxValue: number
+  ) => {
+    const key = `${langPrefix}-${mainCategory}-${subCategory}`;
+    const valueFromCategory = (categoryScores as any)?.[key];
+    if (typeof valueFromCategory === 'number') return valueFromCategory;
+    const valueFromScores = (scores as any)?.[key];
+    if (typeof valueFromScores === 'number') return valueFromScores;
+    // 기본 80% (0.5 단위 반올림)
+    const defaultValue = Math.round((Number(maxValue) * 0.8) * 2) / 2;
+    return defaultValue;
+  };
+
   // 소항목 기준 약점 데이터 준비
   const prepareWeaknessData = (language: string, scores: { [key: string]: number }) => {
     const weaknessData: Array<{
@@ -192,7 +211,7 @@ export function EvaluationSummary({
       Object.entries(koreanCriteria).forEach(([mainCategory, subCriteria]) => {
         if (typeof subCriteria === 'object') {
           Object.entries(subCriteria).forEach(([subCategory, maxValue]) => {
-            const score = scores[`korean-${mainCategory}-${subCategory}`] || 0
+            const score = getSubScore('korean', mainCategory, subCategory, maxValue as number)
             const percentage = (score / maxValue) * 100
             weaknessData.push({
               subCategory,
@@ -211,7 +230,7 @@ export function EvaluationSummary({
       Object.entries(englishCriteria).forEach(([mainCategory, subCriteria]) => {
         if (typeof subCriteria === 'object') {
           Object.entries(subCriteria).forEach(([subCategory, maxValue]) => {
-            const score = scores[`english-${mainCategory}-${subCategory}`] || 0
+            const score = getSubScore('english', mainCategory, subCategory, maxValue as number)
             const percentage = (score / maxValue) * 100
             weaknessData.push({
               subCategory,
@@ -585,7 +604,7 @@ export function EvaluationSummary({
                               Object.entries(subCriteria).map(([subCategory, maxValue]) => (
                                 <div key={subCategory} className="flex items-center gap-1 min-w-[70px]">
                                   <span className="text-[11px] text-green-700">{subCategory}</span>
-                                  <span className="font-bold text-green-900">{scores[`korean-${mainCategory}-${subCategory}`] ?? 0}/{maxValue}</span>
+                                  <span className="font-bold text-green-900">{getSubScore('korean', mainCategory as string, subCategory as string, maxValue as number)}/{maxValue}</span>
                                 </div>
                               ))}
                           </div>
@@ -616,7 +635,7 @@ export function EvaluationSummary({
                               Object.entries(subCriteria).map(([subCategory, maxValue]) => (
                                 <div key={subCategory} className="flex items-center gap-1 min-w-[70px]">
                                   <span className="text-[11px] text-purple-700">{subCategory}</span>
-                                  <span className="font-bold text-purple-900">{scores[`english-${mainCategory}-${subCategory}`] ?? 0}/{maxValue}</span>
+                                  <span className="font-bold text-purple-900">{getSubScore('english', mainCategory as string, subCategory as string, maxValue as number)}/{maxValue}</span>
                                 </div>
                               ))}
                           </div>

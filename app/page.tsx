@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useRef, useMemo } from "react"
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -29,6 +29,7 @@ import {
   Upload,
   Menu,
   Calendar,
+  GraduationCap,
 } from "lucide-react"
 import { PDFViewer } from "@/components/pdf-viewer"
 import { AudioRecorder } from "@/components/audio-recorder"
@@ -705,6 +706,7 @@ export default function HomePage() {
         isLoggingOut={isLoggingOut}
         toggleMobileMenu={toggleMobileMenu}
         isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
       />
     )
   }
@@ -845,48 +847,10 @@ export default function HomePage() {
       </div>
 
       {/* 메인 컨텐츠 */}
-      <div className="ml-64 p-8 main-scroll-container bg-blue-50" style={{
+      <div className="ml-64 p-8 main-scroll-container bg-white" style={{
         height: '100vh', 
         overflowY: 'auto', 
-        scrollSnapType: 'y mandatory',
-        backgroundColor: 'rgba(220, 235, 255, 1) !important',
-        background: `
-          rgba(220, 235, 255, 1) center / 100% 100%,
-          repeating-linear-gradient(
-            0deg,
-            transparent,
-            transparent 2px,
-            rgba(0,0,0,0.02) 2px,
-            rgba(0,0,0,0.02) 4px
-          ) center / 4px 4px,
-          repeating-linear-gradient(
-            90deg,
-            transparent,
-            transparent 2px,
-            rgba(0,0,0,0.02) 2px,
-            rgba(0,0,0,0.02) 4px
-          ) center / 4px 4px,
-          radial-gradient(circle at 50% 50%, rgba(255,255,255,0.6) 0%, transparent 100%) center / 100% 100%
-        `,
-        backgroundImage: `
-          repeating-linear-gradient(
-            0deg,
-            transparent,
-            transparent 2px,
-            rgba(0,0,0,0.02) 2px,
-            rgba(0,0,0,0.02) 4px
-          ),
-          repeating-linear-gradient(
-            90deg,
-            transparent,
-            transparent 2px,
-            rgba(0,0,0,0.02) 2px,
-            rgba(0,0,0,0.02) 4px
-          ),
-          radial-gradient(circle at 50% 50%, rgba(255,255,255,0.6) 0%, transparent 100%)
-        `,
-        backgroundSize: '4px 4px, 4px 4px, 100% 100%',
-        backgroundPosition: 'center, center, center'
+        scrollSnapType: 'y mandatory'
       }}>
         {/* hero 이미지 섹션 */}
         <section className="flex flex-col mb-0 -mx-8 section-snap" style={{height: '1020px', scrollSnapAlign: 'start'}}>
@@ -1391,65 +1355,158 @@ function RequestMode({
   const [availabilityCache, setAvailabilityCache] = useState<Record<string, any>>({})
   const [userLanguageRestrictions, setUserLanguageRestrictions] = useState<Record<string, boolean>>({})
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [syncedMonths, setSyncedMonths] = useState<string[]>([])
+  const [syncedMonthsLoading, setSyncedMonthsLoading] = useState(false)
+  
+  // 언어 선택 팝업 상태
+  const [showLanguageSelection, setShowLanguageSelection] = useState(false)
+  const [selectedRecordingSlot, setSelectedRecordingSlot] = useState<{date: string, slot: number} | null>(null)
+
+  // selectedDate가 변경될 때마다 가용성을 강제로 새로고침
+  useEffect(() => {
+    if (selectedDate && authenticatedUser) {
+      console.log('🔄 [데스크톱] 모달 열림, 가용성 강제 새로고침:', selectedDate)
+      checkAvailability(selectedDate, true) // forceRefresh = true
+    }
+  }, [selectedDate, authenticatedUser])
+
+  // 해당 월의 모든 날짜 가용성 미리 로드
+  const preloadMonthAvailability = async (scheduleData: any[]) => {
+    if (!authenticatedUser) return
+    
+    console.log('🚀 [데스크톱] 월 가용성 미리 로드 시작', { scheduleData: Array.isArray(scheduleData), length: scheduleData?.length })
+    
+    // 스케줄 데이터 유효성 검사
+    if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
+      console.warn('⚠️ [데스크톱] 스케줄 데이터가 유효하지 않음:', scheduleData)
+      return
+    }
+    
+    // 스케줄 데이터에서 고유한 날짜들 추출
+    const uniqueDates = [...new Set(scheduleData.map((item: any) => item.date).filter(Boolean))]
+    console.log(`📅 [데스크톱] 미리 로드할 날짜: ${uniqueDates.length}개`, uniqueDates.slice(0, 5))
+    
+    // 각 날짜의 가용성을 병렬로 로드 (최대 5개씩 배치 처리)
+    const batchSize = 5
+    for (let i = 0; i < uniqueDates.length; i += batchSize) {
+      const batch = uniqueDates.slice(i, i + batchSize)
+      
+      await Promise.all(
+        batch.map(async (date: string) => {
+          try {
+            await checkAvailability(date, false) // forceRefresh = false (캐시 활용)
+          } catch (error) {
+            console.warn(`⚠️ [데스크톱] ${date} 가용성 로드 실패:`, error)
+          }
+        })
+      )
+      
+      // 배치 간 짧은 딜레이 (서버 부하 방지)
+      if (i + batchSize < uniqueDates.length) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
+    
+    console.log('✅ [데스크톱] 월 가용성 미리 로드 완료')
+  }
+
+  // 신청 기한 체크 함수 (2일 전 14:00 기준)
+  const isApplicationDeadlinePassed = (date: string): boolean => {
+    const scheduleDate = new Date(date)
+    const twoDaysBefore = new Date(scheduleDate)
+    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+    twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+    
+    const now = new Date()
+    return now > twoDaysBefore
+  }
+
+  // 동기화된 월 목록 가져오기
+  const fetchSyncedMonths = async () => {
+    setSyncedMonthsLoading(true)
+    try {
+      const response = await fetch('/api/schedules/sync-from-sheets')
+      const result = await response.json()
+      
+      if (result.success && result.schedules) {
+        const months = result.schedules
+          .filter((s: any) => s.active === true) // 활성화된 스케줄만 필터링
+          .map((s: any) => s.month)
+          .sort()
+          .reverse() // 최신순
+        setSyncedMonths(months)
+        
+        // 현재 선택된 월이 동기화된 월 목록에 없으면 첫 번째 월로 변경
+        if (months.length > 0 && !months.includes(month)) {
+          setMonth(months[0])
+        }
+        
+        console.log('✅ 동기화된 월 목록:', months)
+      } else {
+        console.error('❌ 동기화된 월 목록 가져오기 실패:', result)
+        setSyncedMonths([])
+      }
+    } catch (error) {
+      console.error('❌ 동기화된 월 목록 가져오기 에러:', error)
+      setSyncedMonths([])
+    } finally {
+      setSyncedMonthsLoading(false)
+    }
+  }
 
   type SessionSlot = 1|2|3|4|5|6|7|8
 
+  // 컴포넌트 마운트 시 동기화된 월 목록을 가져옴
+  useEffect(()=>{
+    fetchSyncedMonths()
+  }, [])
+
+  // 동기화된 월 목록이나 선택된 월이 변경될 때 데이터 로드
   useEffect(()=>{
     (async()=>{
+      // 동기화된 월이 없으면 데이터 로드하지 않음
+      if (syncedMonths.length === 0 && !syncedMonthsLoading) {
+        setData(null)
+        setLoading(false)
+        return
+      }
+      
+      // 아직 동기화된 월 목록을 로딩 중이면 대기
+      if (syncedMonthsLoading) {
+        return
+      }
+      
+      // 현재 선택된 월이 동기화된 월 목록에 없으면 스킵
+      if (!syncedMonths.includes(month)) {
+        console.log(`⚠️ 선택된 월 ${month}이 동기화된 월 목록에 없음: [${syncedMonths.join(', ')}]`)
+        setData(null)
+        setLoading(false)
+        return
+      }
+      
       setLoading(true)
       try{
-        // 먼저 현재 선택된 월로 시도
-        let currentMonth = month
-        let res = await fetch(`/api/schedules?month=${currentMonth}`,{ cache: "no-store" })
+        // 선택된 월의 스케줄 데이터 로드
+        let res = await fetch(`/api/schedules?month=${month}`,{ cache: "no-store" })
         let json = await res.json()
         
-        // 만약 현재 월이 실패하면 (시트가 없음) 다음 몇 개월을 순차적으로 시도
-        if (!json.success && res.status === 500) {
-          console.log(`❌ ${currentMonth} 시트가 존재하지 않음, 다음 월 찾는 중...`)
-          
-          const currentDate = new Date(currentMonth + "-01")
-          let foundValidMonth = false
-          
-          // 현재 월부터 6개월까지 확인
-          for (let i = 0; i < 6; i++) {
-            const testDate = new Date(currentDate)
-            testDate.setMonth(testDate.getMonth() + i)
-            const testMonth = testDate.toISOString().slice(0, 7)
-            
-            console.log(`🔍 ${testMonth} 시트 확인 중...`)
-            
-            try {
-              res = await fetch(`/api/schedules?month=${testMonth}`,{ cache: "no-store" })
-              json = await res.json()
-              
-              if (json.success) {
-                console.log(`✅ ${testMonth} 시트 발견!`)
-                currentMonth = testMonth
-                setMonth(testMonth) // 자동으로 월 변경
-                foundValidMonth = true
-                break
-              }
-            } catch (e) {
-              console.log(`⚠️ ${testMonth} 확인 중 오류:`, e)
-              continue
-            }
-          }
-          
-          if (!foundValidMonth) {
-            console.error("❌ 6개월 내에 유효한 스케줄 시트를 찾을 수 없습니다.")
+        if (!json.success) {
+          console.error(`❌ ${month} 스케줄 로드 실패:`, json)
             setData(null)
             setLoading(false)
             return
-          }
         }
         
         if(json.success) {
           setData(json.data)
-          console.log(`📅 ${currentMonth} 스케줄 로드 완료`)
+          console.log(`📅 ${month} 스케줄 로드 완료`)
           
           // 스케줄 로드 후 신청 내역도 함께 로드
           if (authenticatedUser) {
             loadMyRequests()
+            
+            // 🚀 해당 월의 모든 날짜 가용성 미리 로드
+            preloadMonthAvailability(json.data?.days || [])
           }
         }
         else throw new Error(json.error)
@@ -1459,7 +1516,7 @@ function RequestMode({
         setLoading(false)
       }
     })()
-  },[month])
+  },[month, syncedMonths, syncedMonthsLoading])
 
   // authenticatedUser가 로드되면 신청 내역 로드
   useEffect(() => {
@@ -1502,16 +1559,41 @@ function RequestMode({
     
     setMyRequestsLoading(true)
     try {
-      const employeeId = authenticatedUser.employeeId || authenticatedUser.id || 'TEMP001'
-      console.log('🔍 신청 내역 조회 - employeeId:', employeeId)
+      const employeeId = userInfo.employeeId || 'TEMP001'
+      console.log('🔍 [Database] 신청 내역 조회 - employeeId:', employeeId)
       
-      const res = await fetch(`/api/requests/dropbox?employeeId=${employeeId}&email=${authenticatedUser.email}`)
+      // Database API 우선 시도
+      const res = await fetch(`/api/requests/database?employeeId=${employeeId}`)
       const data = await res.json()
-      console.log('📄 신청 내역 응답:', data)
+      console.log('📄 [Database] 신청 내역 응답:', data)
       
-      if (data.requests) {
-        setMyRequests(data.requests)
-        console.log('✅ 신청 내역 로드 완료:', data.requests.length, '개')
+      if (data.success && data.items) {
+        // Database API 응답을 기존 형식으로 변환
+        const convertedRequests = data.items.map((item: any) => ({
+          id: item.id,
+          employeeId: employeeId,
+          name: authenticatedUser.name,
+          department: userInfo.department || '' || '승무원',
+          type: item.type,
+          date: item.date,
+          slot: item.slot,
+          details: item.details,
+          applicationTime: item.appliedAt,
+          status: item.status
+        }))
+        
+        setMyRequests(convertedRequests)
+        console.log('✅ [Database] 신청 내역 로드 완료:', convertedRequests.length, '개')
+      } else {
+        // Database API 실패시 Dropbox API로 fallback
+        console.log('🔄 [Database] 실패, Dropbox API로 fallback')
+        const fallbackRes = await fetch(`/api/requests/dropbox?employeeId=${employeeId}&email=${authenticatedUser.email}`)
+        const fallbackData = await fallbackRes.json()
+        
+        if (fallbackData.requests) {
+          setMyRequests(fallbackData.requests)
+          console.log('✅ [Dropbox] 신청 내역 로드 완료:', fallbackData.requests.length, '개')
+        }
       }
     } catch (error) {
       console.error('신청 내역 조회 실패:', error)
@@ -1522,11 +1604,11 @@ function RequestMode({
   }
 
   // 날짜별 가용성 확인
-  const checkAvailability = async (date: string) => {
+  const checkAvailability = async (date: string, forceRefresh = false) => {
     if (!authenticatedUser) return null
     
     const cacheKey = date
-    if (availabilityCache[cacheKey]) {
+    if (availabilityCache[cacheKey] && !forceRefresh) {
       console.log(`📋 ${date} 가용성 캐시 사용`)
       return availabilityCache[cacheKey]
     }
@@ -1561,32 +1643,49 @@ function RequestMode({
         return null
       }
       
-      const employeeId = authenticatedUser.employeeId || authenticatedUser.id || 'TEMP001'
+      const employeeId = userInfo.employeeId || 'TEMP001'
       
-      const response = await fetch(
+      // 간단한 가용성 API 사용 (교육 + 녹음 통합)
+      // 교육 가용성 API 호출 (녹음처럼 기존 API 사용)
+      const educationResponse = await fetch(
         `/api/requests/availability?month=${currentMonth}&date=${date}&employeeId=${employeeId}&email=${authenticatedUser.email}`
       )
       
-      if (response.ok) {
-        const data = await response.json()
-        console.log(`🔍 ${date} 가용성 확인:`, data)
+      // 녹음 가용성 API 호출
+      const recordingResponse = await fetch(`/api/requests/recording-availability?date=${date}&employeeId=${employeeId}`)
+      
+      if (educationResponse.ok && recordingResponse.ok) {
+        const educationData = await educationResponse.json()
+        const recordingData = await recordingResponse.json()
+        
+        console.log(`🔍 ${date} 교육 가용성:`, educationData)
+        console.log(`🔍 ${date} 녹음 가용성:`, recordingData)
+        
+        const combinedData = {
+          success: true,
+          date,
+          slotAvailability: educationData.slotAvailability,
+          recordingSlotAvailability: recordingData.slotAvailability,
+          languageRestrictions: educationData.languageRestrictions || [],
+          totalApplications: (educationData.totalApplications || 0) + (recordingData.totalApplications || 0)
+        }
         
         // 캐시에 저장 (로딩 상태 제거)
         setAvailabilityCache(prev => {
           const newCache = { ...prev }
           delete newCache[`${date}_loading`] // 로딩 상태 제거
-          newCache[cacheKey] = data
+          newCache[cacheKey] = combinedData
           return newCache
         })
         
         // 언어별 제한 업데이트
         const restrictions: Record<string, boolean> = {}
-        data.languageRestrictions?.forEach((restriction: any) => {
+        combinedData.languageRestrictions.forEach((restriction: any) => {
           restrictions[restriction.language] = restriction.hasExistingApplication
         })
         setUserLanguageRestrictions(restrictions)
         
-        return data
+        return combinedData
       }
     } catch (error) {
       console.error('가용성 확인 실패:', error)
@@ -1602,128 +1701,155 @@ function RequestMode({
   }
 
   // 특정 차수가 신청 가능한지 확인
-  const getCurrentApplicants = (date: string, slot: number, language: string, educationType: string) => {
-    if (!myRequests || myRequests.length === 0) {
-      return 0
-    }
-    
-    return myRequests.filter((request: any) => {
-      return request.date === date && 
-             request.slot === slot &&
-             request.details?.language === language &&
-             request.details?.educationType === educationType &&
-             request.status === 'ACTIVE'
-    }).length
-  }
+  const getCurrentApplicants = useCallback((date: string, slot: number, language: string, educationType: string) => {
+    // availability-simple API 응답을 우선적으로 활용 (전체 신청 현황 기반)
+    const availabilityData = availabilityCache[date]
+    if (availabilityData?.slotAvailability) {
+      const slotInfo = availabilityData.slotAvailability.find((s: any) =>
+        s.slot === slot && s.language === language && s.educationType === educationType
+      )
 
-  const isRecordingSlotAvailable = (date: string, slot: number, language: string) => {
-    // Dropbox JSON에서 신청 내역을 확인하여 가용성 판단
-    if (!myRequests || myRequests.length === 0) {
-      console.log('🔍 isRecordingSlotAvailable: 신청 내역 없음, 모든 차수 활성화')
-      return true // 신청 내역이 없으면 모든 차수 활성화
-    }
-    
-    console.log('🔍 isRecordingSlotAvailable 호출:', { date, slot, language })
-    
-    // 해당 날짜, 언어에 대한 신청이 있는지 확인 (언어별 한 차수만 신청 가능)
-    const hasExistingApplication = myRequests.some((request: any) => {
-      return request.date === date && 
-             request.details?.language === language &&
-             request.type === 'recording' &&
-             request.status === 'ACTIVE'
-    })
-    
-    if (hasExistingApplication) {
-      console.log('❌ 녹음 신청된 언어 발견:', language)
-      return false // 이미 해당 언어로 신청했으면 비활성화
-    }
-    
-    // 해당 차수의 현재 신청 인원 확인 (8명 제한)
-    const currentApplicants = myRequests.filter((request: any) => {
-      return request.date === date && 
-             request.slot === slot &&
-             request.type === 'recording' &&
-             request.status === 'ACTIVE'
-    }).length
-    
-    console.log('🔍 녹음 현재 신청 인원:', currentApplicants, '/ 8')
-    return currentApplicants < 8
-  }
-
-  const getRecordingCurrentApplicants = (date: string, slot: number) => {
-    if (!myRequests || myRequests.length === 0) {
-      return 0
-    }
-    
-    return myRequests.filter((request: any) => {
-      return request.date === date && 
-             request.slot === slot &&
-             request.type === 'recording' &&
-             request.status === 'ACTIVE'
-    }).length
-  }
-
-  const isSlotAvailable = (date: string, slot: number, language: string, educationType: string) => {
-    // Dropbox JSON에서 신청 내역을 확인하여 가용성 판단
-    if (!myRequests || myRequests.length === 0) {
-      console.log('🔍 isSlotAvailable: 신청 내역 없음, 모든 차수 활성화')
-      return true // 신청 내역이 없으면 모든 차수 활성화
-    }
-    
-    console.log('🔍 isSlotAvailable 호출:', { date, slot, language, educationType })
-    console.log('🔍 myRequests:', JSON.stringify(myRequests, null, 2))
-    
-    // 1:1 교육인 경우 - 한 명이라도 신청하면 비활성화
-    if (educationType === '1:1') {
-      const hasExistingApplication = myRequests.some((request: any) => {
-        const matches = request.date === date && 
-               request.slot === slot &&
-               request.details?.language === language &&
-               request.details?.educationType === educationType &&
-               request.status === 'ACTIVE'
-        
-        if (matches) {
-          console.log('❌ 1:1 신청된 차수 발견:', request)
+      if (slotInfo) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ [데스크톱 교육] API 기반 신청자 수:', { date, slot, language, educationType, currentCount: slotInfo.currentCount })
         }
-        
-        return matches
-      })
-      
-      console.log('🔍 1:1 가용성 결과:', !hasExistingApplication)
-      return !hasExistingApplication
+        return slotInfo.currentCount
+      }
     }
-    
-    // 소규모 교육인 경우 - 4명 미만일 때만 활성화
-    if (educationType === 'small-group') {
-      const currentApplicants = myRequests.filter((request: any) => {
-        return request.date === date && 
-               request.slot === slot &&
-               request.details?.language === language &&
-               request.details?.educationType === educationType &&
-               request.status === 'ACTIVE'
-      }).length
-      
-      console.log('🔍 소규모 현재 신청 인원:', currentApplicants, '/ 4')
-      return currentApplicants < 4
+
+    // API 데이터가 없으면 0 반환 (fallback)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('⚠️ [데스크톱 교육] API 데이터 없음:', { date, slot, language, educationType })
     }
-    
+    return 0
+  }, [availabilityCache])
+
+  const isRecordingSlotAvailable = useCallback((date: string, slot: number, language: string) => {
+    // 신청 기한 체크 - 기한이 지나면 무조건 비활성화
+    if (isApplicationDeadlinePassed(date)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('❌ [데스크톱 녹음] 신청 기한 경과로 비활성화:', { date, slot, language })
+      }
+      return false
+    }
+
+    // 새로운 recording-availability API 응답을 우선적으로 활용 (전체 신청 현황 기반)
+    const availabilityData = availabilityCache[date]
+    if (availabilityData?.recordingSlotAvailability) {
+      const slotInfo = availabilityData.recordingSlotAvailability.find((s: any) => s.slot === slot)
+
+      if (slotInfo) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 [데스크톱 녹음] API 기반 가용성:', { date, slot, available: slotInfo.available })
+        }
+
+        // 사용자가 이미 해당 날짜에 녹음 신청했는지 확인
+        if (availabilityData.recordingHasExistingApplication) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('❌ [데스크톱 녹음] 사용자가 이미 해당 날짜에 녹음 신청함')
+          }
+          return false
+        }
+
+        return slotInfo.available
+      }
+    }
+
+    // API 데이터가 없으면 기본적으로 활성화 (fallback)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('⚠️ [데스크톱 녹음] API 데이터 없음, 기본 활성화:', { date, slot, language })
+    }
     return true
-  }
+  }, [availabilityCache])
+
+  const getRecordingCurrentApplicants = useCallback((date: string, slot: number) => {
+    // recording-availability API 응답을 우선적으로 활용 (전체 신청 현황 기반)
+    const availabilityData = availabilityCache[date]
+    if (availabilityData?.recordingSlotAvailability) {
+      const slotInfo = availabilityData.recordingSlotAvailability.find((s: any) => s.slot === slot)
+
+      if (slotInfo) {
+        // 디버그 로그는 한 번만 출력 (중복 방지)
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 [데스크톱 녹음] API 기반 신청자 수:', { date, slot, currentCount: slotInfo.currentCount })
+        }
+        return slotInfo.currentCount
+      }
+    }
+
+    // API 데이터가 없으면 0 반환 (fallback)
+    // 디버그 로그는 한 번만 출력 (중복 방지)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('⚠️ [데스크톱 녹음] API 데이터 없음:', { date, slot })
+    }
+    return 0
+  }, [availabilityCache])
+
+  const isSlotAvailable = useCallback((date: string, slot: number, language: string, educationType: string) => {
+    // 신청 기한 체크 - 기한이 지나면 무조건 비활성화
+    if (isApplicationDeadlinePassed(date)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('❌ [데스크톱 교육] 신청 기한 경과로 비활성화:', { date, slot, language, educationType })
+      }
+      return false
+    }
+
+    // availability-simple API 응답을 우선적으로 활용 (전체 신청 현황 기반)
+    const availabilityData = availabilityCache[date]
+
+    if (availabilityData?.slotAvailability) {
+      const slotInfo = availabilityData.slotAvailability.find((s: any) =>
+        s.slot === slot && s.language === language && s.educationType === educationType
+      )
+
+      if (slotInfo) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ [데스크톱 교육] API 기반 가용성:', { date, slot, language, educationType, available: slotInfo.available })
+        }
+        // 🚨 중요: API에서 available이 false면 즉시 false 반환
+        if (!slotInfo.available) {
+          return false
+        }
+        return slotInfo.available
+      }
+    }
+
+    // API 데이터가 없으면 기본적으로 활성화 (fallback)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('⚠️ [데스크톱 교육] API 데이터 없음, 기본 활성화:', { date, slot, language, educationType })
+    }
+    return true
+  }, [availabilityCache])
 
   const handleCancelRequest = async (recordId: string) => {
     if (!confirm('정말 취소하시겠습니까?')) return
     
     try {
-      const res = await fetch('/api/requests/cancel-dropbox', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recordId,
-          employeeId: authenticatedUser?.employeeId || authenticatedUser?.id || 'TEMP001',
-          email: authenticatedUser?.email
-        })
+      // Database 우선 시도: /api/requests/database DELETE
+      console.log('🗑️ [취소] Database DELETE 시도:', recordId)
+      
+      let res = await fetch(`/api/requests/database?id=${recordId}&employeeId=${userInfo.employeeId || 'TEMP001'}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
       })
-      const data = await res.json()
+      
+      let data = await res.json()
+      
+      // Database에서 실패하면 Dropbox fallback
+      if (!res.ok || !data.success) {
+        console.log('🔄 [취소] Database 실패, Dropbox로 fallback:', data.error)
+        
+        res = await fetch('/api/requests/cancel-dropbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recordId,
+            employeeId: userInfo.employeeId || 'TEMP001',
+            email: authenticatedUser?.email
+          })
+        })
+        data = await res.json()
+      }
       
       if (data.success) {
         alert('신청이 취소되었습니다.')
@@ -1743,7 +1869,28 @@ function RequestMode({
           }
         }
       } else {
-        alert(`취소 실패: ${data.error}`)
+        // 취소 기간 만료 시 안내 팝업 표시
+        if (data.error === '기간만료' || data.contactRequired) {
+          const scheduleDate = new Date(data.scheduleDate || '').toLocaleDateString('ko-KR')
+          const deadline = new Date(data.deadline || '').toLocaleDateString('ko-KR', {
+            year: 'numeric',
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+          
+          alert(`취소 기간이 만료되었습니다.
+
+📅 교육/녹음 날짜: ${scheduleDate}
+⏰ 취소 가능 기한: ${deadline}까지
+
+🏢 취소를 원하시면 담당자에게 연락하여 취소 사유를 말씀해 주세요.
+
+⚠️ 합당하지 않은 사유로 취소할 경우, 다음 달의 녹음/교육 신청이 제한될 수 있습니다.`)
+        } else {
+          alert(`취소 실패: ${data.error}`)
+        }
       }
     } catch (error) {
       console.error('취소 실패:', error)
@@ -1751,9 +1898,67 @@ function RequestMode({
     }
   }
 
-  const handleApplyEducation = async (date: string, slot: SessionSlot, type: any) => {
+  // 간결한 안내사항 생성 함수들 (모바일과 통일)
+  const getEducationGuidance = (type: any): string => {
+    if (type.mode === '1:1') {
+      return `💻 온라인 교육 준비사항
+• 장비: 태블릿/휴대폰/노트북 중 택 1
+• 이어폰 (마이크 기능 포함) 필수
+• Google Meet 앱 미리 설치
+
+📝 참여 방법
+• 교육 5분 전 '교육 체크인' 클릭
+• 체크인 버튼 클릭 후 Google Meet 입장
+• 교관에게 학습 희망 부분 요청
+
+❓ 문의: 객실기내방송(selufst_annc@jinair.com)`
+    } else if (type.mode === 'small') {
+      return `🏫 소규모 교육 안내
+• 교육 10분 전까지 지정 교실 입실
+• 교관에게 학습 희망 부분 요청
+
+❓ 문의: 객실기내방송(selufst_annc@jinair.com)`
+    }
+    return ''
+  }
+
+  const getRecordingGuidance = (): string => {
+    return `⏰ 신청 취소
+• 녹음일 기준 2일 전 14:00까지 가능
+
+📍 녹음 당일
+• ID 카드 지참하여 10분 전 Show Up
+• JRF: 비행 준하는 용모 복장
+
+📧 미참석 시 연락처: 객실기내방송(selufst_annc@jinair.com)`
+  }
+
+  const handleApplyEducation = async (date: string, slot: number, type: any) => {
     if (!authenticatedUser) {
       alert("로그인이 필요합니다.")
+      return
+    }
+    
+    // 신청 기한 체크
+    if (isApplicationDeadlinePassed(date)) {
+      const scheduleDate = new Date(date).toLocaleDateString('ko-KR')
+      const twoDaysBefore = new Date(date)
+      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+      twoDaysBefore.setHours(14, 0, 0, 0)
+      const deadline = twoDaysBefore.toLocaleDateString('ko-KR', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+      
+      alert(`신청 기간이 만료되었습니다.
+
+📅 교육 날짜: ${scheduleDate}
+⏰ 신청 가능 기한: ${deadline}까지
+
+신청은 교육일 기준 2일 전 오후 2시까지만 가능합니다.`)
       return
     }
     
@@ -1772,10 +1977,10 @@ function RequestMode({
     console.log('👤 authenticatedUser 전체:', authenticatedUser)
     
     const requestData = { 
-      employeeId: authenticatedUser.employeeId || authenticatedUser.id || 'TEMP001',
+      employeeId: userInfo.employeeId || 'TEMP001',
       email: authenticatedUser.email,
       name: authenticatedUser.name,
-      department: authenticatedUser.department || '승무원',
+      department: userInfo.department || '' || '승무원',
       type: 'education',
       date, 
       slot, 
@@ -1787,19 +1992,27 @@ function RequestMode({
       }
     }
     
-    console.log('📝 교육 신청 데이터:', requestData)
+    console.log('📝 [Database] 교육 신청 데이터:', requestData)
     
-    const res = await fetch("/api/requests/dropbox",{
+    const res = await fetch("/api/requests/database",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify(requestData)
     })
     const json = await res.json()
-    console.log('📝 서버 응답:', json)
+    console.log('📝 [Database] 서버 응답:', json)
     if(json.success) {
-            alert("신청이 완료되었습니다.")
+      const guidance = getEducationGuidance(type)
+      alert(`🎉 교육 신청 완료!
+
+교육 신청이 성공적으로 완료되었습니다!
+
+${guidance}`)
       // 신청 내역 즉시 새로고침하여 UI 업데이트
       loadMyRequests()
+      
+      // 가용성 캐시 전체 클리어 (다른 사용자들도 업데이트된 정보를 보도록)
+      setAvailabilityCache({})
     } else {
       // 서버에서 반환된 구체적인 오류 메시지 표시
       if (json.error.includes('이미 신청')) {
@@ -1812,19 +2025,50 @@ function RequestMode({
     }
   }
 
-  const handleApplyRecording = async (date: string, slot: SessionSlot, lang: "korean-english"|"japanese"|"chinese") => {
+
+  const handleApplyRecording = async (date: string, slot: number, lang: "korean-english"|"japanese"|"chinese" | "language-select") => {
     if (!authenticatedUser) {
       alert("로그인이 필요합니다.")
+      return
+    }
+
+    // 언어 선택이 필요한 경우
+    if (lang === 'language-select') {
+      setSelectedRecordingSlot({ date, slot })
+      setShowLanguageSelection(true)
+      return
+    }
+
+    // 신청 기한 체크
+    if (isApplicationDeadlinePassed(date)) {
+      const scheduleDate = new Date(date).toLocaleDateString('ko-KR')
+      const twoDaysBefore = new Date(date)
+      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+      twoDaysBefore.setHours(14, 0, 0, 0)
+      const deadline = twoDaysBefore.toLocaleDateString('ko-KR', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+      
+      alert(`신청 기간이 만료되었습니다.
+
+📅 녹음 날짜: ${scheduleDate}
+⏰ 신청 가능 기한: ${deadline}까지
+
+신청은 녹음일 기준 2일 전 오후 2시까지만 가능합니다.`)
       return
     }
     
     console.log('👤 authenticatedUser 전체:', authenticatedUser)
     
     const requestData = { 
-      employeeId: authenticatedUser.employeeId || authenticatedUser.id || 'TEMP001',
+      employeeId: userInfo.employeeId || 'TEMP001',
       email: authenticatedUser.email,
       name: authenticatedUser.name,
-      department: authenticatedUser.department || '승무원',
+      department: userInfo.department || '' || '승무원',
       type: 'recording',
       date, 
       slot, 
@@ -1833,21 +2077,50 @@ function RequestMode({
       }
     }
     
-    console.log('📝 녹음 신청 데이터:', requestData)
+    console.log('📝 [Database] 녹음 신청 데이터:', requestData)
     
-    const res = await fetch("/api/requests/dropbox",{
+    const res = await fetch("/api/requests/database",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify(requestData)
     })
     const json = await res.json()
-    console.log('📝 서버 응답:', json)
+    console.log('📝 [Database] 서버 응답:', json)
     if(json.success) {
-      alert("신청이 완료되었습니다.")
+      const guidance = getRecordingGuidance()
+      alert(`🎉 녹음 신청 완료!
+
+녹음 신청이 성공적으로 완료되었습니다!
+
+${guidance}`)
       // 신청 내역 즉시 새로고침하여 UI 업데이트
       loadMyRequests()
+      
+      // 가용성 캐시 전체 클리어 (다른 사용자들도 업데이트된 정보를 보도록)
+      setAvailabilityCache({})
+      setShowLanguageSelection(false)
+      setSelectedRecordingSlot(null)
     } else {
-      alert(`신청 실패: ${json.error}`)
+      // 신청 기간 만료나 기타 오류 처리
+      if (json.error === '신청기간만료') {
+        const scheduleDate = new Date(json.scheduleDate || date).toLocaleDateString('ko-KR')
+        const deadline = new Date(json.deadline || '').toLocaleDateString('ko-KR', {
+          year: 'numeric',
+          month: 'long', 
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+        
+        alert(`신청 기간이 만료되었습니다.
+
+📅 녹음 날짜: ${scheduleDate}
+⏰ 신청 가능 기한: ${deadline}까지
+
+신청은 녹음일 기준 2일 전 오후 2시까지만 가능합니다.`)
+      } else {
+        alert(`신청 실패: ${json.error}`)
+      }
     }
   }
 
@@ -1859,6 +2132,67 @@ function RequestMode({
     if(type.lang === 'chinese' && type.mode === '1:1') return '중국어 1:1'
     if(type.lang === 'chinese' && type.mode === 'small') return '중국어 소규모'
     return '교육'
+  }
+
+  function getLanguageColor(language: string): string {
+    const colorMap: { [key: string]: string } = {
+      "korean-english": "bg-blue-600 hover:bg-blue-700",
+      "japanese": "bg-purple-600 hover:bg-purple-700", 
+      "chinese": "bg-red-600 hover:bg-red-700"
+    }
+    return colorMap[language] || "bg-gray-600 hover:bg-gray-700"
+  }
+
+  function getSlotTimeInfo(type: string, slot: number, educationMode?: string): string {
+    if (type === 'recording') {
+      // 녹음용 시간표 - 데스크톱 녹음 캘린더와 완전히 동일
+      const times: Record<number, string> = {
+        1: "08:30-09:20",
+        2: "09:30-10:20", 
+        3: "10:30-11:20",
+        4: "11:30-12:20",
+        5: "13:40-14:30",
+        6: "14:40-15:30",
+        7: "15:40-16:30",
+        8: "16:40-17:30"
+      }
+      return times[slot] || ""
+    } else if (type === 'education') {
+      if (educationMode === '1:1') {
+        // 1:1 교육용 시간표 (25분 단위, 총 16차수)
+        const times: Record<number, string> = {
+          // 오전 세션 (1-8차수)
+          1: "08:30-08:55",
+          2: "09:00-09:25",
+          3: "09:30-09:55",
+          4: "10:00-10:25",
+          5: "10:30-10:55",
+          6: "11:00-11:25",
+          7: "11:30-11:55",
+          8: "12:00-12:25",
+          // 오후 세션 (9-16차수, 13:35부터 시작)
+          9: "13:35-14:00",
+          10: "14:05-14:30",
+          11: "14:35-15:00",
+          12: "15:05-15:30",
+          13: "15:35-16:00",
+          14: "16:05-16:30",
+          15: "16:35-17:00",
+          16: "17:05-17:30"
+        }
+        return times[slot] || ""
+      } else {
+        // 소규모 교육용 시간표 (2시간 단위)
+        const times: Record<number, string> = {
+          1: "08:30-10:20",
+          2: "10:30-12:20", 
+          3: "13:40-15:30",
+          4: "15:40-17:30"
+        }
+        return times[slot] || ""
+      }
+    }
+    return ""
   }
 
   return (
@@ -2007,7 +2341,7 @@ function RequestMode({
         `
       }}>
         {/* 헤더 섹션 */}
-        <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60 -m-8 mb-8 p-6 shadow-sm">
+                  <div className="bg-gradient-to-b from-white to-gray-50/50 -m-8 mb-0 p-6 border-b border-gray-100">
           <div className="max-w-7xl mx-auto flex justify-between items-center">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
@@ -2061,13 +2395,21 @@ function RequestMode({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[-1,0,1,2].map(delta=>{
-                    const d = new Date()
-                    d.setMonth(d.getMonth()+delta)
-                    const ym = d.toISOString().slice(0,7)
-                    const label = d.toLocaleDateString("ko-KR",{year:"numeric", month:"long"})
+                  {syncedMonthsLoading ? (
+                    <SelectItem value="loading" disabled>
+                      로딩 중...
+                    </SelectItem>
+                  ) : syncedMonths.length === 0 ? (
+                    <SelectItem value="no-data" disabled>
+                      동기화된 월이 없습니다
+                    </SelectItem>
+                  ) : (
+                    syncedMonths.map(ym => {
+                      const date = new Date(ym + '-01')
+                      const label = date.toLocaleDateString("ko-KR", {year:"numeric", month:"long"})
                     return <SelectItem key={ym} value={ym}>{label}</SelectItem>
-                  })}
+                    })
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -2075,16 +2417,32 @@ function RequestMode({
         </div>
 
         <div className="max-w-7xl mx-auto">
-          {loading && (
+          {(loading || syncedMonthsLoading) && (
             <div className="flex items-center justify-center py-16">
               <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-8 shadow-lg">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-                <p className="text-gray-600 text-center">스케줄을 불러오는 중...</p>
+                <p className="text-gray-600 text-center">
+                  {syncedMonthsLoading ? '동기화된 월 확인 중...' : '스케줄을 불러오는 중...'}
+                </p>
               </div>
             </div>
           )}
           
-          {!loading && (!data || dayCards.length === 0) && (
+          {!loading && !syncedMonthsLoading && syncedMonths.length === 0 && (
+            <div className="max-w-2xl mx-auto">
+              <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-gray-200/60">
+                <CardContent className="p-8 text-center">
+                  <div className="w-16 h-16 bg-gradient-to-br from-orange-400 to-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Calendar className="w-8 h-8 text-white" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">동기화된 스케줄이 없습니다</h3>
+                  <p className="text-gray-600">관리자가 스프레드시트에서 스케줄을 동기화해야 합니다.</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {!loading && !syncedMonthsLoading && (!data || dayCards.length === 0) && syncedMonths.length > 0 && (
             <div className="max-w-2xl mx-auto">
               <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-gray-200/60">
                 <CardContent className="p-8 text-center">
@@ -2100,11 +2458,7 @@ function RequestMode({
 
           {!loading && data && (
             <>
-              <div className="mb-6 p-4 bg-gradient-to-r from-amber-50/80 to-orange-50/80 rounded-xl border border-amber-200/60 backdrop-blur-sm">
-                <p className="text-sm text-amber-800">
-                  <strong>📅 결과 공지:</strong> 매월말 기준 4영업일 전에 게시됩니다. 스케줄 표기: "결 과 공 지"
-                </p>
-              </div>
+
 
               {/* 캘린더 뷰 */}
               <RequestCalendar 
@@ -2176,19 +2530,15 @@ function RequestMode({
                     const canCancel = () => {
                       if (request.status !== 'ACTIVE') return false
                       
-                      // 교육/녹음 시작 시간 계산
-                      const slotTimes: Record<number, string> = {
-                        1: '08:30', 2: '09:30', 3: '10:30', 4: '11:30',
-                        5: '13:40', 6: '14:40', 7: '15:40', 8: '16:40'
-                      }
+                      // 취소 가능 시간: 해당 날짜 기준  오후 2시까지
+                      const scheduleDate = new Date(request.date)
+                      const twoDaysBefore = new Date(scheduleDate)
+                      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+                      twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
                       
-                      // 교육이면 슬롯별 시간이 다를 수 있으므로 기본 시간 사용
-                      const timeStr = slotTimes[request.slot] || '08:30'
-                      const classDateTime = new Date(`${request.date}T${timeStr}:00+09:00`)
                       const now = new Date()
-                      const hoursDiff = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60)
                       
-                      return hoursDiff >= 48
+                      return now <= twoDaysBefore
                     }
 
                     return (
@@ -2213,7 +2563,7 @@ function RequestMode({
                             </div>
                             
                             <h3 className="font-semibold text-gray-900 mb-2">
-                              {request.date} - {request.slot}차수
+                              {request.date} - {request.slot}차수 ({getSlotTimeInfo(request.type, request.slot, request.details?.mode)})
                             </h3>
                             
                             {request.type === 'education' && (
@@ -2252,13 +2602,46 @@ function RequestMode({
                           </div>
                           
                           <div className="ml-4 flex flex-col items-end gap-1">
+                            {/* Google Meet 링크 버튼 (1:1 교육, 24시간 전부터 표시) */}
+                            {request.type === 'education' && 
+                             request.details?.mode === '1:1' && 
+                             request.details?.googleMeetLink && 
+                             request.status === 'ACTIVE' && (() => {
+                               const timeInfo = getSlotTimeInfo(request.type, request.slot, request.details?.mode)
+                               const startTime = timeInfo.split('-')[0]
+                               const classDateTime = new Date(`${request.date}T${startTime}:00+09:00`)
+                               const now = new Date()
+                               const hoursDiff = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60)
+                               
+                               // 🔥 [DEBUG] Meet 버튼 조건 디버깅
+                               console.log(`🔍 [MEET DEBUG] ${request.details?.googleMeetLink ? '링크 있음' : '링크 없음'}`)
+                               console.log(`🔍 [MEET DEBUG] 교육 날짜: ${request.date}, 시간: ${startTime}`)
+                               console.log(`🔍 [MEET DEBUG] classDateTime: ${classDateTime.toISOString()}`)
+                               console.log(`🔍 [MEET DEBUG] now: ${now.toISOString()}`)
+                               console.log(`🔍 [MEET DEBUG] hoursDiff: ${hoursDiff.toFixed(2)}시간`)
+                               console.log(`🔍 [MEET DEBUG] 24시간 조건: ${hoursDiff <= 24} && ${hoursDiff >= -1} = ${hoursDiff <= 24 && hoursDiff >= -1}`)
+                               
+                               // 🚨 테스트용: 조건 완화 (모든 1:1 교육에 Meet 버튼 표시)
+                               return true // 임시로 항상 표시
+                               // return hoursDiff <= 24 && hoursDiff >= -1 // 원래 조건
+                             })() && (
+                              <Button
+                                onClick={() => window.open(request.details.googleMeetLink, '_blank')}
+                                className="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 h-7 mb-1"
+                              >
+                                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M15 12h2c0-1.1.9-2 2-2V8c0-1.1-.9-2-2-2h-2v6zM9 12V6H7c-1.1 0-2 .9-2 2v2c1.1 0 2 .9 2 2z"/>
+                                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+                                </svg>
+                                Google Meet 참가
+                              </Button>
+                            )}
+                            
                             {(() => {
-                              const slotTimes: Record<number, string> = {
-                                1: '08:30', 2: '09:30', 3: '10:30', 4: '11:30',
-                                5: '13:40', 6: '14:40', 7: '15:40', 8: '16:40'
-                              }
-                              const timeStr = slotTimes[request.slot] || '08:30'
-                              const classDateTime = new Date(`${request.date}T${timeStr}:00+09:00`)
+                              // getSlotTimeInfo 함수를 사용하여 정확한 시간 정보 가져오기
+                              const timeInfo = getSlotTimeInfo(request.type, request.slot, request.details?.mode)
+                              const startTime = timeInfo.split('-')[0] // "08:30-09:30"에서 "08:30" 추출
+                              const classDateTime = new Date(`${request.date}T${startTime}:00+09:00`)
                               const now = new Date()
                               const hoursDiff = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60)
                               const isExpired = hoursDiff < 0
@@ -2289,10 +2672,10 @@ function RequestMode({
                                 return (
                                   <>
                                     <div className="text-xs text-red-600 text-right">
-                                      취소 불가 (48시간 미만)
+                                      취소 불가 (2일 전 14:00 이후)
                                     </div>
                                     <button
-                                      onClick={() => alert('교육/녹음 시작 48시간 전까지만 취소할 수 있습니다.\n취소가 필요한 경우 담당자에게 연락해주세요.')}
+                                      onClick={() => alert('교육/녹음일 기준 2일 전 오후 2시까지만 취소할 수 있습니다.\n취소가 필요한 경우 담당자에게 연락해주세요.')}
                                       className="px-3 py-1 text-sm bg-gray-100 text-gray-500 rounded cursor-not-allowed"
                                     >
                                       취소 불가
@@ -2312,27 +2695,52 @@ function RequestMode({
           </div>
         </div>
       )}
+
+      {/* 언어 선택 팝업 */}
+      {showLanguageSelection && selectedRecordingSlot && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-gray-900 mb-4 text-center">
+              녹음 언어 선택
+            </h3>
+            
+            <div className="space-y-3 mb-6">
+              <div className="text-center text-gray-600 mb-4">
+                📅 {selectedRecordingSlot.date} • {selectedRecordingSlot.slot}차수
+              </div>
+              
+              {["korean-english", "japanese", "chinese"].map((lang) => (
+                <button
+                  key={lang}
+                  onClick={() => {
+                    handleApplyRecording(selectedRecordingSlot.date, selectedRecordingSlot.slot, lang as any)
+                  }}
+                  className={`w-full px-6 py-4 rounded-lg font-medium transition-colors text-white ${getLanguageColor(lang)}`}
+                >
+                  {lang === 'korean-english' ? '한국어/영어' : lang === 'japanese' ? '일본어' : '중국어'} 선택
+                </button>
+              ))}
+            </div>
+            
+            <button
+              onClick={() => {
+                setShowLanguageSelection(false)
+                setSelectedRecordingSlot(null)
+              }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
 
 // 캘린더 뷰 컴포넌트
-function RequestCalendar({ 
-  year, 
-  monthIndex, 
-  dayCards, 
-  tab, 
-  onApplyRecording, 
-  onApplyEducation, 
-  renderEduLabel,
-  isSlotAvailable,
-  isRecordingSlotAvailable,
-  getCurrentApplicants,
-  getRecordingCurrentApplicants,
-  availabilityCache,
-  userLanguageRestrictions,
-  onDateSelect
-}: {
+function RequestCalendar(props: {
   year: number
   monthIndex: number
   dayCards: any[]
@@ -2348,6 +2756,22 @@ function RequestCalendar({
   userLanguageRestrictions: Record<string, boolean>
   onDateSelect: (date: string | null) => void
 }) {
+  const { 
+    year, 
+    monthIndex, 
+    dayCards, 
+    tab, 
+    onApplyRecording, 
+    onApplyEducation, 
+    renderEduLabel,
+    isSlotAvailable,
+    isRecordingSlotAvailable,
+    getCurrentApplicants,
+    getRecordingCurrentApplicants,
+    availabilityCache,
+    userLanguageRestrictions,
+    onDateSelect
+  } = props
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [forceUpdate, setForceUpdate] = useState(0)
   
@@ -2355,6 +2779,11 @@ function RequestCalendar({
   const handleDateSelect = (date: string | null) => {
     setSelectedDate(date)
     onDateSelect(date)
+  }
+
+  const handleRecordingApplication = (date: string, slot: number) => {
+    // 임시로 첫 번째 언어로 호출하고, 실제로는 부모에서 언어 선택 처리
+    onApplyRecording(date, slot, 'language-select')
   }
   
   // availabilityCache나 userLanguageRestrictions가 변경될 때 강제 리렌더링
@@ -2560,30 +2989,57 @@ function RequestCalendar({
   const selectedDayData = selectedDate ? dayDataMap[selectedDate] : null
 
   return (
-    <Card className="bg-white/80 backdrop-blur-sm shadow-lg rounded-2xl overflow-hidden border-gray-200/60">
-      <CardHeader className="bg-gradient-to-r from-gray-50/80 to-slate-50/80 border-b border-gray-100/60">
-        <CardTitle className="flex items-center justify-center gap-3 text-xl font-bold text-gray-800">
-          <Calendar className="w-6 h-6 text-indigo-600" />
-          {year}년 {monthIndex + 1}월 {tab === 'education' ? '교육' : '녹음'} 신청 캘린더
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-6">
-        {/* 요일 헤더 */}
-        <div className="grid grid-cols-7 gap-2 mb-4">
+    <>
+      <div className="w-full max-w-7xl mx-auto">
+      {/* 헤더 - 모바일 최적화 */}
+      <div className={`${
+        tab === 'education' 
+          ? 'bg-gradient-to-br from-indigo-600 via-purple-600 to-blue-700' 
+          : 'bg-gradient-to-br from-orange-500 via-red-500 to-pink-600'
+      } rounded-3xl shadow-2xl overflow-hidden mb-6`}>
+        <div className="px-6 py-8 md:px-8 md:py-10">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 text-white">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                {tab === 'education' ? (
+                  <GraduationCap className="w-7 h-7 md:w-8 md:h-8 text-white" />
+                ) : (
+                  <Mic className="w-7 h-7 md:w-8 md:h-8 text-white" />
+                )}
+              </div>
+              <div className="text-center sm:text-left">
+                <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+                  {year}년 {monthIndex + 1}월
+                </h1>
+                <p className="text-white/80 text-sm md:text-base font-medium">
+                  {tab === 'education' ? '교육' : '녹음'} 신청 캘린더
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 요일 헤더 - 향상된 디자인 */}
+      <div className="grid grid-cols-7 gap-1 md:gap-2 mb-3 px-2">
           {['일', '월', '화', '수', '목', '금', '토'].map((day, idx) => (
             <div 
               key={day} 
-              className={`text-center font-semibold text-sm py-2 ${
-                idx === 0 ? 'text-red-600' : idx === 6 ? 'text-blue-600' : 'text-gray-700'
-              }`}
+            className={`
+              text-center font-bold text-xs md:text-sm py-3 md:py-4 rounded-xl
+              ${idx === 0 ? 'text-red-500 bg-red-50' : 
+                idx === 6 ? 'text-blue-500 bg-blue-50' : 
+                'text-gray-700 bg-gray-50'}
+              transition-all duration-200 hover:scale-105
+            `}
             >
               {day}
             </div>
           ))}
         </div>
         
-        {/* 캘린더 그리드 */}
-        <div className="grid grid-cols-7 gap-2">
+      {/* 캘린더 그리드 - 완전히 새로운 디자인 */}
+      <div className="grid grid-cols-7 gap-1 md:gap-2 px-2">
           {calendarDays.map((date, index) => {
             const dayData = getDayData(date)
             const isCurrentMonthDay = isCurrentMonth(date)
@@ -2598,113 +3054,193 @@ function RequestCalendar({
               <div
                 key={index}
                 className={`
-                  min-h-[120px] border rounded-lg p-2 transition-all duration-200
-                  ${isCurrentMonthDay ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-100'}
-                  ${isTodayDay ? 'ring-2 ring-blue-400 ring-opacity-50' : ''}
-                  ${hasData ? 'hover:shadow-md cursor-pointer' : ''}
+                  group relative min-h-[140px] md:min-h-[160px] rounded-2xl transition-all duration-300 ease-out
+                  ${isCurrentMonthDay ? 
+                    'bg-white shadow-sm hover:shadow-xl border border-gray-100' : 
+                    'bg-gray-50/50 border border-gray-100/50 opacity-60'}
+                  ${isTodayDay ? 'ring-2 ring-blue-500 ring-opacity-30 shadow-lg' : ''}
+                  ${hasData ? 'hover:scale-[1.02] cursor-pointer transform-gpu' : ''}
+                  overflow-hidden backdrop-blur-sm
                 `}
                 onClick={() => hasData ? handleDateSelect(formatDateKey(date)) : null}
               >
-                {/* 날짜 헤더 */}
-                <div className="flex items-center justify-between mb-2">
-                  <span 
-                    className={`
-                      text-sm font-semibold
-                      ${!isCurrentMonthDay ? 'text-gray-400' : 
-                        isTodayDay ? 'text-blue-600' : 
-                        date.getDay() === 0 ? 'text-red-600' : 
-                        date.getDay() === 6 ? 'text-blue-600' : 'text-gray-900'}
-                    `}
-                  >
+                {/* 상단 오버레이 그라데이션 (오늘인 경우) */}
+                {isTodayDay && (
+                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 pointer-events-none" />
+                )}
+                
+                {/* 날짜 헤더 - 완전히 새로운 디자인 */}
+                <div className="flex items-center justify-between p-3 md:p-4">
+                  <div className={`
+                    flex items-center justify-center w-8 h-8 md:w-10 md:h-10 rounded-full font-bold text-sm md:text-base
+                    ${!isCurrentMonthDay ? 'text-gray-400 bg-gray-100' : 
+                      isTodayDay ? 'text-white bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg' : 
+                      date.getDay() === 0 ? 'text-red-600 bg-red-50' : 
+                      date.getDay() === 6 ? 'text-blue-600 bg-blue-50' : 
+                      'text-gray-800 bg-gray-50 group-hover:bg-gray-100'}
+                    transition-all duration-200
+                  `}>
                     {date.getDate()}
-                  </span>
+                  </div>
                   
-                  {dayData?.resultAnnouncement && (
-                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300">
-                      공지
-                    </Badge>
+                  {dayData?.resultAnnouncement && tab === 'recording' && (
+                    <div className="px-2 py-1 bg-gradient-to-r from-amber-400 to-orange-500 text-white text-xs font-bold rounded-full shadow-md animate-pulse">
+                      결과 공지
+                    </div>
                   )}
                 </div>
                 
-                {/* 일정 미리보기 */}
+                {/* 일정 미리보기 - 완전히 새로운 디자인 */}
                 {isCurrentMonthDay && dayData && (
-                  <div className="space-y-1">
+                  <div className="px-3 md:px-4 pb-3 md:pb-4 space-y-2">
                     {tab === 'recording' && dayData.recording?.slots?.length > 0 && (
-                      <div className="space-y-1">
-                        {dayData.recording.slots.slice(0, 2).map((slot: number) => (
-                          <div key={`rec-${formatDateKey(date)}-${slot}`} className="text-xs">
-                            <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded px-2 py-1 border border-blue-200">
-                              <div className="font-semibold text-blue-800 mb-1">
-                                {slot}차수 · {getRecordingSlotTime(slot)}
-                              </div>
-                              <div className="flex gap-0.5">
-                                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {dayData.recording.slots.length > 2 && (
-                          <div className="text-xs text-blue-600 font-medium text-center cursor-pointer hover:text-blue-700">
-                            +{dayData.recording.slots.length - 2}개 차수 더보기
-                          </div>
-                        )}
+                      <div className="space-y-2">
+                         {/* 간결한 녹음 시간표 - 통일된 블루 테마 */}
+                         <div className="space-y-1">
+                           {dayData.recording.slots.map((slot: number) => {
+                             const currentApplicants = getRecordingCurrentApplicants(formatDateKey(date), slot)
+                             const slotTime = getRecordingSlotTime(slot)
+                             const isFull = currentApplicants >= 8
+                             
+                             return (
+                               <button
+                                 key={`rec-${formatDateKey(date)}-${slot}`}
+                                 onClick={() => handleRecordingApplication(formatDateKey(date), slot)}
+                                 disabled={isFull}
+                                 className={`w-full p-2 rounded-lg border transition-all duration-200 hover:shadow-sm ${
+                                   isFull 
+                                     ? 'bg-gray-100 border-gray-200 cursor-not-allowed' 
+                                     : 'bg-blue-50 border-blue-200 hover:bg-blue-100 hover:border-blue-300'
+                                 }`}
+                               >
+                                 <div className="flex items-center justify-between">
+                                   <div className="flex items-center gap-3">
+                                     <span className={`text-sm font-bold ${isFull ? 'text-gray-500' : 'text-blue-700'}`}>
+                                       {slot}차수
+                                     </span>
+                                     <span className={`text-xs ${isFull ? 'text-gray-400' : 'text-gray-600'}`}>
+                                       {slotTime}
+                                     </span>
+                                   </div>
+                                   <div className="flex items-center gap-2">
+                                     <span className={`text-xs font-medium ${
+                                       isFull ? 'text-red-600' : 'text-blue-600'
+                                     }`}>
+                                       {isFull ? '마감' : `${currentApplicants}/8`}
+                                     </span>
+                                     <Mic className={`w-3 h-3 ${isFull ? 'text-gray-400' : 'text-blue-500'}`} />
+                                   </div>
+                                 </div>
+                               </button>
+                             )
+                           })}
+                         </div>
                       </div>
                     )}
                     
                     {tab === 'education' && dayData.education?.length > 0 && (
-                      <div className="space-y-1">
-                        {/* 학과장 정보 (교육이 있는 날에만) */}
-                        {dayData.classroomInfo && (
-                          <div className="text-xs bg-amber-50 rounded px-2 py-1 border border-amber-200">
-                            <div className="font-semibold text-amber-700">📍 학과장 {dayData.classroomInfo}</div>
-                          </div>
-                        )}
+                      <div className="space-y-2">
                         
                         {dayData.education.slice(0, 2).map((edu: any, idx: number) => {
                           // 가용성 데이터가 변경될 때마다 실시간으로 재계산 (forceUpdate로 리렌더링 트리거)
                           const convertedSlots = convertToEducationSlots(edu.slots, edu.type, formatDateKey(date), isSlotAvailable)
                           // forceUpdate를 사용하여 의존성 추가 (실제로는 사용하지 않지만 리렌더링을 위해)
                           const _ = forceUpdate
+                          
+                          const getLanguageConfig = (lang: string) => {
+                            switch(lang) {
+                              case 'korean-english': 
+                                return {
+                                  gradient: 'from-indigo-50 via-blue-50 to-purple-50',
+                                  border: 'border-indigo-200/60',
+                                  text: 'text-indigo-900',
+                                  dot: 'from-indigo-400 to-blue-600',
+                                  badge: 'bg-indigo-100 text-indigo-800'
+                                }
+                              case 'japanese': 
+                                return {
+                                  gradient: 'from-green-50 via-emerald-50 to-teal-50',
+                                  border: 'border-green-200/60',
+                                  text: 'text-green-900',
+                                  dot: 'from-green-400 to-emerald-600',
+                                  badge: 'bg-green-100 text-green-800'
+                                }
+                              case 'chinese': 
+                                return {
+                                  gradient: 'from-purple-50 via-violet-50 to-fuchsia-50',
+                                  border: 'border-purple-200/60',
+                                  text: 'text-purple-900',
+                                  dot: 'from-purple-400 to-violet-600',
+                                  badge: 'bg-purple-100 text-purple-800'
+                                }
+                              default: 
+                                return {
+                                  gradient: 'from-gray-50 to-gray-100',
+                                  border: 'border-gray-200/60',
+                                  text: 'text-gray-900',
+                                  dot: 'from-gray-400 to-gray-600',
+                                  badge: 'bg-gray-100 text-gray-800'
+                                }
+                            }
+                          }
+                          
+                          const config = getLanguageConfig(edu.type.lang)
+                          
                           return (
-                            <div key={`edu-${formatDateKey(date)}-${idx}`} className="text-xs">
-                              <div className={`rounded px-2 py-1 border ${
-                                edu.type.lang === 'korean-english' ? 'bg-gradient-to-r from-indigo-50 to-blue-50 border-indigo-200' :
-                                edu.type.lang === 'japanese' ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200' :
-                                edu.type.lang === 'chinese' ? 'bg-gradient-to-r from-purple-50 to-violet-50 border-purple-200' :
-                                'bg-gray-50 border-gray-200'
-                              }`}>
-                                <div className={`font-semibold mb-1 ${
-                                  edu.type.lang === 'korean-english' ? 'text-indigo-800' :
-                                  edu.type.lang === 'japanese' ? 'text-green-800' :
-                                  edu.type.lang === 'chinese' ? 'text-purple-800' :
-                                  'text-gray-800'
-                                }`}>
-                                  {renderEduLabel(edu.type)}
+                            <div key={`edu-${formatDateKey(date)}-${idx}`} className="group/edu">
+                              <div className={`p-3 bg-gradient-to-br ${config.gradient} rounded-xl border ${config.border} hover:shadow-md transition-all duration-200 hover:scale-[1.02]`}>
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className={`text-xs font-bold ${config.text}`}>
+                                    {edu.type.lang === 'korean-english' ? '한/영' : 
+                                     edu.type.lang === 'japanese' ? '일본어' : 
+                                     edu.type.lang === 'chinese' ? '중국어' : '기타'}
+                                    {edu.type.mode === '1:1' ? ' (온라인)' : 
+                                     edu.type.lang === 'korean-english' && edu.type.mode === 'small' ? ` (${edu.type.category || '신규'})` : ''}
+                                  </span>
+                                  <div className={`px-2 py-0.5 ${config.badge} rounded-full text-xs font-medium`}>
+                                    {edu.type.mode === '1:1' ? '1:1' : '소규모'}
+                                  </div>
                                 </div>
 
-                                <div className="flex gap-0.5">
-                                  {convertedSlots.slice(0, 6).map((slot: number) => (
+                                <div className="flex items-center gap-1 mb-2">
+                                  <span className="text-xs text-gray-600 font-medium">차수:</span>
+                                  <div className="flex gap-1">
+                                    {convertedSlots.slice(0, 8).map((slot: number) => (
                                     <div
                                       key={slot}
-                                      className={`w-1.5 h-1.5 rounded-full ${
-                                        edu.type.lang === 'korean-english' ? 'bg-indigo-500' :
-                                        edu.type.lang === 'japanese' ? 'bg-green-500' :
-                                        edu.type.lang === 'chinese' ? 'bg-purple-500' :
-                                        'bg-gray-500'
-                                      }`}
+                                        className={`w-2 h-2 bg-gradient-to-br ${config.dot} rounded-full shadow-sm`}
+                                        title={`${slot}차수`}
                                     ></div>
                                   ))}
-                                  {convertedSlots.length > 6 && <span className="text-xs">...</span>}
+                                    {convertedSlots.length > 8 && (
+                                      <span className="text-xs text-gray-500 font-medium">+{convertedSlots.length - 8}</span>
+                                    )}
                                 </div>
+                                </div>
+                                
+                                {convertedSlots.length > 0 && (
+                                  <div className="text-xs text-gray-600">
+                                    {edu.type.mode === '1:1' ? 
+                                      getOneOnOneSlotTime(convertedSlots[0]) :
+                                      getSmallGroupSlotTime(convertedSlots[0])
+                                    }
+                                    {convertedSlots.length > 1 && (
+                                      <span className="text-gray-500"> 외 {convertedSlots.length - 1}개</span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )
                         })}
                         {dayData.education.length > 2 && (
-                          <div className="text-xs text-indigo-600 font-medium text-center cursor-pointer hover:text-indigo-700">
-                            +{dayData.education.length - 2}개 교육 더보기
+                          <div className="text-center">
+                            <div className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 text-xs font-bold rounded-full hover:bg-indigo-200 transition-colors cursor-pointer">
+                              <span>+{dayData.education.length - 2}개 교육</span>
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                              </svg>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -2716,87 +3252,99 @@ function RequestCalendar({
           })}
         </div>
         
-        {/* 범례 */}
-        <div className="mt-6 p-4 bg-gray-50/50 rounded-lg">
-          <h4 className="text-sm font-semibold text-gray-800 mb-2">범례</h4>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-              <span>한/영 녹음</span>
+        {/* 현대적인 범례 */}
+                 <div className="mt-8 px-2">
+           <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-1.5 h-6 bg-gradient-to-b from-indigo-500 to-purple-600 rounded-full"></div>
+              <h4 className="text-base font-bold text-gray-800">범례</h4>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-              <span>일본어 녹음/교육</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
+                <div className="w-4 h-4 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full shadow-sm"></div>
+                <span className="text-sm font-medium text-blue-900">한/영</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
-              <span>중국어 녹음/교육</span>
+              <div className="flex items-center gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
+                <div className="w-4 h-4 bg-gradient-to-br from-green-400 to-emerald-600 rounded-full shadow-sm"></div>
+                <span className="text-sm font-medium text-green-900">일본어</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-indigo-500 rounded-full"></div>
-              <span>한/영 교육</span>
+              <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl border border-purple-100">
+                <div className="w-4 h-4 bg-gradient-to-br from-purple-400 to-violet-600 rounded-full shadow-sm"></div>
+                <span className="text-sm font-medium text-purple-900">중국어</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-amber-100 border border-amber-200 rounded"></div>
-              <span>결과 공지</span>
+              {tab === 'recording' && (
+                <div className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
+                  <div className="w-4 h-4 bg-gradient-to-r from-amber-400 to-orange-500 rounded-full shadow-sm animate-pulse"></div>
+                  <span className="text-sm font-medium text-amber-900">결과 공지</span>
+                </div>
+              )}
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                <div className="w-4 h-4 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full shadow-lg ring-2 ring-blue-500 ring-opacity-30"></div>
+                <span className="text-sm font-medium text-gray-900">오늘</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 ring-2 ring-blue-400 ring-opacity-50 rounded"></div>
-              <span>오늘</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-gray-200 border-2 border-gray-400 rounded"></div>
-              <span>클릭하여 상세보기</span>
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                <div className="w-4 h-4 bg-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer"></div>
+                <span className="text-sm font-medium text-gray-900">상세보기</span>
             </div>
           </div>
         </div>
-      </CardContent>
+        </div>
+      </div>
 
       {/* 상세 일정 모달 */}
       {selectedDate && selectedDayData && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
-            <div className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white p-6">
-              <div className="flex items-center justify-between">
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => handleDateSelect(null)}
+        >
+          <div 
+            className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden border border-gray-200 animate-slideUp"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 헤더 - 더 매력적인 그라데이션 */}
+            <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-blue-700 text-white p-6 md:p-8 relative overflow-hidden">
+              {/* 배경 패턴 */}
+              <div className="absolute inset-0 opacity-10">
+                <div className="absolute top-4 right-4 w-32 h-32 bg-white rounded-full blur-3xl"></div>
+                <div className="absolute bottom-4 left-4 w-24 h-24 bg-white rounded-full blur-2xl"></div>
+              </div>
+              
+              <div className="flex items-start justify-between relative z-10">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                      <Calendar className="w-6 h-6 text-white" />
+                    </div>
                 <div>
-                  <h3 className="text-xl font-bold">
-                    {new Date(selectedDate).toLocaleDateString("ko-KR", {
-                      year: "numeric",
+                      <h3 className="text-2xl md:text-3xl font-bold tracking-tight">
+                        {new Date(selectedDate!).toLocaleDateString("ko-KR", {
                       month: "long", 
-                      day: "numeric",
-                      weekday: "long"
+                          day: "numeric"
                     })}
                   </h3>
-                  <p className="text-indigo-100 mt-1">상세 일정 및 신청</p>
+                      <p className="text-white/80 text-sm md:text-base">
+                        {new Date(selectedDate!).toLocaleDateString("ko-KR", {
+                          year: "numeric",
+                          weekday: "long"
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-white/70 text-sm font-medium">
+                    {tab === 'education' ? '교육' : '녹음'} 상세 일정 및 신청
+                  </p>
                 </div>
                 <button
                   onClick={() => handleDateSelect(null)}
-                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                  className="p-3 hover:bg-white/20 rounded-2xl transition-all duration-200 hover:scale-110 group"
                 >
-                  <X className="w-6 h-6" />
+                  <X className="w-6 h-6 group-hover:rotate-90 transition-transform duration-200" />
                 </button>
               </div>
             </div>
 
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
-              {selectedDayData.resultAnnouncement && (
-                <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                  <div className="flex items-center gap-2 text-amber-800 font-semibold">
-                    <Bell className="w-5 h-5" />
-                    결과 공지일
-                  </div>
-                  <p className="text-amber-700 text-sm mt-1">이 날짜에 신청 결과가 발표됩니다.</p>
-                </div>
-              )}
-
-              {tab === 'education' && selectedDayData.classroomInfo && (
-                <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                  <div className="flex items-center gap-2 text-amber-800 font-semibold">
-                    <Building className="w-5 h-5" />
-                    📍 학과장 {selectedDayData.classroomInfo}
-                  </div>
-                </div>
-              )}
+            {/* 모달 내용 - 현대적 디자인 */}
+            <div className="p-6 md:p-8 overflow-y-auto max-h-[60vh] space-y-6">
 
               {tab === 'recording' && selectedDayData.recording?.slots?.length > 0 && (
                 <div className="mb-6">
@@ -2804,58 +3352,70 @@ function RequestCalendar({
                     <Mic className="w-5 h-5 text-blue-600" />
                     녹음 가능 차수
                   </h4>
-                  <div className="space-y-3">
-                    {selectedDayData.recording.slots.map((slot: number) => (
-                      <div key={`modal-rec-${slot}`} className="border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <Badge variant="secondary" className="bg-blue-100 text-blue-800 font-semibold">
-                              {slot}차수
-                            </Badge>
-                            <span className="text-sm font-medium text-gray-600">
-                              {getRecordingSlotTime(slot)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          {["korean-english", "japanese", "chinese"].map((lang) => {
-                            const isAvailable = isRecordingSlotAvailable(selectedDate, slot, lang)
-                            const currentApplicants = getRecordingCurrentApplicants(selectedDate, slot)
-                            
-                            return (
-                              <button
-                                key={lang}
-                                onClick={() => {
-                                  if (isAvailable) {
-                                    onApplyRecording(selectedDate, slot, lang)
-                                    setSelectedDate(null)
-                                  }
-                                }}
-                                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                                  isAvailable 
-                                    ? `text-white ${getLanguageColor(lang)}`
-                                    : 'text-gray-400 bg-gray-200 cursor-not-allowed opacity-60'
-                                }`}
-                                disabled={!isAvailable}
-                              >
-                                <div>
-                                  {lang === 'korean-english' ? '한국어/영어' : lang === 'japanese' ? '일본어' : '중국어'} 신청
-                                </div>
-                                <div className="text-xs mt-1">
-                                  {currentApplicants}/8명
-                                </div>
-                                {!isAvailable && (
-                                  <div className="text-xs text-gray-500 mt-1">
-                                    {currentApplicants >= 8 ? '정원 마감' : '이미 신청한 언어'}
-                                  </div>
-                                )}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                   {/* 간결한 모달 녹음 시간표 - 통일된 블루 테마 */}
+                   <div className="space-y-3">
+                     {selectedDayData.recording.slots.map((slot: number) => {
+                       const currentApplicants = getRecordingCurrentApplicants(selectedDate!, slot)
+                       const slotTime = getRecordingSlotTime(slot)
+                       const isFull = currentApplicants >= 8
+                       const canApply = !isFull && !userLanguageRestrictions.recording
+                       
+                       return (
+                         <div key={`modal-rec-${slot}`} className={`p-4 rounded-lg border transition-all duration-200 ${
+                           isFull ? 'bg-gray-50 border-gray-200' : 'bg-blue-50 border-blue-200'
+                         }`}>
+                           <div className="flex items-center justify-between mb-3">
+                             <div className="flex items-center gap-4">
+                               <span className={`text-lg font-bold ${isFull ? 'text-gray-500' : 'text-blue-700'}`}>
+                                 {slot}차수
+                               </span>
+                               <span className={`text-sm ${isFull ? 'text-gray-400' : 'text-gray-600'}`}>
+                                 {slotTime}
+                               </span>
+                             </div>
+                             <span className={`text-sm font-medium px-3 py-1 rounded-full ${
+                               isFull 
+                                 ? 'bg-red-100 text-red-700' 
+                                 : 'bg-blue-100 text-blue-700'
+                             }`}>
+                               {isFull ? '마감' : `${currentApplicants}/8명`}
+                             </span>
+                           </div>
+                           
+                           <button
+                             onClick={() => {
+                               if (canApply) {
+                                 handleRecordingApplication(selectedDate!, slot)
+                               }
+                             }}
+                             disabled={!canApply}
+                             className={`w-full px-4 py-3 rounded-lg font-medium transition-all duration-200 ${
+                               canApply
+                                 ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md'
+                                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                             }`}
+                           >
+                             <div className="flex items-center justify-center gap-2">
+                               <Mic className="w-4 h-4" />
+                               <span>
+                                 {isFull ? '신청 마감' : 
+                                  userLanguageRestrictions.recording ? '신청 제한' : 
+                                  '녹음 신청하기'}
+                               </span>
+                             </div>
+                           </button>
+                           
+                           {userLanguageRestrictions.recording && (
+                             <div className="mt-2 text-center py-2 bg-yellow-50 rounded-lg border border-yellow-200">
+                               <div className="text-xs font-medium text-yellow-700">
+                                 ⚠️ 이미 이번 달에 녹음 신청하셨습니다
+                               </div>
+                             </div>
+                           )}
+                         </div>
+                       )
+                     })}
+                   </div>
                 </div>
               )}
 
@@ -2866,40 +3426,139 @@ function RequestCalendar({
                     교육 가능 과정
                   </h4>
                   <div className="space-y-4">
-                    {selectedDayData.education.map((edu: any, idx: number) => {
+                    {selectedDayData.education
+                      .sort((a: any, b: any) => {
+                        // 1. 언어별 우선순위: 한/영 → 일본어 → 중국어
+                        const langPriority = {
+                          'korean-english': 1,
+                          'japanese': 2,
+                          'chinese': 3
+                        };
+                        const langA = langPriority[a.type.lang as keyof typeof langPriority] || 4;
+                        const langB = langPriority[b.type.lang as keyof typeof langPriority] || 4;
+                        
+                        if (langA !== langB) {
+                          console.log(`📋 [데스크톱 정렬] 언어 우선순위: ${a.type.lang}(${langA}) vs ${b.type.lang}(${langB})`);
+                          return langA - langB;
+                        }
+                        
+                        // 2. 같은 언어 내에서는 첫 번째 차수 기준으로 시간순 정렬
+                        const firstSlotA = Math.min(...a.slots);
+                        const firstSlotB = Math.min(...b.slots);
+                        console.log(`⏰ [데스크톱 정렬] ${a.type.lang} 시간순: 차수${firstSlotA} vs 차수${firstSlotB}`);
+                        return firstSlotA - firstSlotB;
+                      })
+                      .map((edu: any, idx: number) => {
                       // 가용성 데이터가 변경될 때마다 실시간으로 재계산 (forceUpdate로 리렌더링 트리거)
-                      const convertedSlots = convertToEducationSlots(edu.slots, edu.type, selectedDate, isSlotAvailable)
+                      const convertedSlots = convertToEducationSlots(edu.slots, edu.type, selectedDate!, isSlotAvailable)
                       // forceUpdate를 사용하여 의존성 추가 (실제로는 사용하지 않지만 리렌더링을 위해)
                       const _ = forceUpdate
                       return (
-                        <div key={`modal-edu-${idx}`} className="border border-gray-200 rounded-lg p-4">
-                          <div className="mb-3">
-                            <Badge className={`font-semibold ${
-                              edu.type.lang === 'korean-english' ? 'bg-indigo-100 text-indigo-800' :
-                              edu.type.lang === 'japanese' ? 'bg-green-100 text-green-800' :
-                              edu.type.lang === 'chinese' ? 'bg-purple-100 text-purple-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {renderEduLabel(edu.type)}
-                            </Badge>
+                        <div key={`modal-edu-${idx}`} className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                          <div className="mb-4">
+                            {/* 통일된 헤더 디자인 */}
+                            <div className="bg-gradient-to-r from-slate-50 to-slate-100 rounded-lg p-3 border border-slate-200 mb-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  {/* 언어 배지 - 통일된 크기와 스타일 */}
+                                  <div className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                                    edu.type.lang === 'korean-english' ? 'bg-blue-500 text-white' :
+                                    edu.type.lang === 'japanese' ? 'bg-green-500 text-white' :
+                                    edu.type.lang === 'chinese' ? 'bg-purple-500 text-white' :
+                                    'bg-gray-500 text-white'
+                              }`}>
+                                {edu.type.lang === 'korean-english' ? '한/영' : 
+                                 edu.type.lang === 'japanese' ? '일본어' : 
+                                 edu.type.lang === 'chinese' ? '중국어' : '기타'}
+                                  </div>
+                                  
+                                  {/* 모드 배지 - 통일된 크기와 스타일 */}
+                                  <div className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                                    edu.type.mode === '1:1' ? 'bg-indigo-500 text-white' :
+                                    'bg-orange-500 text-white'
+                                  }`}>
+                                    {edu.type.mode === '1:1' ? '💻 온라인' : '👥 소규모'}
+                                  </div>
+                                </div>
+                                
+                                {/* 학과장 정보 - 통일된 스타일 */}
+                                {edu.type.mode === 'small' && ((edu as any).classroomInfo || selectedDayData.classroomInfo) && (
+                                  <div className="flex items-center gap-1 bg-amber-100 px-2 py-1 rounded-full border border-amber-300">
+                                    <Building className="w-3 h-3 text-amber-700" />
+                                    <span className="text-sm font-semibold text-amber-800">
+                                      {(edu as any).classroomInfo || selectedDayData.classroomInfo} 학과장
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              
+                              {/* 소규모 교육 카테고리 - 별도 행으로 분리하여 깔끔하게 */}
+                              {edu.type.mode === 'small' && edu.type.lang === 'korean-english' && edu.type.category && (
+                                <div className="pt-2 border-t border-slate-200">
+                                  <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${
+                                    edu.type.category === '신규' ? 'bg-emerald-500 text-white' :
+                                    edu.type.category === '재자격' ? 'bg-amber-500 text-white' :
+                                    edu.type.category === '공통' ? 'bg-slate-500 text-white' :
+                                    edu.type.category === 'PUS' ? 'bg-violet-500 text-white' :
+                                    'bg-gray-500 text-white'
+                                  }`}>
+                                    {edu.type.category === '신규' ? '✨' :
+                                     edu.type.category === '재자격' ? '🔄' :
+                                     edu.type.category === '공통' ? '👥' :
+                                     edu.type.category === 'PUS' ? '✈️' : '📚'}
+                                    <span>{edu.type.category}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                             <div className="mt-2 text-sm text-gray-600">
-                              <p><strong>시간:</strong> {edu.type.mode === '1:1' ? '25분 단위' : '2시간 단위'} · 총 {convertedSlots.length}개 차수</p>
+                              <p><strong>진행 시간:</strong> {edu.type.mode === '1:1' ? '25분' : '1시간 50분'} · 총 {convertedSlots.length}개 차수</p>
                             </div>
                             {edu.type.lang === 'korean-english' && edu.type.mode === 'small' && (
-                              <div className="mt-2 text-sm text-gray-600">
-                                <p><strong>신규:</strong> 기내방송 자격이 없는 분들</p>
-                                <p><strong>재자격:</strong> 자격 갱신 또는 상위 등급 취득</p>
-                                <p><strong>공통:</strong> 일반 교정교육</p>
+                              <div className="mt-3 space-y-2">
+                                <div className="text-sm font-medium text-gray-700 mb-2">📋 교육 대상 안내</div>
+                                <div className={`p-2 rounded-md text-sm ${
+                                  edu.type.category === '신규' ? 'bg-emerald-50 border border-emerald-200' :
+                                  edu.type.category === '재자격' ? 'bg-amber-50 border border-amber-200' :
+                                  (edu.type.category === '공통' || edu.type.category === 'PUS') ? 'bg-slate-50 border border-slate-200' :
+                                  'bg-gray-50 border border-gray-200'
+                                }`}>
+                                  {edu.type.category === '신규' && (
+                                    <p className="font-semibold text-emerald-800">
+                                      ✨ <strong>신규:</strong> 기내방송 자격이 없는 승무원 대상
+                                    </p>
+                                  )}
+                                  {edu.type.category === '재자격' && (
+                                    <p className="font-semibold text-amber-800">
+                                      🔄 <strong>재자격:</strong> 자격 갱신 또는 상위 등급이 목표인 승무원 대상
+                                    </p>
+                                  )}
+                                  {edu.type.category === '공통' && (
+                                    <p className="font-semibold text-slate-800">
+                                      👥 <strong>공통:</strong> 자격 무관 (누구나 신청 가능)
+                                    </p>
+                                  )}
+                                  {edu.type.category === 'PUS' && (
+                                    <div className="space-y-1">
+                                      <p className="font-semibold text-violet-800">
+                                        ✈️ <strong>PUS:</strong> PUS 승무원 전용
+                                      </p>
+                                      <p className="text-slate-700 text-xs">
+                                        💡 PUS 승무원은 자격 무관하게 신청 가능합니다
+                                      </p>
                               </div>
                             )}
                           </div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             {convertedSlots.map((slot: number) => {
                               // 가용성 확인
                               const educationType = edu.type.mode === '1:1' ? '1:1' : 'small-group'
                               console.log('🔍 모달에서 isSlotAvailable 호출:', { selectedDate, slot, language: edu.type.lang, educationType })
-                              const isAvailable = isSlotAvailable(selectedDate, slot, edu.type.lang, educationType)
-                              const currentApplicants = getCurrentApplicants(selectedDate, slot, edu.type.lang, educationType)
+                              const isAvailable = isSlotAvailable(selectedDate!, slot, edu.type.lang, educationType)
+                              const currentApplicants = getCurrentApplicants(selectedDate!, slot, edu.type.lang, educationType)
                               
                               return (
                                 <button
@@ -2907,19 +3566,20 @@ function RequestCalendar({
                                                                       onClick={() => {
                                       if (isAvailable) {
                                         // 변환된 차수로 신청하지만, 원본 슬롯 정보도 함께 전달
-                                        onApplyEducation(selectedDate, slot, edu.type)
+                                        onApplyEducation(selectedDate!, slot, edu.type)
                                         handleDateSelect(null)
                                       }
                                     }}
-                                  className={`px-3 py-2 rounded-lg font-medium transition-colors ${
+                                  className={`relative p-4 rounded-xl border-2 transition-all duration-200 ${
                                     isAvailable 
-                                      ? `text-white ${getEducationColor(edu.type)}`
-                                      : 'text-gray-400 bg-gray-200 cursor-not-allowed opacity-60'
+                                      ? 'border-indigo-300 bg-gradient-to-br from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 text-indigo-800 hover:border-indigo-400 hover:shadow-md transform hover:scale-105'
+                                      : 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
                                   }`}
                                   disabled={!isAvailable}
                                 >
-                                  {slot}차수
-                                  <div className={`text-xs ${isAvailable ? 'opacity-90' : 'opacity-50'}`}>
+                                  <div className="text-center">
+                                    <div className="text-sm font-bold">{slot}차수</div>
+                                    <div className="text-xs mt-1">
                                     {getEducationSlotTime(edu.type, slot)}
                                   </div>
                                   {edu.type.mode === 'small' && (
@@ -2927,16 +3587,12 @@ function RequestCalendar({
                                       {currentApplicants}/4명
                                     </div>
                                   )}
-                                  {!isAvailable && edu.type.mode === '1:1' && (
+                                  {!isAvailable && (
                                     <div className="text-xs text-gray-500 mt-1">
-                                      신청 완료
+                                      신청 마감
                                     </div>
                                   )}
-                                  {!isAvailable && edu.type.mode === 'small' && (
-                                    <div className="text-xs text-gray-500 mt-1">
-                                      정원 마감
-                                    </div>
-                                  )}
+                                  </div>
                                 </button>
                               )
                             })}
@@ -2958,7 +3614,7 @@ function RequestCalendar({
           </div>
         </div>
       )}
-    </Card>
+    </>
   )
 }
 
@@ -2979,6 +3635,7 @@ function RecordingSetup({
     role: authenticatedUser?.role,
     broadcastGrade: authenticatedUser?.broadcastGrade,
   })
+  const [isCheckingIn, setIsCheckingIn] = useState(false)
 
   // authenticatedUser가 있으면 스프레드시트에서 이름/사번 자동 입력
   useEffect(() => {
@@ -3012,10 +3669,47 @@ function RecordingSetup({
     return []
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (userInfo.name && userInfo.employeeId && userInfo.language && userInfo.category) {
-      onComplete(userInfo)
+      setIsCheckingIn(true)
+      
+      try {
+        // 녹음 체크인 확인
+        const checkinResponse = await fetch('/api/recording/checkin', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            employeeId: userInfo.employeeId,
+            name: userInfo.name,
+            language: userInfo.language,
+            category: userInfo.category,
+            checkinTime: new Date().toISOString()
+          })
+        })
+
+        const checkinResult = await checkinResponse.json()
+
+        if (checkinResult.success) {
+          // 체크인 성공 팝업
+          alert(checkinResult.message)
+          onComplete(userInfo)
+        } else {
+          // 체크인 실패 팝업
+          alert(checkinResult.message || '녹음을 응시하지 않으셨습니다. 담당자에게 문의하세요.')
+          // 체크인 실패해도 녹음으로 넘어가도록 함 (사용자 요구사항에 따라)
+          onComplete(userInfo)
+        }
+      } catch (error) {
+        console.error('체크인 확인 중 오류:', error)
+        alert('체크인 확인 중 오류가 발생했습니다.')
+        // 오류가 발생해도 녹음으로 넘어가도록 함
+        onComplete(userInfo)
+      } finally {
+        setIsCheckingIn(false)
+      }
     }
   }
 
@@ -3099,12 +3793,17 @@ function RecordingSetup({
       <Button
         type="submit"
         className="w-full bg-blue-600 hover:bg-blue-700 h-12 text-sm font-medium"
-        disabled={!userInfo.name || !userInfo.employeeId || !userInfo.language || !userInfo.category || isCheckingDevice}
+        disabled={!userInfo.name || !userInfo.employeeId || !userInfo.language || !userInfo.category || isCheckingDevice || isCheckingIn}
       >
         {isCheckingDevice ? (
           <>
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
             컴퓨터 등록 확인 중...
+          </>
+        ) : isCheckingIn ? (
+          <>
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            체크인 확인 중...
           </>
         ) : (
           <>
@@ -3165,9 +3864,27 @@ function MyPageModal({
       if (!userInfo?.employeeId) return
       setLoadingReq(true)
       try {
-        const res = await fetch(`/api/requests/list?employeeId=${encodeURIComponent(userInfo.employeeId)}`, { cache: 'no-store' })
+        // Database API 우선 시도
+        const res = await fetch(`/api/requests/database?employeeId=${encodeURIComponent(userInfo.employeeId)}`, { cache: 'no-store' })
         const json = await res.json()
-        if (json.success) setRequests(json.items || [])
+        
+        if (json.success && json.items) {
+          // Database API 응답을 기존 형식으로 변환
+          const convertedItems = json.items.map((item: any) => ({
+            type: item.type,
+            date: item.date,
+            slot: item.slot,
+            detail: item.type === 'recording' ? item.details.recordingLanguage : 
+                    `${item.details.language || 'korean-english'} ${item.details.mode || '1:1'} ${item.details.category || ''}`
+          }))
+          setRequests(convertedItems)
+        } else {
+          // Database API 실패시 기존 API로 fallback
+          console.log('🔄 [MyPage] Database API 실패, 기존 API로 fallback')
+          const fallbackRes = await fetch(`/api/requests/list?employeeId=${encodeURIComponent(userInfo.employeeId)}`, { cache: 'no-store' })
+          const fallbackJson = await fallbackRes.json()
+          if (fallbackJson.success) setRequests(fallbackJson.items || [])
+        }
       } finally {
         setLoadingReq(false)
       }
@@ -3419,7 +4136,7 @@ function MyPageModal({
               <div className="max-w-3xl w-full mx-auto">
                 <div className="text-center mb-6">
                   <h3 className="text-2xl font-bold text-gray-900 mb-2">신청 내역</h3>
-                  <p className="text-gray-600">교육/녹음 신청을 확인하고 48시간 전까지 취소할 수 있습니다.</p>
+                  <p className="text-gray-600">교육/녹음 신청을 확인하고 당일 기준 2일 전 오후 2시까지 취소할 수 있습니다.</p>
                 </div>
                 {/* 목록 */}
                 {/* 본문에서 상태 관리됨: requests, loadingReq */}
@@ -3466,20 +4183,48 @@ function langLabel(v: string){
 function CancelButton({ employeeId, item }: { employeeId: string, item: any }){
   const [busy, setBusy] = React.useState(false)
   const canCancel = React.useMemo(()=>{
-    const slotTimes: Record<number, string> = {1:'08:30',2:'09:30',3:'10:30',4:'11:30',5:'13:40',6:'14:40',7:'15:40',8:'16:40'}
-    const t = new Date(`${item.date}T${slotTimes[item.slot]}:00+09:00`)
-    return t.getTime() - Date.now() >= 48*60*60*1000
+    // 교육/녹음 날짜 이틀 전 오후 2시까지만 취소 가능
+    const scheduleDate = new Date(item.date)
+    const twoDaysBefore = new Date(scheduleDate)
+    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+    twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+    
+    return Date.now() <= twoDaysBefore.getTime()
   },[item])
   const onCancel = async () => {
-    if (!confirm('정말로 취소하시겠습니까? 교육/녹음 시작 48시간 전까지만 취소할 수 있습니다.')) return
+    if (!confirm('정말로 취소하시겠습니까? 교육/녹음일 기준 2일 전 오후 2시까지만 취소할 수 있습니다.')) return
     setBusy(true)
     try {
       const res = await fetch('/api/requests/cancel', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: item.type, date: item.date, slot: item.slot, employeeId }) })
       const json = await res.json()
-      if (!json.success) throw new Error(json.error||'취소 실패')
-      alert('취소되었습니다.')
-      // 새로고침
-      window.location.reload()
+      if (!json.success) {
+        // 취소 기간 만료 시 안내 팝업 표시
+        if (json.error === '기간만료' || json.contactRequired) {
+          const scheduleDate = new Date(json.scheduleDate || item.date).toLocaleDateString('ko-KR')
+          const deadline = new Date(json.deadline || '').toLocaleDateString('ko-KR', {
+            year: 'numeric',
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+          
+          alert(`취소 기간이 만료되었습니다.
+
+📅 교육/녹음 날짜: ${scheduleDate}
+⏰ 취소 가능 기한: ${deadline}까지
+
+🏢 취소를 원하시면 담당자에게 연락하여 취소 사유를 말씀해 주세요.
+
+⚠️ 합당하지 않은 사유로 취소할 경우, 다음 달의 녹음/교육 신청이 제한될 수 있습니다.`)
+        } else {
+          throw new Error(json.error||'취소 실패')
+        }
+      } else {
+        alert('취소되었습니다.')
+        // 새로고침
+        window.location.reload()
+      }
     } catch (e: any) {
       alert(e?.message||String(e))
     } finally {
@@ -3507,7 +4252,7 @@ function ReviewMode({
   userInfo: UserInfo
   authenticatedUser: AuthenticatedUser | null
   onNavigate: (mode: string) => void
-  onModeChange: (mode: "select" | "recording" | "review" | "evaluation" | "admin") => void
+  onModeChange: (mode: "select" | "recording" | "review" | "evaluation" | "admin" | "request") => void
   showMyPage: boolean
   setShowMyPage: (v: boolean) => void
   handleLogout: () => void
@@ -3628,6 +4373,15 @@ function ReviewMode({
               <Home className="w-4 h-4" />
               Home
             </button>
+            {/* Request 메뉴: Home 과 Record 사이 */}
+            <button
+              onClick={() => handleNavigation("request")}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+            >
+              <Calendar className="w-4 h-4" />
+              Request
+            </button>
+
             <button
               onClick={() => handleNavigation("recording")}
               className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
@@ -4297,7 +5051,7 @@ function AdminMode({
 }: {
   onBack: () => void
   onNavigate: (mode: string) => void
-  onModeChange: (mode: "select" | "recording" | "review" | "evaluation" | "admin") => void
+  onModeChange: (mode: "select" | "recording" | "review" | "evaluation" | "admin" | "request") => void
   showMyPage: boolean
   setShowMyPage: (v: boolean) => void
   authenticatedUser: AuthenticatedUser | null
@@ -4414,6 +5168,15 @@ function AdminMode({
             >
               <Home className="w-4 h-4" />
               Home
+            </button>
+
+            {/* Request 메뉴: Home 과 Record 사이 */}
+            <button
+              onClick={() => handleNavigation("request")}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+            >
+              <Calendar className="w-4 h-4" />
+              Request
             </button>
 
             <button
@@ -4567,10 +5330,11 @@ function EvaluationMode({
   isLoggingOut,
   toggleMobileMenu,
   isMobileMenuOpen,
+  setIsMobileMenuOpen,
 }: {
   onBack: () => void
   onNavigate: (mode: string) => void
-  onModeChange: (mode: "select" | "recording" | "review" | "evaluation" | "admin") => void
+  onModeChange: (mode: "select" | "recording" | "review" | "evaluation" | "admin" | "request") => void
   showAdminAuth: boolean
   setShowAdminAuth: (v: boolean) => void
   showEvaluationAuth: boolean
@@ -4585,6 +5349,7 @@ function EvaluationMode({
   isLoggingOut: boolean
   toggleMobileMenu: () => void
   isMobileMenuOpen: boolean
+  setIsMobileMenuOpen: (v: boolean) => void
 }) {
   const [refreshKey, setRefreshKey] = useState(0)
   const handleNavigation = (newMode: string) => {
@@ -4738,6 +5503,16 @@ function EvaluationMode({
               <Home className="w-5 h-5" />
               <span className="text-base">Home</span>
             </button>
+
+            {/* Request 메뉴: Home 과 Record 사이 */}
+            <button
+              onClick={() => { handleNavigation("request"); setIsMobileMenuOpen(false); }}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+            >
+              <Calendar className="w-5 h-5" />
+              <span className="text-base">Request</span>
+            </button>
+
             <button
               onClick={() => { handleNavigation("recording"); setIsMobileMenuOpen(false); }}
               className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
@@ -4824,6 +5599,16 @@ function EvaluationMode({
               <Home className="w-4 h-4" />
               Home
             </button>
+
+            {/* Request 메뉴: Home 과 Record 사이 */}
+            <button
+              onClick={() => handleNavigation("request")}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+            >
+              <Calendar className="w-4 h-4" />
+              Request
+            </button>
+
             <button
               onClick={() => handleNavigation("recording")}
               className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
@@ -4952,6 +5737,8 @@ function EvaluationMode({
       )}
 
 
+
     </div>
   )
 }
+

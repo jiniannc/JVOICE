@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { PDFSyncManager } from "@/components/pdf-sync-manager"
+import { ScheduleSyncAdmin } from "@/components/schedule-sync-admin"
 import { EvaluationSummary } from "@/components/evaluation-summary"
 import { FileUploadEvaluation } from "@/components/file-upload-evaluation"
 import {
@@ -50,7 +51,7 @@ interface Submission {
   duration?: number;
   
   // evaluation 전체 데이터
-  status: "pending" | "review_requested" | "submitted";
+  status: "pending" | "review_requested" | "submitted" | "completed" | "deleted" | "re_evaluation";
   scores?: { [key: string]: number };
   categoryScores?: { [key: string]: any };
   koreanTotalScore?: number;
@@ -60,6 +61,7 @@ interface Submission {
   comments?: { korean: string; english: string } | string;
   evaluatedAt?: string;
   evaluatedBy?: string;
+  reviewRequestedBy?: string;
   dropboxPath?: string;
   approved?: boolean;
 }
@@ -140,7 +142,7 @@ export default function AdminDashboard() {
   
   // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1)
-  const [itemsPerPage] = useState(10)
+  const [itemsPerPage] = useState(1000) // 모든 데이터 로드
   const [hasNextPage, setHasNextPage] = useState(false)
   const [totalPagesServer, setTotalPagesServer] = useState(1)
   const [totalCountServer, setTotalCountServer] = useState(0)
@@ -210,36 +212,26 @@ export default function AdminDashboard() {
       // 캐시 버스터 제거 (성능 최적화)
       const cacheBuster = '';
       
-      const [pendingRes, completedRes] = await Promise.all([
-        retryFetch(`/api/evaluations/load-dropbox?${selectedYm ? `month=${selectedYm}` : `limit=${itemsPerPage}&page=1`}${cacheBuster}`),
-        retryFetch(`/api/evaluations/load-completed?${selectedYm ? `month=${selectedYm}` : `limit=${itemsPerPage}&page=1`}${cacheBuster}`),
+      // Database API로 변경 - 모든 상태의 평가 데이터를 한 번에 로드
+      const [allEvaluationsRes] = await Promise.all([
+        retryFetch(`/api/evaluations/load-database?${selectedYm ? `month=${selectedYm}&limit=50000` : `limit=50000&page=1`}${cacheBuster}`),
       ]);
 
-      if (!pendingRes.ok) {
-        const errorText = await pendingRes.text();
-        console.error('❌ [관리자] pending API 오류:', pendingRes.status, errorText);
-        throw new Error(`pending 데이터 로딩 실패: ${pendingRes.status}`);
-      }
-      
-      if (!completedRes.ok) {
-        const errorText = await completedRes.text();
-        console.error('❌ [관리자] completed API 오류:', completedRes.status, errorText);
-        throw new Error(`completed 데이터 로딩 실패: ${completedRes.status}`);
+      if (!allEvaluationsRes.ok) {
+        const errorText = await allEvaluationsRes.text();
+        console.error('❌ [관리자] Database API 오류:', allEvaluationsRes.status, errorText);
+        throw new Error(`Database 데이터 로딩 실패: ${allEvaluationsRes.status}`);
       }
 
-      const pendingData = await pendingRes.json();
-      const completedData = await completedRes.json();
+      const allEvaluationsData = await allEvaluationsRes.json();
       
-      // 모든 데이터를 합치기 (pending + completed) → 최신순 정렬 후 현재 페이지 구간만 슬라이스
-      let mergedEvaluations = [
-        ...(pendingData.evaluations || []),
-        ...(completedData.evaluations || []),
-      ] as any[]
+      // Database에서 모든 상태의 평가 데이터를 받아옴
+      let mergedEvaluations = (allEvaluationsData.evaluations || []) as any[]
       mergedEvaluations = mergedEvaluations.filter(Boolean)
       // 1) 유효성 필터를 먼저 적용하여 총합/페이지 계산과 일치시키기
       const isValid = (ev: any): boolean => {
-        const infoSource = ev?.candidateInfo || ev
-        return Boolean(infoSource && infoSource.id && infoSource.name && infoSource.employeeId)
+        // Database API 구조에 맞게 수정: evaluation.id와 candidateInfo 분리
+        return Boolean(ev && ev.id && ev.candidateInfo && ev.candidateInfo.name && ev.candidateInfo.employeeId)
       }
       const safeDate = (ev: any): number => {
         const raw = ev?.candidateInfo?.submittedAt || ev?.submittedAt || ev?.dropboxCreatedTime || 0
@@ -296,7 +288,7 @@ export default function AdminDashboard() {
           }
           return {
             // candidateInfo 내용물
-            id: infoSource.id,
+            id: ev.id, // 평가 ID 사용 (candidateInfo.id가 아님)
             name: infoSource.name,
             employeeId: infoSource.employeeId,
             language: infoSource.language,
@@ -317,6 +309,8 @@ export default function AdminDashboard() {
             comments: ev.comments,
             evaluatedAt: ev.evaluatedAt,
             evaluatedBy: ev.evaluatedBy,
+            reviewRequestedBy: ev.reviewRequestedBy,
+            reviewRequestedAt: ev.reviewRequestedAt,
             dropboxPath: ev.dropboxPath,
             approved: ev.approved, // approved 필드 추가
           }
@@ -439,24 +433,33 @@ export default function AdminDashboard() {
   // 평가 결과 확인 함수 - selectedResult를 설정
   const viewEvaluationResult = (submissionId: string) => {
     const result = submissions.find((sub) => sub.id === submissionId);
+    console.log("🔥🔥🔥 [ADMIN DEBUG] viewEvaluationResult 호출 🔥🔥🔥")
+    console.log("🔥 [ADMIN] submissionId:", submissionId)
+    console.log("🔥 [ADMIN] 찾은 result:", result)
+    
     if (result) {
+      console.log("🔥 [ADMIN] result.categoryScores:", result.categoryScores)
+      console.log("🔥 [ADMIN] result.scores:", result.scores)
+      console.log("🔥 [ADMIN] result.language:", result.language)
+      
       // 한/영 평가일 경우, 각 언어별 총점 계산
       if (result.language === "korean-english" && result.categoryScores) {
-        const koreanTotalScore = Object.entries(result.categoryScores)
-          .filter(([key]) => key.startsWith("korean-"))
-          .reduce((sum, [, score]) => sum + (score as number), 0);
-        const englishTotalScore = Object.entries(result.categoryScores)
-          .filter(([key]) => key.startsWith("english-"))
-          .reduce((sum, [, score]) => sum + (score as number), 0);
+        const koreanTotalScore = result.categoryScores["korean"] || 0;
+        const englishTotalScore = result.categoryScores["english"] || 0;
         
-        setSelectedResult({
+        const finalResult = {
           ...result,
           koreanTotalScore,
           englishTotalScore,
-        });
+        };
+        console.log("🔥 [ADMIN] 한/영 최종 결과:", finalResult)
+        setSelectedResult(finalResult);
       } else {
-      setSelectedResult(result);
+        console.log("🔥 [ADMIN] 일본어/중국어 최종 결과:", result)
+        setSelectedResult(result);
       }
+    } else {
+      console.log("🔥 [ADMIN] ERROR: result를 찾을 수 없음!")
     }
   };
 
@@ -481,14 +484,15 @@ export default function AdminDashboard() {
     if (!confirmed) return;
 
     try {
-      const response = await fetch('/api/evaluations/delete', {
+      // 🔥 Database API를 사용한 삭제 처리
+      const response = await fetch('/api/evaluations/delete-database', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          submissionId: submission.id,
-          dropboxPath: submission.dropboxPath,
+          evaluationId: submission.id,
+          deletedBy: 'Admin',
         }),
       });
 
@@ -541,8 +545,14 @@ export default function AdminDashboard() {
             // "평가완료"는 제출 완료이되, 아직 승인되지 않은 항목만
             if (!(sub.status === "submitted" && !sub.approved)) return false;
           } else if (statusFilter === "pending") {
-            // UI의 "평가대기"는 submitted가 아닌 모든 상태 포함 (pending, review_requested 등)
-            if (sub.status === "submitted") return false;
+            // UI의 "평가대기"는 pending 상태만
+            if (sub.status !== "pending") return false;
+          } else if (statusFilter === "review_requested") {
+            // 검토 요청 상태만
+            if (sub.status !== "review_requested") return false;
+          } else if (statusFilter === "re_evaluation") {
+            // 재평가 대기 상태만
+            if (sub.status !== "re_evaluation") return false;
           } else if (statusFilter === "approved") {
             // 승인 완료 항목만
             if (!sub.approved) return false;
@@ -977,14 +987,14 @@ export default function AdminDashboard() {
   }
 
   const approveOne = async (submission: Submission) => {
-    if (!submission.dropboxPath) {
-      throw new Error("Dropbox 경로가 없습니다.");
+    if (!submission.id) {
+      throw new Error("평가 ID가 없습니다.");
     }
     
     const response = await fetch("/api/evaluations/approve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dropboxPath: submission.dropboxPath, approvedBy: "Admin" }),
+      body: JSON.stringify({ evaluationId: submission.id, approvedBy: "Admin" }),
     });
     
     const result = await response.json();
@@ -1017,7 +1027,7 @@ export default function AdminDashboard() {
     if (!confirmed) return;
 
     try {
-      // 병렬로 승인 처리
+      // 병렬로 승인 처리 - Database API 사용
       const approvePromises = approveTargets.map(async (submission) => {
         const response = await fetch('/api/evaluations/approve', {
           method: 'POST',
@@ -1025,7 +1035,7 @@ export default function AdminDashboard() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            dropboxPath: submission.dropboxPath,
+            evaluationId: submission.id,
             approvedBy: 'Admin',
           }),
         });
@@ -1077,15 +1087,15 @@ export default function AdminDashboard() {
     if (!confirmed) return;
 
     try {
-      // 병렬로 재평가 처리
+      // 🔥 Database API를 사용한 병렬 재평가 처리
       const reevaluatePromises = reevaluateTargets.map(async (submission) => {
-        const response = await fetch('/api/evaluations/reevaluate', {
+        const response = await fetch('/api/evaluations/reevaluate-database', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            dropboxPath: submission.dropboxPath,
+            evaluationId: submission.id,
             reevaluatedBy: 'Admin',
           }),
         });
@@ -1207,10 +1217,10 @@ export default function AdminDashboard() {
               onClick={async () => { 
                 // 캐시 무효화 후 데이터 다시 로드
                 try {
-                  await fetch("/api/evaluations/load-dropbox?invalidate=true", { method: "DELETE" });
-                  console.log("✅ 캐시 무효화 완료");
+                  // Database API는 캐시가 없으므로 단순히 데이터만 새로고침
+                  console.log("✅ Database 데이터 새로고침");
                 } catch (error) {
-                  console.warn("⚠️ 캐시 무효화 실패:", error);
+                  console.warn("⚠️ 데이터 새로고침 실패:", error);
                 }
                 await loadData(); 
                 setLastUpdate(new Date().toLocaleTimeString()); 
@@ -1452,6 +1462,7 @@ export default function AdminDashboard() {
                     <SelectItem value="all">전체</SelectItem>
                     <SelectItem value="completed">평가완료</SelectItem>
                     <SelectItem value="pending">평가대기</SelectItem>
+                    <SelectItem value="re_evaluation">재평가 대기</SelectItem>
                     <SelectItem value="approved">승인 완료</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1524,13 +1535,20 @@ export default function AdminDashboard() {
                           {sub.approved ? (
                             <Badge className="bg-green-100 text-green-700 border-green-300">승인 완료</Badge>
                           ) : (
-                            <Badge variant={sub.status === "submitted" ? "default" : "secondary"}>
-                              {sub.status === "submitted" ? "평가 완료" : (sub.status === "review_requested" ? "검토 요청" : "평가 대기")}
-                            </Badge>
+                            <div className="flex flex-col gap-1 items-center">
+                              <Badge variant={(sub.status === "submitted" || sub.status === "completed") ? "default" : (sub.status === "re_evaluation" ? "destructive" : "secondary")}>
+                                {(sub.status === "submitted" || sub.status === "completed") ? "평가 완료" : 
+                                 (sub.status === "review_requested" ? "검토 요청" : 
+                                  (sub.status === "re_evaluation" ? "재평가 대기" : "평가 대기"))}
+                              </Badge>
+                              {sub.status === "review_requested" && sub.reviewRequestedBy && (
+                                <span className="text-xs text-orange-600">검토 요청: {sub.reviewRequestedBy}</span>
+                              )}
+                            </div>
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {sub.status === 'submitted' ? (
+                          {(sub.status === 'submitted' || sub.status === 'completed') ? (
                             (<>{(() => {
                               const gradeInfo = getGradeInfo(
                                 typeof sub.totalScore === 'number' ? sub.totalScore : 0,
@@ -1561,7 +1579,7 @@ export default function AdminDashboard() {
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {sub.status === 'submitted' ? (
+                          {(sub.status === 'submitted' || sub.status === 'completed') ? (
                             <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => viewEvaluationResult(sub.id)}>
                               <Eye className="w-4 h-4 mr-1" />
                               결과 확인
@@ -1571,15 +1589,14 @@ export default function AdminDashboard() {
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {sub.status === 'submitted' ? (
+                          {(sub.status === 'submitted' || sub.status === 'completed') ? (
                             <span className="text-xs text-gray-400">삭제 불가</span>
                           ) : (
                             <Button 
                               variant="outline" 
                               size="sm"
                               className="h-7 px-2 text-red-600 border-red-300 hover:bg-red-50"
-                              onClick={() => handleDelete(sub.id)}
-                            >
+                              onClick={() => handleDelete(sub.id)}>
                               <Trash2 className="w-4 h-4 mr-1" />
                               삭제
                             </Button>
@@ -1633,6 +1650,9 @@ export default function AdminDashboard() {
 
         {/* v85 PDF 동기화 */}
         <PDFSyncManager />
+
+        {/* 스케줄 동기화 */}
+        <ScheduleSyncAdmin />
 
         {/* v85 로그인 기록 */}
         <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">

@@ -99,25 +99,22 @@ export async function POST(request: NextRequest) {
 
           if (!targetRequest) continue
 
-          // 48시간 전 체크 (차수별 시간 적용)
-          const slotTimes: Record<number, string> = {
-            1: '08:30', 2: '09:30', 3: '10:30', 4: '11:30',
-            5: '13:40', 6: '14:40', 7: '15:40', 8: '16:40'
-          }
-          const timeStr = slotTimes[targetRequest.slot] || '08:30'
-          const classDateTime = new Date(`${targetRequest.date}T${timeStr}:00+09:00`)
+          // 취소 가능 시간 체크: 해당 날짜 기준  오후 2시까지
+          const scheduleDate = new Date(targetRequest.date)
+          const twoDaysBefore = new Date(scheduleDate)
+          twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+          twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+          
           const now = new Date()
-          const timeDiff = classDateTime.getTime() - now.getTime()
-          const hoursDiff = timeDiff / (1000 * 60 * 60)
 
           console.log(`⏰ 취소 시간 검증:`)
-          console.log(`  - 수업 시간: ${classDateTime.toLocaleString('ko-KR')}`)
+          console.log(`  - 스케줄 날짜: ${scheduleDate.toLocaleString('ko-KR')}`)
+          console.log(`  - 취소 마감: ${twoDaysBefore.toLocaleString('ko-KR')}`)
           console.log(`  - 현재 시간: ${now.toLocaleString('ko-KR')}`)
-          console.log(`  - 차이: ${hoursDiff.toFixed(2)}시간`)
 
-          if (hoursDiff < 48) {
+          if (now > twoDaysBefore) {
             return NextResponse.json(
-              { error: '교육 시작 48시간 전까지만 취소할 수 있습니다.' },
+              { error: '취소 기간이 만료되었습니다. (해당일 기준 2일 전 14:00까지만 취소 가능)' },
               { status: 400 }
             )
           }

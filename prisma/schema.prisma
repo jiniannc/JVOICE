@@ -38,6 +38,9 @@ model User {
   evaluations Evaluation[]
   requests    Request[]
   loginLogs   LoginLog[]
+  scheduleApplications ScheduleApplication[]
+  educationCheckins EducationCheckin[]
+  recordingCheckins RecordingCheckin[]
 
   @@map("users")
 }
@@ -48,7 +51,7 @@ model Evaluation {
   userId          String
   language        String   // 'korean-english', 'japanese', 'chinese'
   category        String   // '신규', '재자격', '공통', 'PUS'
-  status          String   @default("pending") // 'pending', 'review_requested', 'submitted'
+  status          String   @default("pending") // 'pending', 'review_requested', 'completed', 'approved', 'deleted', 're_evaluation'
   submittedAt     DateTime @default(now())
   evaluatedAt     DateTime?
   evaluatedBy     String?
@@ -58,6 +61,14 @@ model Evaluation {
   grade           String   @default("N/A")
   comments        Json?    // { korean: string, english: string }
   approved        Boolean  @default(false)
+  approvedAt      DateTime?
+  approvedBy      String?
+  reviewRequestedAt DateTime?
+  reviewRequestedBy String?
+  reevaluatedAt   DateTime?
+  reevaluatedBy   String?
+  deletedAt       DateTime?
+  deletedBy       String?
   recordingCount  Int?
   scriptNumbers   Int[]    // JSON 배열로 저장
   comment         String?
@@ -155,3 +166,113 @@ model LoginLog {
 
   @@map("login_logs")
 }
+
+// 월별 스케줄 데이터 (Google Sheets에서 동기화)
+model MonthlySchedule {
+  id          String   @id @default(cuid())
+  month       String   @unique // "YYYY-MM" format
+  schedules   Json     // 스케줄 배열 데이터
+  sheetData   Json?    // 원본 Google Sheets 데이터 보존
+  active      Boolean  @default(true) // 스케줄 활성화 상태 (request 모드 노출 여부)
+  syncedAt    DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("monthly_schedules")
+}
+
+// 개별 스케줄 (정규화된 형태)
+model Schedule {
+  id          String   @id @default(cuid())
+  month       String   // "YYYY-MM"
+  date        String   // "YYYY-MM-DD"
+  type        String   // "korean-english" | "japanese" | "chinese"
+  classType   String   // "1:1" | "small"
+  slots       Json     // [1, 2, 3, 4] - 개설된 슬롯 배열
+  capacity    Int      // 슬롯당 최대 인원
+  classroom   String?  // "5A" 등
+  visible     Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 관계
+  applications ScheduleApplication[]
+
+  @@unique([date, type, classType]) // 중복 방지
+  @@index([month])
+  @@index([date, type])
+  @@map("schedules")
+}
+
+// 스케줄 신청 내역
+model ScheduleApplication {
+  id         String   @id @default(cuid())
+  scheduleId String
+  employeeId String
+  slot       Int      // 1-8
+  status     String   @default("ACTIVE") // "ACTIVE" | "CANCELED"
+  details    Json?    // 추가 신청 정보
+  
+  appliedAt  DateTime @default(now())
+  canceledAt DateTime?
+  
+  // 관계
+  schedule   Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [employeeId], references: [employeeId])
+
+  // @@unique([scheduleId, employeeId, slot, status]) // 임시로 제거 - 같은 슬롯에 여러 언어 신청 허용
+  @@index([employeeId])
+  @@index([scheduleId, slot])
+  @@map("schedule_applications")
+}
+
+// 교육 체크인 테이블
+model EducationCheckin {
+  id           String   @id @default(cuid())
+  requestId    String   // Request 테이블의 ID
+  employeeId   String   // 체크인한 직원 ID
+  checkinTime  DateTime // 체크인 시간
+  status       String   @default("CHECKED_IN") // "CHECKED_IN", "COMPLETED", "NO_SHOW"
+  notes        String?  // 체크인 관련 메모
+  ipAddress    String?  // 체크인한 IP 주소
+  location     String?  // 체크인 위치 (GPS 좌표 등)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 관계
+  user         User     @relation(fields: [employeeId], references: [employeeId], onDelete: Cascade)
+
+  @@unique([requestId, employeeId]) // 같은 요청에 대해 한 번만 체크인 가능
+  @@index([employeeId])
+  @@index([requestId])
+  @@index([checkinTime])
+  @@map("education_checkins")
+}
+
+// 녹음 체크인 테이블
+model RecordingCheckin {
+  id           String   @id @default(cuid())
+  employeeId   String   // 체크인한 직원 ID
+  name         String   // 직원 이름
+  language     String   // 녹음 언어 ('korean-english', 'japanese', 'chinese')
+  category     String   // 평가 구분 ('신규', '재자격', '공통', 'PUS')
+  checkinDate  DateTime // 체크인 시간
+  status       String   @default("CHECKED_IN") // "CHECKED_IN", "RECORDING_STARTED", "COMPLETED"
+  notes        String?  // 체크인 관련 메모
+  ipAddress    String?  // 체크인한 IP 주소
+  location     String?  // 체크인 위치 (GPS 좌표 등)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 관계
+  user         User     @relation(fields: [employeeId], references: [employeeId], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([checkinDate])
+  @@index([language])
+  @@map("recording_checkins")
+}
+
+

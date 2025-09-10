@@ -7,13 +7,27 @@ import { EvaluationSummary } from "@/components/evaluation-summary";
 import { History, Mic, Calendar, Users, CheckCircle, Clock, RefreshCw } from 'lucide-react';
 
 interface MyRecordingEntry {
+  id?: string;
   employeeId: string;
   name: string;
   language: string;
   category: string;
   submittedAt: string;
-  dropboxPath: string;
+  dropboxPath?: string;
   approved: boolean;
+  // Database API에서 추가되는 필드들
+  totalScore?: number;
+  koreanTotalScore?: number;
+  englishTotalScore?: number;
+  grade?: string;
+  scores?: Record<string, number>;
+  categoryScores?: Record<string, number>;
+  comments?: Record<string, string>;
+  evaluatedAt?: string;
+  evaluatedBy?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  recordings?: Record<string, string>;
 }
 
 interface MyRecordingsTableProps {
@@ -31,9 +45,21 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "", hideHea
   useEffect(() => {
     if (!employeeId) return;
     setLoading(true);
-    fetch(`/api/evaluations/load-my-recordings?employeeId=${employeeId}`)
+    // Database API 사용 (승인된 평가 결과만 조회)
+    fetch(`/api/evaluations/load-my-recordings-database?employeeId=${employeeId}`)
       .then(res => res.json())
-      .then(data => setRecords(data.records || []))
+      .then(data => {
+        console.log("✅ [MyRecordingsTable] Database API에서 로드:", data.records?.length || 0, "개");
+        setRecords(data.records || []);
+      })
+      .catch(error => {
+        console.error("❌ [MyRecordingsTable] Database API 로드 실패:", error);
+        // 실패시 기존 Dropbox API로 fallback
+        console.log("🔄 [MyRecordingsTable] Dropbox API로 fallback");
+        return fetch(`/api/evaluations/load-my-recordings?employeeId=${employeeId}`)
+          .then(res => res.json())
+          .then(data => setRecords(data.records || []));
+      })
       .finally(() => setLoading(false));
   }, [employeeId]);
 
@@ -65,22 +91,34 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "", hideHea
     return new Date(rec.submittedAt) > new Date(arr[latestIdx].submittedAt) ? idx : latestIdx;
   }, 0);
 
-  const handleResultCheck = async (dropboxPath: string) => {
-    setResultLoading(prev => ({ ...prev, [dropboxPath]: true }));
+  const handleResultCheck = async (record: MyRecordingEntry) => {
+    const key = record.dropboxPath || record.id || `${record.employeeId}_${record.language}`;
+    setResultLoading(prev => ({ ...prev, [key]: true }));
     try {
-      const res = await fetch(`/api/evaluations/download-json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filePath: dropboxPath })
-      });
-      const { evaluation } = await res.json();
-      const merged = evaluation && evaluation.candidateInfo ? { ...evaluation, ...evaluation.candidateInfo } : evaluation;
-      setSelectedEval(merged);
+      // 승인된 항목만 결과 확인 가능
+      if (record.approved) {
+        // Database API에서 이미 모든 데이터가 로드되었으므로 record 자체를 사용
+        if (record.scores && record.categoryScores) {
+          console.log("✅ [handleResultCheck] Database 데이터 사용:", record.id);
+          setSelectedEval(record);
+        } else {
+          // Fallback: Dropbox에서 로드
+          console.log("🔄 [handleResultCheck] Dropbox에서 fallback 로드");
+          const res = await fetch(`/api/evaluations/download-json`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filePath: record.dropboxPath })
+          });
+          const { evaluation } = await res.json();
+          const merged = evaluation && evaluation.candidateInfo ? { ...evaluation, ...evaluation.candidateInfo } : evaluation;
+          setSelectedEval(merged);
+        }
+      }
     } catch (error) {
       console.error("Failed to load evaluation result:", error);
       // 필요하다면 여기에 에러 알림(toast)을 추가할 수 있습니다.
     } finally {
-      setResultLoading(prev => ({ ...prev, [dropboxPath]: false }));
+      setResultLoading(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -147,10 +185,10 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "", hideHea
                         className="w-full" 
                         size="sm" 
                         variant="outline"
-                        disabled={resultLoading[rec.dropboxPath]} 
-                        onClick={() => handleResultCheck(rec.dropboxPath)}
+                        disabled={resultLoading[rec.dropboxPath || rec.id || `${rec.employeeId}_${rec.language}`]} 
+                        onClick={() => handleResultCheck(rec)}
                       >
-                        {resultLoading[rec.dropboxPath] ? (
+                        {resultLoading[rec.dropboxPath || rec.id || `${rec.employeeId}_${rec.language}`] ? (
                           <>
                             <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
                             결과 로딩 중...

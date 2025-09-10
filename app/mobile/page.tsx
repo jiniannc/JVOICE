@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -17,12 +18,20 @@ import {
   Loader2,
   LogOut,
   Music,
-  BookOpen
+  BookOpen,
+  GraduationCap,
+  Calendar,
+  Clock
 } from "lucide-react"
 import { FileUploadEvaluation } from "@/components/file-upload-evaluation"
 import { GoogleAuth } from "@/components/google-auth"
 import { employeeDB } from "@/lib/employee-database"
 import { MobileReviewPage } from "@/components/mobile-review-page"
+import { EducationCheckinModal } from "@/components/education-checkin-modal"
+import { MobileRecordingCalendar } from "@/components/mobile-recording-calendar"
+import { MobileEducationCalendar } from "@/components/mobile-education-calendar"
+import { CustomDialog } from "@/components/ui/custom-dialog"
+import { useCustomDialog } from "@/hooks/use-custom-dialog"
 
 interface UserInfo {
   name: string
@@ -53,6 +62,11 @@ interface AuthenticatedUser {
 }
 
 export default function MobilePage() {
+  const router = useRouter()
+  
+  const customDialogHook = useCustomDialog()
+  const { isOpen: customDialogOpen, config: customDialogConfig, close: customDialogClose, showAlert, showConfirm } = customDialogHook
+  
   // CSS 키프레임 애니메이션 정의
   React.useEffect(() => {
     const style = document.createElement('style');
@@ -119,45 +133,102 @@ export default function MobilePage() {
   const [recentSubmission, setRecentSubmission] = useState<any>(null)
   const [loadingSubmission, setLoadingSubmission] = useState(false)
   const [statusMessageKey, setStatusMessageKey] = useState(0) // 메시지 변경 감지용
+  const [educationRequests, setEducationRequests] = useState<any[]>([])
+  const [loadingEducation, setLoadingEducation] = useState(false)
+  const [currentTab, setCurrentTab] = useState<'evaluation' | 'education'>('evaluation')
+  const [showEducationCheckin, setShowEducationCheckin] = useState(false)
+  
+  // 캘린더 모달 상태
+  const [showCalendarModal, setShowCalendarModal] = useState(false)
+  const [calendarType, setCalendarType] = useState<'recording' | 'education'>('recording')
 
-  // 최근 제출 내역 가져오기
+  // 최근 제출 내역 가져오기 (Database API 사용)
   const fetchRecentSubmission = async (employeeId: string, clearCache = false) => {
     if (!employeeId) return;
     
     setLoadingSubmission(true);
     try {
-      const cacheParam = clearCache ? "&clearCache=true" : "";
-      const response = await fetch(`/api/evaluations/load-my-recordings?employeeId=${employeeId}${cacheParam}`);
-      const data = await response.json();
+      console.log('📋 [모바일] Database에서 평가 결과 로드 시작:', employeeId);
       
-      if (data.success && data.records && data.records.length > 0) {
-        // 가장 최근 제출 내역 찾기
-        const sortedRecords = data.records.sort((a: any, b: any) => 
-          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      const response = await fetch(`/api/evaluations/load-database?page=1&limit=10&status=all`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      const data = await response.json();
+      console.log('📊 [모바일] Database 응답:', data);
+      
+      if (data.success && data.evaluations && data.evaluations.length > 0) {
+        // 해당 사용자의 평가만 필터링
+        const userEvaluations = data.evaluations.filter((evaluation: any) => 
+          evaluation.candidateInfo?.employeeId === employeeId
         );
         
-        console.log('🔍 [모바일] 최근 제출 내역:', sortedRecords[0]);
-        console.log('🔍 [모바일] 상태 정보:', {
-          status: sortedRecords[0].status,
-          approved: sortedRecords[0].approved,
-          submittedAt: sortedRecords[0].submittedAt,
-          totalScore: sortedRecords[0].totalScore,
-          grade: sortedRecords[0].grade
+        console.log('🔍 [모바일] 사용자 평가 필터링:', { 
+          total: data.evaluations.length, 
+          userOnly: userEvaluations.length,
+          employeeId 
         });
         
-        // 상태 메시지 미리보기
-        const testMessage = getStatusMessage();
-        console.log('🔍 [모바일] 상태 메시지:', testMessage);
+        if (userEvaluations.length === 0) {
+          console.log('📋 [모바일] 해당 사용자의 제출된 평가 없음');
+          setRecentSubmission(null);
+          return;
+        }
         
-        setRecentSubmission(sortedRecords[0]);
+        // 가장 최근 평가 찾기
+        const sortedEvaluations = userEvaluations
+          .sort((a: any, b: any) => new Date(b.candidateInfo.submittedAt).getTime() - new Date(a.candidateInfo.submittedAt).getTime());
+        
+        const latest = sortedEvaluations[0];
+        console.log('📋 [모바일] 최근 평가 내역:', {
+          id: latest.id,
+          status: latest.status,
+          submittedAt: latest.candidateInfo.submittedAt,
+          totalScore: latest.totalScore,
+          grade: latest.grade,
+          language: latest.candidateInfo.language
+        });
+        
+        setRecentSubmission(latest);
       } else {
+        console.log('📋 [모바일] 제출된 평가 없음');
         setRecentSubmission(null);
       }
     } catch (error) {
-      console.error("최근 제출 내역 로드 실패:", error);
+      console.error("❌ [모바일] Database 평가 결과 로드 실패:", error);
       setRecentSubmission(null);
     } finally {
       setLoadingSubmission(false);
+    }
+  };
+
+  // 교육 신청 내역 가져오기
+  const fetchEducationRequests = async (employeeId: string) => {
+    if (!employeeId) return;
+    
+    setLoadingEducation(true);
+    try {
+      console.log('📋 [모바일] 교육 신청 내역 로드 시작:', employeeId);
+      
+      // GET 방식으로 변경 (separate page와 동일)
+      const response = await fetch(`/api/requests/database?employeeId=${employeeId}`);
+
+      if (response.ok) {
+        const data = await response.json();
+        const educationItems = data.items?.filter((item: any) => item.type === 'education') || [];
+        
+        console.log('📊 [모바일] 교육 신청 내역:', educationItems);
+        setEducationRequests(educationItems);
+      } else {
+        console.error('❌ [모바일] 교육 신청 내역 로드 실패:', response.status);
+        setEducationRequests([]);
+      }
+    } catch (error) {
+      console.error('❌ [모바일] 교육 신청 내역 로드 오류:', error);
+      setEducationRequests([]);
+    } finally {
+      setLoadingEducation(false);
     }
   };
 
@@ -179,7 +250,7 @@ export default function MobilePage() {
       };
     }
 
-    const submittedDate = new Date(recentSubmission.submittedAt);
+    const submittedDate = new Date(recentSubmission.candidateInfo.submittedAt);
     const formatDate = (date: Date) => {
       return date.toLocaleDateString("ko-KR", {
         year: "numeric",
@@ -188,21 +259,90 @@ export default function MobilePage() {
       });
     };
 
-    // 상태에 따른 메시지 결정 (단순화: 평가 완료 vs 평가 대기중)
-    if (recentSubmission.approved) {
+    // Database API 응답 구조에 따른 메시지 결정
+    if (recentSubmission.status === 'approved') {
       return {
         icon: "🎉",
         title: "평가 완료",
-        message: `${formatDate(submittedDate)}자 응시 내역의 평가가 완료되었습니다. 지금 바로 결과를 확인해 보세요!`
+        message: `${formatDate(submittedDate)}에 응시하신 평가가 완료되었습니다. 지금 바로 결과를 확인해 보세요!`
       };
     } else {
       // pending, submitted, review_requested 상태 모두 "평가 대기중"으로 통합
+      const statusText = recentSubmission.status === 'pending' ? '검토 대기' :
+                        recentSubmission.status === 'submitted' ? '제출 완료' :
+                        recentSubmission.status === 'review_requested' ? '재검토 요청' : '평가 대기';
+      
       return {
         icon: "⏰",
         title: "평가 대기중",
-        message: `${formatDate(submittedDate)}에 평가에 응시하셨고, 현재 평가 대기중입니다.`
+        message: `${formatDate(submittedDate)}에 평가에 응시하셨고, 현재 ${statusText} 상태입니다.`
       };
     }
+  };
+
+  // 교육 상태 메시지 생성
+  const getEducationStatusMessage = () => {
+    if (loadingEducation) {
+      return "교육 신청 내역을 확인 중입니다...";
+    }
+
+    if (!educationRequests || educationRequests.length === 0) {
+      return "아직 교육 신청 내역이 없습니다.";
+    }
+
+    // 가장 최근 교육 신청 찾기
+    const sortedRequests = educationRequests
+      .sort((a: any, b: any) => {
+        const dateA = new Date(a.appliedAt || a.createdAt || a.date).getTime();
+        const dateB = new Date(b.appliedAt || b.createdAt || b.date).getTime();
+        return dateB - dateA;
+      });
+    
+    const latest = sortedRequests[0];
+    const requestDate = new Date(latest.appliedAt || latest.createdAt || latest.date);
+    const educationDate = new Date(latest.date);
+    
+    console.log('🎓 교육 신청 내역 디버그:', { latest, requestDate, educationDate });
+    
+    const formatDate = (date: Date) => {
+      return date.toLocaleDateString("ko-KR", {
+        month: "long",
+        day: "numeric"
+      });
+    };
+    
+    const formatTime = (slot: number, educationType: string) => {
+      if (educationType === '1:1') {
+        // 1:1 교육 (25분 단위)
+        const timeMap: Record<number, string> = {
+          1: '08:30-08:55', 2: '09:00-09:25', 3: '09:30-09:55', 4: '10:00-10:25',
+          5: '10:30-10:55', 6: '11:00-11:25', 7: '11:30-11:55', 8: '12:00-12:25',
+          9: '13:35-14:00', 10: '14:05-14:30', 11: '14:35-15:00', 12: '15:05-15:30',
+          13: '15:35-16:00', 14: '16:05-16:30', 15: '16:35-17:00', 16: '17:05-17:30'
+        };
+        return timeMap[slot] ? `${slot}차수 (${timeMap[slot]})` : `${slot}차수`;
+      } else {
+        // 소규모 교육 (2시간 단위)
+        const timeMap: Record<number, string> = {
+          1: '08:30-10:20', 2: '10:30-12:20', 3: '13:40-15:30', 4: '15:40-17:30'
+        };
+        return timeMap[slot] ? `${slot}차수 (${timeMap[slot]})` : `${slot}차수`;
+      }
+    };
+
+    // details에서 정보 추출
+    const language = latest.details?.language || '미정';
+    const educationType = latest.details?.educationType || latest.details?.mode || '미정';
+    
+    const languageText = language === 'korean-english' ? '한/영' :
+                        language === 'japanese' ? '일본어' :
+                        language === 'chinese' ? '중국어' : language;
+    
+    const modeText = educationType === '1:1' ? '1:1 교육' : '소규모 교육';
+
+    console.log('🎓 교육 상태 메시지 디버그:', { latest, language, educationType, languageText, modeText });
+
+    return `${formatDate(educationDate)} ${formatTime(latest.slot, educationType)} ${languageText} ${modeText}을 신청하셨습니다.`;
   };
 
   const shouldEmphasizeReviewCard = React.useMemo(() => {
@@ -253,10 +393,11 @@ export default function MobilePage() {
     fetchUser()
   }, [])
 
-  // 사용자 정보가 로드된 후 최근 제출 내역 가져오기
+  // 사용자 정보가 로드된 후 최근 제출 내역과 교육 신청 내역 가져오기
   useEffect(() => {
     if (userInfo.employeeId && authenticatedUser) {
       fetchRecentSubmission(userInfo.employeeId);
+      fetchEducationRequests(userInfo.employeeId);
     }
   }, [userInfo.employeeId, authenticatedUser]);
 
@@ -309,9 +450,22 @@ export default function MobilePage() {
         setShowFileUpload(true)
       } else if (pendingAction === "review") {
         setShowReview(true)
+      } else if (pendingAction === "recordingRequest") {
+        navigateToCalendar('recording')
+      } else if (pendingAction === "educationRequest") {
+        navigateToCalendar('education')
+      } else if (pendingAction === "educationCheckin") {
+        setShowEducationCheckin(true)
       }
       setPendingAction(null)
     }
+  }
+
+  const navigateToCalendar = (type: 'recording' | 'education') => {
+    console.log('🌐 모바일 캘린더 모달 열기:', type)
+    
+    setCalendarType(type)
+    setShowCalendarModal(true)
   }
 
   const handleCardClick = (action: string, event?: React.MouseEvent) => {
@@ -333,6 +487,15 @@ export default function MobilePage() {
         setShowFileUpload(true)
       } else if (action === "review") {
         setShowReview(true)
+      } else if (action === "recordingRequest") {
+        console.log('🗓️ 녹음 신청 캘린더로 이동')
+        navigateToCalendar('recording')
+      } else if (action === "educationRequest") {
+        console.log('🎓 교육 신청 캘린더로 이동')
+        navigateToCalendar('education')
+      } else if (action === "educationCheckin") {
+        console.log('✅ 교육 체크인 모달 열기')
+        setShowEducationCheckin(true)
       }
     }
   }
@@ -515,7 +678,21 @@ export default function MobilePage() {
                    >
                      {getStatusMessage().message}
                    </div>
-                                       {/* 결과 확인 버튼 제거 - My Page로 연결되어 소용없음 */}
+                   
+                   {/* 교육 상태 메시지 */}
+                   <div 
+                     className="text-sm text-gray-600 leading-tight mt-3 pt-3 border-t border-gray-200/50 transition-all duration-1000 ease-out"
+                     style={{
+                       animation: 'slideInFade 1s ease-out 0.5s forwards',
+                       opacity: 0,
+                       transform: 'translateX(12px) scale(0.98)',
+                     }}
+                   >
+                     <span className="text-xs text-gray-500 font-medium">📚 교육 신청:</span><br/>
+                     {getEducationStatusMessage()}
+                   </div>
+                   
+                   {/* 결과 확인 버튼 제거 - My Page로 연결되어 소용없음 */}
                  </div>
                </div>
              </div>
@@ -542,31 +719,64 @@ export default function MobilePage() {
            </div>
          )}
 
-        {/* 기능 카드들 */}
-        <div className="grid gap-6">
-          {/* 녹음 파일 제출 카드 */}
+                 {/* 탭 네비게이션 */}
+         <div className={`bg-white/80 backdrop-blur-xl border border-white/30 rounded-2xl p-4 shadow-xl transition-all duration-1000 delay-1000 ${
+           isPageLoaded ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'
+         }`}>
+           <div className="flex bg-gray-100 rounded-xl p-1">
+             <button
+               onClick={() => setCurrentTab('evaluation')}
+               className={`flex-1 text-center px-4 py-3 rounded-lg text-sm font-bold transition-all duration-300 flex items-center justify-center gap-2 ${
+                 currentTab === 'evaluation'
+                   ? 'bg-blue-600 text-white shadow-lg'
+                   : 'text-gray-600 hover:bg-white hover:shadow-md'
+               }`}
+             >
+               <BookOpen className="w-4 h-4" />
+               평가
+             </button>
+             <button
+               onClick={() => setCurrentTab('education')}
+               className={`flex-1 text-center px-4 py-3 rounded-lg text-sm font-bold transition-all duration-300 flex items-center justify-center gap-2 ${
+                 currentTab === 'education'
+                   ? 'bg-green-600 text-white shadow-lg'
+                   : 'text-gray-600 hover:bg-white hover:shadow-md'
+               }`}
+             >
+               <GraduationCap className="w-4 h-4" />
+               교육
+             </button>
+           </div>
+         </div>
+
+         {/* 기능 카드들 */}
+         <div className="grid gap-6">
+          {/* 평가 탭 - 기존 기능들 */}
+          {currentTab === 'evaluation' && (
+            <>
+          {/* 녹음 신청 카드 */}
           <Card 
-            className={`bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/20 shadow-2xl rounded-2xl border border-white/50 card-hover cursor-pointer overflow-hidden group ${
+            className={`bg-gradient-to-br from-white via-orange-50/30 to-amber-50/20 shadow-2xl rounded-2xl border border-white/50 card-hover cursor-pointer overflow-hidden group ${
               isPageLoaded ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'
             }`}
-            style={{ transitionDelay: '1100ms' }}
-            onClick={(e) => handleCardClick("fileUpload", e)}
+            style={{ transitionDelay: '1050ms' }}
+            onClick={(e) => handleCardClick("recordingRequest", e)}
           >
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-500/3 via-indigo-500/2 to-purple-500/3 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
+            <div className="absolute inset-0 bg-gradient-to-r from-orange-500/3 via-amber-500/2 to-yellow-500/3 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
             <CardContent className="p-8 relative">
               <div className="flex items-center gap-6">
-                <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 p-5 rounded-2xl shadow-2xl group-hover:shadow-3xl transition-all duration-500 subtle-float">
-                  <Mic className="w-10 h-10 text-white" />
+                <div className="bg-gradient-to-br from-orange-600 via-amber-600 to-yellow-600 p-5 rounded-2xl shadow-2xl group-hover:shadow-3xl transition-all duration-500 subtle-float">
+                  <Calendar className="w-10 h-10 text-white" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-xl font-black text-gray-900 mb-2">녹음 파일 제출</h3>
+                  <h3 className="text-xl font-black text-gray-900 mb-2">녹음 신청</h3>
                   <p className="text-gray-600 text-sm mb-4 leading-relaxed">
-                    부산베이스 전용 업로드 페이지입니다.
+                    녹음 평가 스케줄 확인 및 예약
                   </p>
                   <div className="flex items-center gap-3">
-                    <Badge className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0 text-xs font-bold px-3 py-1 shadow-lg">
-                      <Mic className="w-3 h-3 mr-1" />
-                      PUS Base Only
+                    <Badge className="bg-gradient-to-r from-orange-600 to-amber-600 text-white border-0 text-xs font-bold px-3 py-1 shadow-lg">
+                      <Calendar className="w-3 h-3 mr-1" />
+                      Schedule
                     </Badge>
                   </div>
                 </div>
@@ -574,12 +784,12 @@ export default function MobilePage() {
             </CardContent>
           </Card>
 
-          {/* 내 응시 내역 카드 */}
+          {/* 결과 확인 카드 */}
           <Card 
             className={`bg-gradient-to-br from-white via-green-50/30 to-emerald-50/20 shadow-2xl rounded-2xl border border-white/50 card-hover cursor-pointer overflow-hidden group ${
               isPageLoaded ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'
             } ${shouldEmphasizeReviewCard ? 'attention-pulse ring-2 ring-orange-400' : ''}`}
-            style={{ transitionDelay: '1300ms' }}
+                         style={{ transitionDelay: '1150ms' }}
             onClick={(e) => handleCardClick("review", e)}
           >
             <div className="absolute inset-0 bg-gradient-to-r from-green-500/3 via-emerald-500/2 to-teal-500/3 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
@@ -591,7 +801,7 @@ export default function MobilePage() {
                 <div className="flex-1">
                   <h3 className="text-xl font-black text-gray-900 mb-2">결과 확인</h3>
                   <p className="text-gray-600 text-sm mb-4 leading-relaxed">
-                    이전에 제출한 평가 결과를 확인합니다.
+                    이전에 제출한 평가 결과 확인
                   </p>
                   <div className="flex items-center gap-3">
                     <Badge className="bg-gradient-to-r from-green-600 to-emerald-600 text-white border-0 text-xs font-bold px-3 py-1 shadow-lg">
@@ -601,11 +811,108 @@ export default function MobilePage() {
                   </div>
                 </div>
               </div>
+                         </CardContent>
+           </Card>
+
+          {/* 녹음 파일 제출 카드 */}
+          <Card 
+            className={`bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/20 shadow-2xl rounded-2xl border border-white/50 card-hover cursor-pointer overflow-hidden group ${
+              isPageLoaded ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'
+            }`}
+            style={{ transitionDelay: '1200ms' }}
+            onClick={(e) => handleCardClick("fileUpload", e)}
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-500/3 via-indigo-500/2 to-purple-500/3 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
+            <CardContent className="p-8 relative">
+              <div className="flex items-center gap-6">
+                <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 p-5 rounded-2xl shadow-2xl group-hover:shadow-3xl transition-all duration-500 subtle-float">
+                  <Mic className="w-10 h-10 text-white" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-xl font-black text-gray-900 mb-2">녹음 파일 제출</h3>
+                  <p className="text-gray-600 text-sm mb-4 leading-relaxed">
+                    부산베이스 전용 업로드 페이지
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <Badge className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0 text-xs font-bold px-3 py-1 shadow-lg">
+                      <Mic className="w-3 h-3 mr-1" />
+                      PUS Base Only
+                    </Badge>
+                  </div>
+                </div>
+              </div>
             </CardContent>
           </Card>
-        </div>
+            </>
+          )}
 
-      </div>
+          {/* 교육 탭 - 교육 관련 기능들 */}
+          {currentTab === 'education' && (
+            <>
+              {/* 교육 신청 카드 */}
+              <Card 
+                className={`bg-gradient-to-br from-white via-green-50/30 to-emerald-50/20 shadow-2xl rounded-2xl border border-white/50 card-hover cursor-pointer overflow-hidden group ${
+                  isPageLoaded ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'
+                }`}
+                style={{ transitionDelay: '1050ms' }}
+                onClick={(e) => handleCardClick("educationRequest", e)}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-green-500/3 via-emerald-500/2 to-teal-500/3 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
+                <CardContent className="p-8 relative">
+                  <div className="flex items-center gap-6">
+                    <div className="bg-gradient-to-br from-green-600 via-emerald-600 to-teal-600 p-5 rounded-2xl shadow-2xl group-hover:shadow-3xl transition-all duration-500 subtle-float">
+                      <Calendar className="w-10 h-10 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-xl font-black text-gray-900 mb-2">교육 신청</h3>
+                      <p className="text-gray-600 text-sm mb-4 leading-relaxed">
+                        언어별 교육 일정 확인 및 예약
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <Badge className="bg-gradient-to-r from-green-600 to-emerald-600 text-white border-0 text-xs font-bold px-3 py-1 shadow-lg">
+                          <GraduationCap className="w-3 h-3 mr-1" />
+                          Education
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 교육 체크인 카드 */}
+              <Card 
+                className={`bg-gradient-to-br from-white via-purple-50/30 to-indigo-50/20 shadow-2xl rounded-2xl border border-white/50 card-hover cursor-pointer overflow-hidden group ${
+                  isPageLoaded ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'
+                }`}
+                style={{ transitionDelay: '1150ms' }}
+                onClick={(e) => handleCardClick("educationCheckin", e)}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-purple-500/3 via-indigo-500/2 to-blue-500/3 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
+                <CardContent className="p-8 relative">
+                  <div className="flex items-center gap-6">
+                    <div className="bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600 p-5 rounded-2xl shadow-2xl group-hover:shadow-3xl transition-all duration-500 subtle-float">
+                      <GraduationCap className="w-10 h-10 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-xl font-black text-gray-900 mb-2">교육 체크인</h3>
+                      <p className="text-gray-600 text-sm mb-4 leading-relaxed">
+                        신청한 교육에 출석체크
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <Badge className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white border-0 text-xs font-bold px-3 py-1 shadow-lg">
+                          <GraduationCap className="w-3 h-3 mr-1" />
+                          Check-in
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+         </div>
+
+       </div>
 
       {/* 하단 고정 정보 - 배경에 자연스럽게 녹아들도록 */}
       <div className="fixed bottom-0 left-0 right-0 pointer-events-none z-0">
@@ -664,6 +971,32 @@ export default function MobilePage() {
           isLoggingOut={isLoggingOut}
         />
       )}
+
+      {/* 교육 체크인 모달 */}
+      <EducationCheckinModal
+        isOpen={showEducationCheckin}
+        onClose={() => setShowEducationCheckin(false)}
+        userInfo={userInfo}
+      />
+
+      {/* 캘린더 모달들 */}
+      {calendarType === 'recording' && (
+        <MobileRecordingCalendar
+          isOpen={showCalendarModal}
+          onClose={() => setShowCalendarModal(false)}
+          authenticatedUser={authenticatedUser}
+          userInfo={userInfo}
+        />
+      )}
+      
+      {calendarType === 'education' && (
+        <MobileEducationCalendar
+          isOpen={showCalendarModal}
+          onClose={() => setShowCalendarModal(false)}
+          authenticatedUser={authenticatedUser}
+          userInfo={userInfo}
+        />
+      )}
     </div>
   )
 }
@@ -682,9 +1015,61 @@ function MobileMyPageModal({
   onLogout: () => void
   isLoggingOut: boolean
 }) {
-  const [activeTab, setActiveTab] = useState<"profile" | "qualifications">("profile")
+  const [activeTab, setActiveTab] = useState<"profile" | "qualifications" | "requests">("profile")
   const [employeeData, setEmployeeData] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [myRequests, setMyRequests] = useState<any[]>([])
+  const [myRequestsLoading, setMyRequestsLoading] = useState(false)
+  
+  const myPageDialogHook = useCustomDialog()
+  const { isOpen: customDialogOpen, config: customDialogConfig, close: customDialogClose, showAlert, showConfirm } = myPageDialogHook
+
+  // 신청 내역 로드 - 데스크톱과 동일한 로직
+  const loadMyRequests = async () => {
+    if (!user?.email || !userInfo.employeeId) return
+    
+    setMyRequestsLoading(true)
+    try {
+      const employeeId = userInfo.employeeId || 'TEMP001'
+      console.log('🔍 [모바일 MyPage] 신청 내역 조회 - employeeId:', employeeId)
+      
+      // Database API 우선 시도
+      const res = await fetch(`/api/requests/database?employeeId=${employeeId}`)
+      const data = await res.json()
+      console.log('📄 [모바일 MyPage] 신청 내역 응답:', data)
+      
+      if (data.success && data.items) {
+        // Database API 응답을 기존 형식으로 변환
+        const convertedRequests = data.items.map((item: any) => ({
+          id: item.id,
+          type: item.type,
+          date: item.date,
+          slot: item.slot,
+          details: item.details,
+          applicationTime: item.appliedAt,
+          status: item.status
+        }))
+        
+        setMyRequests(convertedRequests)
+        console.log('✅ [모바일 MyPage] 신청 내역 로드 완료:', convertedRequests.length, '개')
+      } else {
+        // Database API 실패시 Dropbox API로 fallback
+        console.log('🔄 [모바일 MyPage] Database 실패, Dropbox API로 fallback')
+        const fallbackRes = await fetch(`/api/requests/dropbox?employeeId=${employeeId}&email=${user.email}`)
+        const fallbackData = await fallbackRes.json()
+        
+        if (fallbackData.requests) {
+          setMyRequests(fallbackData.requests)
+          console.log('✅ [모바일 MyPage] Dropbox 신청 내역 로드 완료:', fallbackData.requests.length, '개')
+        }
+      }
+    } catch (error) {
+      console.error('모바일 MyPage 신청 내역 조회 실패:', error)
+      setMyRequests([])
+    } finally {
+      setMyRequestsLoading(false)
+    }
+  }
 
   // 직원 자격 정보 불러오기
   useEffect(() => {
@@ -706,6 +1091,110 @@ function MobileMyPageModal({
     }
     loadEmployeeQualifications()
   }, [user?.email])
+
+  // 신청 내역 탭이 활성화될 때 로드
+  useEffect(() => {
+    if (activeTab === "requests" && user?.email && userInfo.employeeId) {
+      loadMyRequests()
+    }
+  }, [activeTab, user?.email, userInfo.employeeId])
+
+  // 신청 취소 함수 - 데스크톱과 동일한 로직
+  const handleCancelRequest = async (recordId: string) => {
+    const confirmed = await showConfirm({
+      title: '신청 취소',
+      message: '정말 취소하시겠습니까?',
+      type: 'warning',
+      confirmText: '취소하기',
+      cancelText: '돌아가기'
+    })
+    if (!confirmed) return
+    
+    try {
+      // Database 우선 시도: /api/requests/database DELETE
+      console.log('🗑️ [모바일 MyPage 취소] Database DELETE 시도:', recordId)
+      
+      let res = await fetch(`/api/requests/database?id=${recordId}&employeeId=${userInfo.employeeId || 'TEMP001'}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      
+      let data = await res.json()
+      
+      // Database에서 실패하면 Dropbox fallback
+      if (!res.ok || !data.success) {
+        console.log('🔄 [모바일 MyPage 취소] Database 실패, Dropbox API로 fallback')
+        
+        // 해당 신청 찾기
+        const request = myRequests.find(r => r.id === recordId)
+        if (!request) {
+          throw new Error('신청 내역을 찾을 수 없습니다.')
+        }
+        
+        // Dropbox API로 취소 시도
+        res = await fetch('/api/requests/cancel-dropbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: request.type,
+            date: request.date,
+            slot: request.slot,
+            employeeId: userInfo.employeeId || 'TEMP001'
+          })
+        })
+        
+        data = await res.json()
+      }
+      
+      if (data.success) {
+        showAlert({
+          title: '취소 완료',
+          message: '신청이 취소되었습니다.',
+          type: 'success'
+        })
+        // 신청 내역 새로고침하여 UI 업데이트
+        loadMyRequests()
+      } else {
+        // 데스크톱과 동일한 오류 처리
+        if (data.error === '취소기간만료') {
+          const scheduleDate = new Date(data.scheduleDate || '').toLocaleDateString('ko-KR')
+          const deadline = new Date(data.deadline || '').toLocaleDateString('ko-KR', {
+            year: 'numeric',
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+          
+          showAlert({
+            title: '취소 기간 만료',
+            message: `취소 기간이 만료되었습니다.
+
+📅 교육/녹음 날짜: ${scheduleDate}
+⏰ 취소 가능 기한: ${deadline}까지
+
+🏢 취소를 원하시면 담당자에게 연락하여 취소 사유를 말씀해 주세요.
+
+⚠️ 합당하지 않은 사유로 취소할 경우, 다음 달의 녹음/교육 신청이 제한될 수 있습니다.`,
+            type: 'warning'
+          })
+        } else {
+          showAlert({
+            title: '취소 실패',
+            message: `취소 실패: ${data.error || '알 수 없는 오류'}`,
+            type: 'error'
+          })
+        }
+      }
+    } catch (error) {
+      console.error('신청 취소 실패:', error)
+      showAlert({
+        title: '취소 실패',
+        message: `취소 실패: ${error}`,
+        type: 'error'
+      })
+    }
+  }
 
   // 자격 등급에서 알파벳만 추출하는 함수
   const extractGrade = (gradeString: string) => {
@@ -791,6 +1280,16 @@ function MobileMyPageModal({
               }`}
             >
               방송 자격
+            </button>
+            <button
+              onClick={() => setActiveTab("requests")}
+              className={`flex-1 text-center px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                activeTab === "requests"
+                  ? "bg-blue-100 text-blue-700"
+                  : "text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              내 신청 내역
             </button>
           </div>
         </div>
@@ -915,6 +1414,225 @@ function MobileMyPageModal({
               )}
             </div>
           )}
+
+          {activeTab === "requests" && (
+            <div className="space-y-6">
+
+              {myRequestsLoading ? (
+                <div className="bg-white rounded-xl shadow-lg p-8 border border-blue-100">
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <div className="text-gray-500 font-medium">신청 내역을 불러오는 중...</div>
+                  </div>
+                </div>
+              ) : myRequests.length === 0 ? (
+                <div className="bg-white rounded-xl shadow-lg p-8 border border-blue-100 text-center">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Calendar className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-900 mb-2">신청 내역이 없습니다</h3>
+                  <p className="text-gray-600">교육이나 녹음을 신청해보세요.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {myRequests.map((request) => {
+                    const canCancel = () => {
+                      if (request.status !== 'ACTIVE') return false
+                      
+                      // 취소 가능 시간: 해당 날짜 기준  오후 2시까지
+                      const scheduleDate = new Date(request.date)
+                      const twoDaysBefore = new Date(scheduleDate)
+                      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+                      twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+                      
+                      const now = new Date()
+                      
+                      return now <= twoDaysBefore
+                    }
+
+                    const getSlotTimeInfo = () => {
+                      // 취소 가능 시간까지 남은 시간 계산
+                      const scheduleDate = new Date(request.date)
+                      const twoDaysBefore = new Date(scheduleDate)
+                      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+                      twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+                      
+                      const now = new Date()
+                      const hoursDiff = (twoDaysBefore.getTime() - now.getTime()) / (1000 * 60 * 60)
+                      
+                      return { hoursDiff }
+                    }
+
+                    const getRequestLabel = (request: any) => {
+                      if (request.type === 'recording') {
+                        const langMap: Record<string, string> = {
+                          'korean-english': '한/영',
+                          'chinese': '중국어',
+                          'japanese': '일본어'
+                        }
+                        const recordingLang = request.details?.recordingLanguage || request.details?.language
+                        return `녹음: ${langMap[recordingLang] || recordingLang || '알 수 없음'}`
+                      } else if (request.type === 'education') {
+                        const eduTypeMap: Record<string, string> = {
+                          '1:1': '1:1 교육',
+                          'small-group': '소규모 교육'
+                        }
+                        const langMap: Record<string, string> = {
+                          'korean-english': '한/영',
+                          'chinese': '중국어',
+                          'japanese': '일본어'
+                        }
+                        const eduType = eduTypeMap[request.details?.educationType] || '교육'
+                        const lang = langMap[request.details?.language] || request.details?.language || ''
+                        return `${eduType}: ${lang}`
+                      }
+                      return '알 수 없음'
+                    }
+
+                    const { hoursDiff } = getSlotTimeInfo()
+
+                    return (
+                      <div key={request.id} className="bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden hover:shadow-xl transition-all duration-300">
+                        {/* 상단 헤더 - 타입별 색상 구분 */}
+                        <div className={`p-4 ${
+                          request.type === 'education' 
+                            ? 'bg-gradient-to-r from-green-500 to-emerald-500' 
+                            : 'bg-gradient-to-r from-blue-500 to-indigo-500'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                                {request.type === 'education' ? (
+                                  <GraduationCap className="w-5 h-5 text-white" />
+                                ) : (
+                                  <Mic className="w-5 h-5 text-white" />
+                                )}
+                              </div>
+                              <div>
+                                <div className="text-white font-bold text-lg">
+                                  {request.type === 'education' ? '교육' : '녹음'}
+                                </div>
+                                <div className="text-white/80 text-sm">
+                                  {getRequestLabel(request).split(': ')[1] || getRequestLabel(request)}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-white font-semibold">
+                                {request.slot}차수
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 메인 컨텐츠 */}
+                        <div className="p-4">
+                          <div className="flex justify-between items-start mb-4">
+                            <div className="flex-1">
+                              <div className="font-bold text-gray-900 mb-2 text-lg">
+                                📅 {new Date(request.date).toLocaleDateString('ko-KR', {
+                                  month: 'long', 
+                                  day: 'numeric', 
+                                  weekday: 'short'
+                                })}
+                              </div>
+                              <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Clock className="w-4 h-4 text-gray-500" />
+                                  <span className="font-medium text-gray-700">시간</span>
+                                </div>
+                                <div className="text-gray-900 font-semibold">
+                                  {(() => {
+                                    if (request.type === 'recording') {
+                                      // 녹음 시간표 - 데스크톱 녹음 캘린더와 완전히 동일
+                                      const timeMap: Record<number, string> = {
+                                        1: '08:30-09:20', 2: '09:30-10:20', 3: '10:30-11:20', 4: '11:30-12:20',
+                                        5: '13:40-14:30', 6: '14:40-15:30', 7: '15:40-16:30', 8: '16:40-17:30'
+                                      }
+                                      return timeMap[request.slot] || '시간 미정'
+                                    } else if (request.type === 'education') {
+                                      // 교육 시간표 - educationType에 따라 다름
+                                      const educationType = request.details?.educationType
+                                      if (educationType === '1:1') {
+                                        // 1:1 교육 (25분 단위)
+                                        const timeMap: Record<number, string> = {
+                                          1: '08:30-08:55', 2: '09:00-09:25', 3: '09:30-09:55', 4: '10:00-10:25',
+                                          5: '10:30-10:55', 6: '11:00-11:25', 7: '11:30-11:55', 8: '12:00-12:25',
+                                          9: '13:35-14:00', 10: '14:05-14:30', 11: '14:35-15:00', 12: '15:05-15:30',
+                                          13: '15:35-16:00', 14: '16:05-16:30', 15: '16:35-17:00', 16: '17:05-17:30'
+                                        }
+                                        return timeMap[request.slot] || '시간 미정'
+                                      } else {
+                                        // 소규모 교육 (2시간 단위)
+                                        const timeMap: Record<number, string> = {
+                                          1: '08:30-10:20', 2: '10:30-12:20', 3: '13:40-15:30', 4: '15:40-17:30'
+                                        }
+                                        return timeMap[request.slot] || '시간 미정'
+                                      }
+                                    }
+                                    return '시간 미정'
+                                  })()}
+                                </div>
+                              </div>
+                              
+                              <div className="text-xs text-gray-500 flex items-center gap-1">
+                                <Calendar className="w-3 h-3" />
+                                신청일: {new Date(request.applicationTime).toLocaleDateString('ko-KR')}
+                              </div>
+                            </div>
+                          
+                          </div>
+                          
+                          {/* 하단 액션 영역 */}
+                          <div className="border-t border-gray-100 pt-4 mt-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                {canCancel() ? (
+                                  <>
+                                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                    <span className="text-sm text-green-600 font-medium">
+                                      취소 가능 ({Math.floor(hoursDiff)}시간 남음)
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                                    <span className="text-sm text-red-600 font-medium">
+                                      취소 불가 (2일 전 14:00 이후)
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                              
+                              {canCancel() ? (
+                                <button
+                                  onClick={() => handleCancelRequest(request.id)}
+                                  className="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors shadow-lg hover:shadow-xl active:scale-95"
+                                >
+                                  취소하기
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => showAlert({
+                                    title: '취소 불가',
+                                    message: '교육/녹음일 기준 2일 전 오후 2시까지만 취소할 수 있습니다.\n취소가 필요한 경우 담당자에게 연락해주세요.',
+                                    type: 'info'
+                                  })}
+                                  className="px-4 py-2 bg-gray-200 text-gray-500 rounded-lg font-medium cursor-not-allowed"
+                                >
+                                  취소 불가
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 하단 로그아웃 버튼 */}
@@ -934,6 +1652,23 @@ function MobileMyPageModal({
           </Button>
         </div>
       </div>
+
+      {/* 커스텀 다이얼로그 */}
+      {customDialogOpen && (
+        <CustomDialog
+          isOpen={customDialogOpen}
+          onClose={customDialogClose}
+          title={customDialogConfig.title}
+          message={customDialogConfig.message}
+          type={customDialogConfig.type}
+          showCancel={customDialogConfig.showCancel}
+          confirmText={customDialogConfig.confirmText}
+          cancelText={customDialogConfig.cancelText}
+          onConfirm={customDialogConfig.onConfirm}
+          onCancel={customDialogConfig.onCancel}
+        />
+      )}
+
     </div>
   )
 }

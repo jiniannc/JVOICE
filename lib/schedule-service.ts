@@ -70,31 +70,61 @@ function normalizeKoreanSpaces(text: string): string {
 export async function fetchMonthSchedule(month: string): Promise<MonthScheduleResponse> {
   const apiKey = getEnvValue("NEXT_PUBLIC_GOOGLE_API_KEY")
   const sheetId = getEnvValue("NEXT_PUBLIC_SCHEDULE_SHEET_ID")
-  // 탭 이름: YYYY/M (예: 2025/9)
+  
+  // 탭 이름 후보들 (우선순위 순서)
   const [y, m] = month.split("-")
-  const tab = `${y}/${parseInt(m,10)}`
-  const range = `${encodeURIComponent(tab)}!A1:GR50`
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${apiKey}`
+  const monthNum = parseInt(m, 10)
+  const tabCandidates = [
+    `${y}년 ${monthNum}월`,     // 2025년 9월
+    `${y}/${monthNum}`,         // 2025/9  
+    `${y}-${monthNum}`,         // 2025-9
+    `${y}년${monthNum}월`,      // 2025년9월 (공백 없음)
+    `${y}.${monthNum}`,         // 2025.9
+    `${monthNum}월 ${y}`,       // 9월 2025
+    `${monthNum}월${y}`,        // 9월2025
+  ]
   
-  console.log(`🗓️ 스케줄 요청: month=${month}, tab=${tab}, range=${range}`)
-  console.log(`📊 API URL: ${url.replace(apiKey, '***API_KEY***')}`)
+  console.log(`🗓️ 스케줄 요청: month=${month}, 탭 후보들: [${tabCandidates.join(', ')}]`)
   
-  const res = await fetch(url, { cache: "no-store" })
+  let validTab: string | null = null
+  let values: string[][] = []
   
-  console.log(`📥 API 응답: status=${res.status}, statusText=${res.statusText}`)
-  
-  if (!res.ok) {
-    const errorText = await res.text()
-    console.error(`❌ 스케줄 API 오류: ${res.status} - ${errorText}`)
-    throw new Error(`Schedule fetch failed: ${res.status} - ${errorText}`)
+  // 각 탭 이름 후보를 시도
+  for (const tab of tabCandidates) {
+    const range = `${encodeURIComponent(tab)}!A1:GR50`
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${apiKey}`
+    
+    console.log(`📊 시도 중: 탭="${tab}", URL=${url.replace(apiKey, '***API_KEY***')}`)
+    
+    const res = await fetch(url, { cache: "no-store" })
+    console.log(`📥 응답: status=${res.status}, statusText=${res.statusText}`)
+    
+    if (res.ok) {
+      const json = await res.json()
+      const sheetValues: string[][] = json?.values || []
+      
+      if (sheetValues.length > 0) {
+        console.log(`✅ 성공! 탭="${tab}"에서 ${sheetValues.length}행 발견`)
+        validTab = tab
+        values = sheetValues
+        break
+      } else {
+        console.log(`⚠️ 탭="${tab}"은 존재하지만 데이터가 없음`)
+      }
+    } else {
+      const errorText = await res.text()
+      console.log(`❌ 탭="${tab}" 실패: ${res.status} - ${errorText}`)
+    }
   }
   
-  const json = await res.json()
-  const values: string[][] = json?.values || []
+  if (!validTab) {
+    console.error(`❌ 모든 탭 후보에서 실패. 시도한 탭들: [${tabCandidates.join(', ')}]`)
+    throw new Error(`스케줄 시트를 찾을 수 없습니다. 다음 이름들을 시도했습니다: [${tabCandidates.join(', ')}]`)
+  }
   
-  console.log(`📋 스프레드시트 데이터: ${values.length}행 읽음`)
+  console.log(`📋 스프레드시트 데이터: ${values.length}행 읽음 (탭: ${validTab})`)
   if (values.length === 0) {
-    console.warn(`⚠️ 시트 '${tab}'에 데이터가 없거나 시트가 존재하지 않습니다.`)
+    console.warn(`⚠️ 시트 '${validTab}'에 데이터가 없습니다.`)
   }
 
   // 보호: 최소 행 체크
@@ -210,7 +240,8 @@ export async function fetchMonthSchedule(month: string): Promise<MonthScheduleRe
   console.log(`👁️ 최종 visible 상태: ${visible}`)
 
   // 각 날짜에 대해 교육/녹음 파싱
-  const days: DaySchedule[] = []
+  const daysByDate: Record<string, DaySchedule> = {}
+  
   for (const col of thisMonthCols) {
     const dateIso = columnDates[col]
     const recordingSlots = [4,5].flatMap(r => parseSlots(get(r-1, col))) // r-1: 0-index
@@ -227,17 +258,27 @@ export async function fetchMonthSchedule(month: string): Promise<MonthScheduleRe
     addEdu({ lang: "korean-english", mode: "1:1" }, 6)
     // 한/영 소규모 (신규/재자격/공통/PUS)
     const koSmallCell = get(7-1, col)
-    // 셀에 PUS가 포함되면 모든 차수 open
-    if (normalizeKoreanSpaces(koSmallCell).toUpperCase().includes("PUS")) {
-      eduItems.push({ type: { lang: "korean-english", mode: "small", category: "PUS" }, slots: [1,2,3,4,5,6,7,8] })
-    }
-    const categories: Array<"신규"|"재자격"|"공통"> = []
-    if (/신규/.test(koSmallCell)) categories.push("신규")
-    if (/재자격/.test(koSmallCell)) categories.push("재자격")
-    if (/공통/.test(koSmallCell)) categories.push("공통")
     const koSmallSlots = parseSlots(koSmallCell)
-    for (const cat of categories) {
-      if (koSmallSlots.length > 0) eduItems.push({ type: { lang: "korean-english", mode: "small", category: cat }, slots: koSmallSlots })
+    
+    // PUS 특별 처리: PUS가 포함되면 실제 파싱된 슬롯 사용 (다른 카테고리와 중복 방지)
+    if (normalizeKoreanSpaces(koSmallCell).toUpperCase().includes("PUS")) {
+      if (koSmallSlots.length > 0) {
+        eduItems.push({ type: { lang: "korean-english", mode: "small", category: "PUS" }, slots: koSmallSlots })
+        console.log(`🎯 PUS 특별 처리: 날짜 ${dateIso}, 컬럼 ${col}, 슬롯 [${koSmallSlots.join(',')}]`)
+      }
+    } else {
+      // 일반 카테고리 처리 (PUS가 아닌 경우만)
+      const categories: Array<"신규"|"재자격"|"공통"> = []
+      if (/신규/.test(koSmallCell)) categories.push("신규")
+      if (/재자격/.test(koSmallCell)) categories.push("재자격")
+      if (/공통/.test(koSmallCell)) categories.push("공통")
+      
+      for (const cat of categories) {
+        if (koSmallSlots.length > 0) {
+          eduItems.push({ type: { lang: "korean-english", mode: "small", category: cat }, slots: koSmallSlots })
+          console.log(`📚 일반 카테고리 처리: 날짜 ${dateIso}, 컬럼 ${col}, 카테고리 ${cat}, 슬롯 [${koSmallSlots.join(',')}]`)
+        }
+      }
     }
 
     // 일/중
@@ -250,19 +291,58 @@ export async function fetchMonthSchedule(month: string): Promise<MonthScheduleRe
     const cellText = `${get(4-1, col)} ${get(5-1, col)}`
     const resultAnnouncement = normalizeKoreanSpaces(cellText).includes(normalizeKoreanSpaces("결 과 공 지"))
     
-    // 교육이 있는 날에만 교실 정보 추가
-    const classroomInfo = eduItems.length > 0 ? (classroomRow[col] || "").trim() : undefined
+    // 각 교육 항목에 교실 정보 추가
+    const classroomInfo = (classroomRow[col] || "").trim()
+    if (classroomInfo && eduItems.length > 0) {
+      eduItems.forEach(eduItem => {
+        (eduItem as any).classroomInfo = classroomInfo
+      })
+    }
     console.log(`🏫 날짜 ${dateIso} (컬럼 ${col}): classroomInfo = "${classroomInfo || ''}", 교육 ${eduItems.length}개`)
     
-    const day: DaySchedule = {
-      date: dateIso,
-      recording: recordingSlots.length > 0 ? { slots: recordingSlots } : null,
-      education: eduItems,
-      resultAnnouncement,
-      classroomInfo,
+    // 같은 날짜가 이미 있으면 병합, 없으면 새로 생성
+    if (daysByDate[dateIso]) {
+      // 기존 날짜에 교육 정보 추가
+      daysByDate[dateIso].education.push(...eduItems)
+      
+      // 녹음 슬롯 병합
+      if (recordingSlots.length > 0) {
+        if (daysByDate[dateIso].recording) {
+          daysByDate[dateIso].recording!.slots.push(...recordingSlots)
+          // 중복 제거
+          daysByDate[dateIso].recording!.slots = [...new Set(daysByDate[dateIso].recording!.slots)]
+        } else {
+          daysByDate[dateIso].recording = { slots: recordingSlots }
+        }
+      }
+      
+      // 결과 발표 정보 병합
+      if (resultAnnouncement) {
+        daysByDate[dateIso].resultAnnouncement = true
+      }
+      
+      // 전체 교실 정보는 첫 번째 컬럼의 정보로 설정 (호환성 유지)
+      if (classroomInfo && !daysByDate[dateIso].classroomInfo) {
+        daysByDate[dateIso].classroomInfo = classroomInfo
+      }
+      
+      console.log(`🔄 날짜 병합: ${dateIso} - 기존 교육 ${daysByDate[dateIso].education.length - eduItems.length}개 + 새 교육 ${eduItems.length}개`)
+    } else {
+      // 새 날짜 생성
+      daysByDate[dateIso] = {
+        date: dateIso,
+        recording: recordingSlots.length > 0 ? { slots: recordingSlots } : null,
+        education: eduItems,
+        resultAnnouncement,
+        classroomInfo,
+      }
+      console.log(`✨ 새 날짜 생성: ${dateIso} - 교육 ${eduItems.length}개`)
     }
-    days.push(day)
   }
+
+  // 날짜별로 정렬된 배열로 변환
+  const days = Object.values(daysByDate).sort((a, b) => a.date.localeCompare(b.date))
+  console.log(`📅 최종 날짜 수: ${days.length}개`)
 
   return { month, visible, days }
 }

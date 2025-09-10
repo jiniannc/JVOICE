@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from '../../../../lib/generated/prisma';
+import { evaluationCriteria } from '../../../../lib/evaluation-criteria';
 
 const prisma = new PrismaClient();
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get("limit") || "10");
+    const limit = parseInt(searchParams.get("limit") || "1000");
     const page = parseInt(searchParams.get("page") || "1");
     const month = searchParams.get("month"); // 'YYYY-MM'
-    const status = searchParams.get("status") || "pending"; // pending, completed, all
+    const status = searchParams.get("status") || "all"; // pending, review_requested, completed, approved, all
     const offset = (page - 1) * limit;
 
     console.log(`📊 [API] Database 평가 결과 로드 시작 (Page: ${page}, Limit: ${limit}, Status: ${status})`);
@@ -32,25 +33,35 @@ export async function GET(request: NextRequest) {
       };
     }
 
-    // 2. 평가 데이터 조회 (사용자 정보 포함)
+    // 2. 평가 데이터 조회 (사용자 정보 포함, 삭제된 항목 제외)
     const evaluations = await prisma.evaluation.findMany({
-      where: whereClause,
+      where: {
+        ...whereClause,
+        status: {
+          not: 'deleted' // 🔥 삭제된 항목 제외
+        }
+      },
       include: {
         user: true,
         scores: true,
         recordings: true
       },
       orderBy: [
-        { status: 'asc' }, // pending이 먼저
+        { status: 'asc' }, // pending -> review_requested -> completed -> approved 순
         { submittedAt: 'desc' }
       ],
       skip: offset,
       take: limit
     });
 
-    // 3. 전체 개수 조회
+    // 3. 전체 개수 조회 (삭제된 항목 제외)
     const totalCount = await prisma.evaluation.count({
-      where: whereClause
+      where: {
+        ...whereClause,
+        status: {
+          not: 'deleted' // 🔥 삭제된 항목 제외
+        }
+      }
     });
 
     // 4. 기존 Dropbox 형식과 호환되는 형태로 변환
@@ -59,15 +70,107 @@ export async function GET(request: NextRequest) {
       const scores: Record<string, number> = {};
       const categoryScores: Record<string, number> = {};
       
+
+      
       evaluation.scores.forEach(score => {
         scores[score.criteriaKey] = score.score;
+      });
+
+      // 🔥 categoryScores는 개별 소항목 점수 + 대분류 합계를 함께 제공 (상세/관리 화면 공통)
+      console.log("🔍 [API DEBUG] 평가 데이터:", {
+        id: evaluation.id,
+        language: evaluation.language,
+        scoresCount: evaluation.scores?.length || 0,
+        scoresExists: !!evaluation.scores,
+        firstScore: evaluation.scores?.[0]
+      });
+      
+      if (evaluation.language === 'korean-english') {
+        // 1) 소항목 점수 유지
+        evaluation.scores.forEach(score => {
+          categoryScores[score.criteriaKey] = score.score;
+        });
+
+        // 🔥 중요: 누락된 소항목에 대해 80% 기본값 추가
+        const addMissingSubItems = (langPrefix: string, langCriteria: any) => {
+          Object.entries(langCriteria).forEach(([category, subCriteria]) => {
+            if (typeof subCriteria === 'object') {
+              // 소항목이 있는 경우
+              Object.entries(subCriteria).forEach(([subKey, maxScore]) => {
+                const scoreKey = `${langPrefix}-${category}-${subKey}`;
+                if (categoryScores[scoreKey] === undefined) {
+                  categoryScores[scoreKey] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+                  console.log(`🔥 [API] 한/영 ${scoreKey} 기본값 설정: ${categoryScores[scoreKey]} (80% of ${maxScore})`);
+                }
+              });
+            } else {
+              // 직접 점수인 경우
+              const scoreKey = `${langPrefix}-${category}`;
+              if (categoryScores[scoreKey] === undefined) {
+                categoryScores[scoreKey] = Math.round((Number(subCriteria) * 0.8) * 2) / 2;
+                console.log(`🔥 [API] 한/영 ${scoreKey} 기본값 설정: ${categoryScores[scoreKey]} (80% of ${subCriteria})`);
+              }
+            }
+          });
+        };
+
+        // 한국어 및 영어 누락 소항목 보정
+        addMissingSubItems('korean', evaluationCriteria.korean);
+        addMissingSubItems('english', evaluationCriteria.english);
+
+        // 2) 대분류 합계 생성: korean-발음, korean-억양, ..., english-전달력
+        const koreanCategories = Object.keys(evaluationCriteria.korean);
+        koreanCategories.forEach((cat) => {
+          const sum = Object.entries(categoryScores)
+            .filter(([key]) => key.startsWith(`korean-${cat}-`))
+            .reduce((acc, [, score]) => acc + (score || 0), 0);
+          categoryScores[`korean-${cat}`] = sum;
+        });
+
+        const englishCategories = Object.keys(evaluationCriteria.english);
+        englishCategories.forEach((cat) => {
+          const sum = Object.entries(categoryScores)
+            .filter(([key]) => key.startsWith(`english-${cat}-`))
+            .reduce((acc, [, score]) => acc + (score || 0), 0);
+          categoryScores[`english-${cat}`] = sum;
+        });
+
+        // 3) 언어별 총합 (100+100)
+        const koreanTotal = koreanCategories.reduce((acc, cat) => acc + (categoryScores[`korean-${cat}`] || 0), 0);
+        const englishTotal = englishCategories.reduce((acc, cat) => acc + (categoryScores[`english-${cat}`] || 0), 0);
+        categoryScores['korean'] = koreanTotal;
+        categoryScores['english'] = englishTotal;
+      } else {
+        // 일본어/중국어: 개별 카테고리별 점수를 저장 + 누락된 카테고리 기본값 보정
+        evaluation.scores.forEach(score => {
+          categoryScores[score.criteriaKey] = score.score;
+        });
         
-        // 카테고리별 점수 계산
-        const category = score.criteriaKey.split('-')[0];
-        if (!categoryScores[category]) {
-          categoryScores[category] = 0;
+        // 🔥 중요: 누락된 카테고리에 대해 80% 기본값 추가
+        const languageCriteria = evaluationCriteria[evaluation.language as keyof typeof evaluationCriteria];
+        if (languageCriteria) {
+          Object.entries(languageCriteria).forEach(([category, maxScore]) => {
+            if (categoryScores[category] === undefined) {
+              // 누락된 카테고리는 80% 기본값으로 설정
+              categoryScores[category] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+              console.log(`🔥 [API] ${evaluation.language} ${category} 기본값 설정: ${categoryScores[category]} (80% of ${maxScore})`);
+            }
+          });
         }
-        categoryScores[category] += score.score;
+        
+        console.log("🔍 [API DEBUG] 일본어/중국어 categoryScores (기본값 포함):", {
+          language: evaluation.language,
+          scoresCount: evaluation.scores.length,
+          categoryScoresKeys: Object.keys(categoryScores),
+          categoryScoresValues: categoryScores
+        });
+      }
+      
+      console.log("🔍 [API DEBUG] 최종 categoryScores:", {
+        id: evaluation.id,
+        language: evaluation.language,
+        categoryScoresKeys: Object.keys(categoryScores),
+        categoryScoresCount: Object.keys(categoryScores).length
       });
 
       // 녹음 파일 정보 변환
@@ -85,12 +188,13 @@ export async function GET(request: NextRequest) {
       return {
         id: evaluation.id,
         candidateInfo: {
+          id: evaluation.user.id, // 사용자 ID 추가
           name: evaluation.user.name,
           employeeId: evaluation.user.employeeId,
           language: evaluation.language,
           category: evaluation.category,
           submittedAt: evaluation.submittedAt.toISOString(),
-          recordingCount: evaluation.recordingCount,
+          recordingCount: evaluation.recordings.length, // 실제 녹음 파일 수 사용
           scriptNumbers: evaluation.scriptNumbers,
           comment: evaluation.comment,
           duration: evaluation.duration
@@ -104,7 +208,9 @@ export async function GET(request: NextRequest) {
         comments: evaluation.comments as Record<string, string>,
         evaluatedAt: evaluation.evaluatedAt?.toISOString(),
         evaluatedBy: evaluation.evaluatedBy,
-        status: evaluation.status,
+        status: evaluation.status === 'completed' ? 'submitted' : evaluation.status, // completed만 submitted로 매핑, review_requested는 그대로 유지
+        reviewRequestedBy: evaluation.reviewRequestedBy,
+        reviewRequestedAt: evaluation.reviewRequestedAt?.toISOString(),
         recordings: {}, // 기존 형식 호환을 위해 빈 객체
         dropboxFiles,
         approved: evaluation.approved,

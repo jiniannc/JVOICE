@@ -30,7 +30,7 @@ npm run dev
 `.env.local` 파일에서 다음 값들을 설정하세요:
 
 ### 기본 설정
-- `NEXTAUTH_URL`: 로컬 개발 시 `http://localhost:3000`, 프로덕션 시 실제 도메인
+- `NEXTAUTH_URL`: 로컬 개발 시 `p가 뭇ㅡㄴㄴ택ㅎㅏㄹwㅣㅣ http://localhost:3000`, 프로덕션 시 실제 도메인
 - `NEXT_PUBLIC_BASE_URL`: 로컬 개발 시 `http://localhost:3000`, 프로덕션 시 실제 도메인
 
 ### Google OAuth 설정

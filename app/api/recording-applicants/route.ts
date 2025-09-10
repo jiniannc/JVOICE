@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from '../../../lib/database';
+import { EmployeeDatabase } from '../../../lib/employee-database';
 
 const SPREADSHEET_ID = "1ge3OQ5lbpuB-rjiBafg44HkcZJlNqgHY_9GzfJZ8CgM";
+const employeeDB = new EmployeeDatabase();
 
 function formatTodayKR(): string {
   const now = new Date();
@@ -37,15 +40,238 @@ function cleanName(raw: string | undefined): string {
   return (idx >= 0 ? s.slice(0, idx) : s).trim();
 }
 
+// 언어 코드를 한국어로 변환
+function getLanguageDisplayName(language: string): string {
+  const languageMap: Record<string, string> = {
+    'korean-english': '한영',
+    'japanese': '일본어',
+    'chinese': '중국어'
+  };
+  return languageMap[language] || language;
+}
+
+// 녹음용 차수별 시간 정보 - 데스크톱 녹음 캘린더와 완전히 동일
+function getRecordingSlotTime(slot: number): string {
+  const times: Record<number, string> = {
+    1: "08:30-09:20",
+    2: "09:30-10:20", 
+    3: "10:30-11:20",
+    4: "11:30-12:20",
+    5: "13:40-14:30",
+    6: "14:40-15:30",
+    7: "15:40-16:30",
+    8: "16:40-17:30"
+  };
+  return times[slot] || `${slot}차수`;
+}
+
+// 차수 + 시간 형태로 표시
+function formatBatchDisplay(slot: number): string {
+  const timeRange = getRecordingSlotTime(slot);
+  return `${slot}차수 (${timeRange})`;
+}
+
+// 'YYYY년 M월 D일' 형태를 'YYYY-MM-DD' 형태로 변환
+function koreanDateToISO(koreanDate: string): string | null {
+  const m = koreanDate.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  return `${y}-${mo.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
+}
+
+// 'YYYY-MM-DD' 형태를 'YYYY년 M월 D일' 형태로 변환
+function isoToKoreanDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-');
+  return `${y}년 ${parseInt(m, 10)}월 ${parseInt(d, 10)}일`;
+}
+
+async function loadFromDatabase(requestedDate?: string) {
+  try {
+    console.log('📋 [recording-applicants] Database에서 조회 시작:', { requestedDate });
+
+    // 모든 녹음 신청의 날짜 목록 조회 (중복 제거)
+    const allApplications = await prisma.scheduleApplication.findMany({
+      where: {
+        schedule: {
+          type: 'recording'
+        },
+        status: 'ACTIVE'
+      },
+      include: {
+        schedule: {
+          select: {
+            date: true
+          }
+        },
+        user: {
+          select: {
+            name: true,
+            employeeId: true,
+            email: true
+          }
+        }
+      },
+      orderBy: [
+        { schedule: { date: 'desc' } },
+        { slot: 'asc' },
+        { user: { employeeId: 'asc' } }
+      ]
+    });
+
+    if (allApplications.length === 0) {
+      console.log('📋 [recording-applicants] Database에 데이터 없음');
+      return null;
+    }
+
+    // 날짜 목록 추출 (중복 제거, 한국어 형태로 변환)
+    const uniqueDates = [...new Set(allApplications.map(app => app.schedule.date))];
+    const koreanDates = uniqueDates
+      .map(date => isoToKoreanDate(date))
+      .sort((a, b) => {
+        const timeA = koreanDateToISO(a);
+        const timeB = koreanDateToISO(b);
+        if (!timeA || !timeB) return 0;
+        return new Date(timeB).getTime() - new Date(timeA).getTime(); // 내림차순 (최신 먼저)
+      });
+
+    // 기본 선택 날짜 결정
+    const today = formatTodayKR();
+    const selectedDate = requestedDate && koreanDates.includes(requestedDate)
+      ? requestedDate
+      : (koreanDates.includes(today) ? today : (koreanDates[0] || ""));
+
+    if (!selectedDate) {
+      console.log('📋 [recording-applicants] 선택된 날짜 없음');
+      return {
+        applicants: [],
+        dates: koreanDates,
+        selectedDate: null
+      };
+    }
+
+    // 선택된 날짜의 ISO 형태 변환
+    const selectedISODate = koreanDateToISO(selectedDate);
+    if (!selectedISODate) {
+      console.log('📋 [recording-applicants] 날짜 변환 실패:', selectedDate);
+      return {
+        applicants: [],
+        dates: koreanDates,
+        selectedDate
+      };
+    }
+
+    // 선택된 날짜의 녹음 신청자 조회
+    const dayApplications = await prisma.scheduleApplication.findMany({
+      where: {
+        schedule: {
+          date: selectedISODate,
+          type: 'recording'
+        },
+        status: 'ACTIVE'
+      },
+      include: {
+        schedule: {
+          select: {
+            date: true,
+            type: true,
+            classType: true
+          }
+        },
+        user: {
+          select: {
+            name: true,
+            employeeId: true,
+            email: true
+          }
+        }
+      },
+      orderBy: [
+        { slot: 'asc' },
+        { user: { employeeId: 'asc' } }
+      ]
+    });
+
+    // 모든 직원 정보를 미리 가져오기
+    console.log('👥 [recording-applicants] 직원 정보 로딩 중...');
+    const allEmployees = await employeeDB.fetchEmployees();
+    const employeeMap = new Map();
+    allEmployees.forEach(emp => {
+      employeeMap.set(emp.employeeId, emp);
+      employeeMap.set(emp.email, emp);
+    });
+    console.log(`👥 [recording-applicants] 직원 정보 로딩 완료: ${allEmployees.length}명`);
+
+    // 응답 형태 변환 (기존 API와 호환)
+    const applicants = await Promise.all(dayApplications.map(async (app) => {
+      // details에서 언어 정보 추출
+      const details = app.details as any;
+      const language = details?.recordingLanguage || 'korean-english';
+      
+      // 정확한 직원 정보 찾기 (사번 우선, 이메일 fallback)
+      let employeeInfo = employeeMap.get(app.user.employeeId);
+      if (!employeeInfo && app.user.email) {
+        employeeInfo = employeeMap.get(app.user.email);
+      }
+      
+      // 직원 정보가 있으면 사용, 없으면 Database의 user 정보 사용
+      const displayName = employeeInfo?.name || app.user.name || '이름없음';
+      const displayEmployeeId = employeeInfo?.employeeId || app.user.employeeId || '사번없음';
+      const displayEmail = employeeInfo?.email || app.user.email || '';
+      
+      return {
+        name: displayName,
+        employeeId: displayEmployeeId,
+        email: displayEmail,
+        language: getLanguageDisplayName(language), // 한국어로 표시
+        batch: formatBatchDisplay(app.slot), // "3차수 (09:30-09:55)" 형태
+        status: '신청완료' // Database에 있는 것은 모두 신청완료 상태
+      };
+    }));
+
+    // 정렬: 차수(슬롯) 오름차순 → 사번 오름차순
+    applicants.sort((a, b) => {
+      const ba = parseBatchOrder(a.batch);
+      const bb = parseBatchOrder(b.batch);
+      if (ba !== bb) return ba - bb;
+      return (a.employeeId || "").localeCompare(b.employeeId || "");
+    });
+
+    console.log(`📋 [recording-applicants] Database 조회 완료: ${applicants.length}명 (날짜: ${selectedDate})`);
+
+    return {
+      applicants,
+      dates: koreanDates,
+      selectedDate,
+      source: 'database'
+    };
+
+  } catch (error) {
+    console.error("❌ [recording-applicants] Database 조회 실패:", error);
+    return null;
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
+    const requestedDate = searchParams.get("date") || undefined;
+
+    // Database 우선 시도
+    const databaseResult = await loadFromDatabase(requestedDate);
+    if (databaseResult) {
+      console.log('✅ [recording-applicants] Database에서 성공');
+      return NextResponse.json(databaseResult);
+    }
+
+    // Google Sheets API 사용 (fallback)
+    console.log('🔄 [recording-applicants] Google Sheets로 fallback');
+
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "Google API Key 미설정" }, { status: 500 });
     }
-
-    const { searchParams } = new URL(request.url);
-    const requestedDate = searchParams.get("date") || undefined;
 
     // 1) 시트(탭) 목록 가져오기
     const metaRes = await fetch(
@@ -118,14 +344,56 @@ export async function GET(request: NextRequest) {
 
     const dataRows = rows.slice(1).filter((r) => r.some((c) => (c || "").toString().trim() !== ""));
 
-    let applicants = dataRows.map((r) => ({
-      name: cleanName((r[idxName] || "").toString().trim()),
-      employeeId: (r[idxEmp] || "").toString().trim(),
-      email: (idxEmail >= 0 ? (r[idxEmail] || "").toString().trim() : ""),
-      language: (r[idxLang] || "").toString().trim(),
-      batch: (r[idxBatch] || "").toString().trim(),
-      status: (idxStatus >= 0 ? (r[idxStatus] || "").toString().trim() : ""),
-    }));
+    // 직원 정보 로딩 (Google Sheets fallback에서도 사용)
+    console.log('👥 [recording-applicants] Google Sheets - 직원 정보 로딩 중...');
+    const allEmployees = await employeeDB.fetchEmployees();
+    const employeeMap = new Map();
+    allEmployees.forEach(emp => {
+      employeeMap.set(emp.employeeId, emp);
+      employeeMap.set(emp.email, emp);
+      // 이름으로도 매칭 (같은 이름이 여러 명일 수 있으니 주의)
+      if (emp.name) {
+        employeeMap.set(emp.name, emp);
+      }
+    });
+    console.log(`👥 [recording-applicants] 직원 정보 로딩 완료: ${allEmployees.length}명`);
+
+    let applicants = dataRows.map((r) => {
+      const rawName = cleanName((r[idxName] || "").toString().trim());
+      const rawEmployeeId = (r[idxEmp] || "").toString().trim();
+      const rawEmail = (idxEmail >= 0 ? (r[idxEmail] || "").toString().trim() : "");
+      const rawLanguage = (r[idxLang] || "").toString().trim();
+      const rawBatch = (r[idxBatch] || "").toString().trim();
+      const rawStatus = (idxStatus >= 0 ? (r[idxStatus] || "").toString().trim() : "");
+      
+      // 정확한 직원 정보 찾기 (사번 우선, 이메일 fallback, 이름 fallback)
+      let employeeInfo = employeeMap.get(rawEmployeeId);
+      if (!employeeInfo && rawEmail) {
+        employeeInfo = employeeMap.get(rawEmail);
+      }
+      if (!employeeInfo && rawName) {
+        employeeInfo = employeeMap.get(rawName);
+      }
+      
+      // 직원 정보가 있으면 사용, 없으면 원본 데이터 사용
+      const displayName = employeeInfo?.name || rawName || '이름없음';
+      const displayEmployeeId = employeeInfo?.employeeId || rawEmployeeId || '사번없음';
+      const displayEmail = employeeInfo?.email || rawEmail || '';
+      
+      // 언어와 차수 표시 개선
+      const displayLanguage = getLanguageDisplayName(rawLanguage);
+      const batchNumber = parseInt(rawBatch) || 0;
+      const displayBatch = batchNumber > 0 ? formatBatchDisplay(batchNumber) : rawBatch;
+      
+      return {
+        name: displayName,
+        employeeId: displayEmployeeId,
+        email: displayEmail,
+        language: displayLanguage,
+        batch: displayBatch,
+        status: rawStatus,
+      };
+    });
 
     // 상태가 있으면 신청완료만 표시
     applicants = applicants.filter((a) => a.name || a.employeeId);
@@ -149,6 +417,8 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("녹음 응시 목록 로드 실패:", error);
     return NextResponse.json({ error: "서버 오류" }, { status: 500 });
+  } finally {
+    await prisma.$disconnect();
   }
 }
 

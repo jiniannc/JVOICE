@@ -10,8 +10,8 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Slider } from "@/components/ui/slider"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil, Activity, AlertCircle } from "lucide-react"
-import { evaluationCriteria, getGradeInfo } from "@/lib/evaluation-criteria"
+import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil, Activity, AlertCircle, User } from "lucide-react"
+import { evaluationCriteria, getEvaluationCriteria, getGradeInfo } from "@/lib/evaluation-criteria"
 import { EvaluationSummary } from "@/components/evaluation-summary"
 import React from "react"
 import { Globe } from "lucide-react"
@@ -28,7 +28,7 @@ interface EvaluationCandidate {
   recordingBlobs?: { [key: string]: Blob }
   uploadedFiles?: { [key: string]: { url: string; fileName: string } }
   driveFolder?: string
-  status?: "pending" | "review_requested" | "submitted" // 추가: 평가 상태
+  status?: "pending" | "review_requested" | "submitted" | "re_evaluation" // 추가: 평가 상태
   reviewedBy?: string // 추가: 검토한 교관
   reviewRequestedBy?: string // 추가: 검토 요청한 교관
   reviewRequestedAt?: string // 추가: 검토 요청 시간
@@ -59,7 +59,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   const [candidates, setCandidates] = useState<EvaluationCandidate[]>([])
   const [selectedCandidate, setSelectedCandidate] = useState<EvaluationCandidate | null>(null)
   const [currentLanguage, setCurrentLanguage] = useState<"korean" | "english">("korean")
-  const [evaluationData, setEvaluationData] = useState<{ [candidateId: string]: { scores: { [key: string]: number }, comments: { korean: string; english: string } } }>({})
+  const [evaluationData, setEvaluationData] = useState<{ [candidateId: string]: { scores: { [key: string]: number }, categoryScores?: { [key: string]: number }, comments: { korean: string; english: string } } }>({})
   const [currentCandidateId, setCurrentCandidateId] = useState<string | null>(null)
 
   // 로그인 기록 상태
@@ -78,6 +78,15 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   // 새로 출석 처리된 인원을 강조하기 위한 하이라이트 상태 및 이전 출석 상태 저장소
   const [highlightedAttendedIds, setHighlightedAttendedIds] = useState<Set<string>>(new Set())
   const prevAttendanceRef = useRef<Record<string, boolean>>({})
+
+  // 교육 신청자 목록 상태
+  const [educationSessions, setEducationSessions] = useState<any[]>([])
+  const [educationDates, setEducationDates] = useState<string[]>([])
+  const [selectedEducationDate, setSelectedEducationDate] = useState<string | null>(null)
+  const [loadingEducationApplicants, setLoadingEducationApplicants] = useState(false)
+  
+  // Google Meet 생성 상태
+  const [generatingMeet, setGeneratingMeet] = useState<Record<string, boolean>>({})
 
   // 현재 선택된 후보자의 점수 가져오기
   const getCurrentScores = useCallback(() => {
@@ -180,6 +189,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       loadCandidates()
       const map = await loadAttendance(selectedApplicantDate || undefined)
       await loadApplicants(undefined, map)
+      await loadEducationApplicants()
     })()
   }, [refreshKey])
   const loadApplicants = async (date?: string, attendanceMap?: Record<string, boolean>) => {
@@ -189,6 +199,12 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       const res = await fetch(url, { cache: 'no-store' })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
+      
+      if (data.source === 'database') {
+        console.log('✅ [loadApplicants] Database에서 로드:', data.applicants?.length || 0, '명')
+      } else {
+        console.log('✅ [loadApplicants] Google Sheets에서 로드:', data.applicants?.length || 0, '명')
+      }
       // 출석 체크와 결합: 서버에서 가져온 응시자에 출석 여부 주입
       const applicantsRaw = (data.applicants || []) as Array<any>
       const withAttendance = applicantsRaw.map(a => ({
@@ -237,37 +253,227 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     }
   }
 
-  // 로그인 기록을 불러와 당일(또는 선택 날짜)의 출석을 계산
+  // Google Calendar 권한 요청 함수
+  const requestCalendarAuth = () => {
+    const width = 500
+    const height = 600
+    const left = (window.screen.width / 2) - (width / 2)
+    const top = (window.screen.height / 2) - (height / 2)
+    
+    const popup = window.open(
+      '/api/auth/google-calendar',
+      'google_calendar_auth',
+      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+    )
+    
+    // 팝업 닫힘 감지
+    const checkClosed = setInterval(() => {
+      if (popup?.closed) {
+        clearInterval(checkClosed)
+        // 페이지 새로고침으로 권한 상태 업데이트
+        window.location.reload()
+      }
+    }, 1000)
+  }
+
+  // Google Meet 링크 생성 함수
+  const generateGoogleMeet = async (applicationId: string, applicantName: string) => {
+    try {
+      setGeneratingMeet(prev => ({ ...prev, [applicationId]: true }))
+      
+      console.log('🗓️ [Google Meet] 생성 시작:', { applicationId, applicantName })
+      
+      const response = await fetch('/api/requests/generate-meet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          applicationId,
+          instructorEmail: authenticatedUser?.email
+        })
+      })
+      
+      const result = await response.json()
+      
+      if (result.needsAuth) {
+        // Calendar 권한이 필요한 경우
+        const shouldAuth = confirm(`${result.error}\n\nGoogle Calendar 연동을 진행하시겠습니까?`)
+        if (shouldAuth) {
+          requestCalendarAuth()
+        }
+        return
+      }
+      
+      if (result.success) {
+        alert(`${applicantName}님의 Google Meet 링크가 생성되었습니다!\n\n링크: ${result.meetLink}`)
+        
+        // 교육 신청자 목록 새로고침 (버튼이 입장으로 변경됨)
+        await loadEducationApplicants(selectedEducationDate || undefined)
+      } else {
+        alert(`Google Meet 생성 실패: ${result.error}`)
+      }
+    } catch (error) {
+      console.error('❌ [Google Meet] 생성 오류:', error)
+      alert('Google Meet 생성 중 오류가 발생했습니다.')
+    } finally {
+      setGeneratingMeet(prev => ({ ...prev, [applicationId]: false }))
+    }
+  }
+
+  const loadEducationApplicants = async (date?: string) => {
+    console.log('[loadEducationApplicants] 시작:', { date })
+    setLoadingEducationApplicants(true)
+    try {
+      // 신청 기록이 있는 세션만 조회
+      const url = date ? `/api/education-applicants?date=${encodeURIComponent(date)}` : '/api/education-applicants'
+      console.log('📋 [loadEducationApplicants] API 시도:', url)
+
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      })
+      
+      if (!res.ok) {
+        console.error('❌ [loadEducationApplicants] HTTP 오류:', res.status, res.statusText)
+        setEducationSessions([])
+        setEducationDates([])
+        return
+      }
+      
+      const data = await res.json()
+      console.log('✅ [loadEducationApplicants] API 응답:', data)
+      
+      if (data.error) {
+        console.log('❌ [loadEducationApplicants] API 오류:', data.error)
+        setEducationSessions([])
+        setEducationDates([])
+        return
+      }
+
+      if (data.educationSessions && Array.isArray(data.educationSessions)) {
+        setEducationSessions(data.educationSessions)
+        console.log(`✅ [loadEducationApplicants] 교육 세션 목록 로드 완료: ${data.educationSessions.length}개 세션`)
+      } else {
+        console.log('⚠️ [loadEducationApplicants] 올바르지 않은 응답 형식')
+        setEducationSessions([])
+      }
+
+      if (data.dates && Array.isArray(data.dates)) {
+        setEducationDates(data.dates)
+        console.log(`✅ [loadEducationApplicants] 날짜 목록 로드 완료: ${data.dates.length}개 날짜`)
+        if (!selectedEducationDate && data.selectedDate) {
+          setSelectedEducationDate(data.selectedDate)
+        }
+      } else {
+        console.log('⚠️ [loadEducationApplicants] 날짜 목록 없음')
+        setEducationDates([])
+      }
+    } catch (error) {
+      console.error('❌ [loadEducationApplicants] 교육 세션 목록 로드 실패:', error)
+      setEducationSessions([])
+      setEducationDates([])
+    } finally {
+      setLoadingEducationApplicants(false)
+    }
+  }
+
+  // 폐강 알림 처리 함수
+  const handleCancellationNotification = async (session: any) => {
+    if (!session || session.applicants.length === 0) {
+      alert('신청자가 없는 교육입니다.')
+      return
+    }
+
+    const confirmed = confirm(
+      `${session.language} ${session.classType} ${session.sessionNumber}차수 교육의 폐강 알림을 발송하시겠습니까?\n\n` +
+      `신청자: ${session.applicants.length}명\n` +
+      `사유: 신청 인원 미달\n\n` +
+      `확인을 누르면 모든 신청자에게 이메일이 발송됩니다.`
+    )
+
+    if (!confirmed) return
+
+    try {
+      console.log('📧 [폐강 알림] 발송 시작:', session)
+
+      const response = await fetch('/api/education/cancel-notification', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          applicants: session.applicants.map((applicant: any) => ({
+            name: applicant.name,
+            email: applicant.email,
+            employeeId: applicant.employeeId
+          })),
+          session: {
+            language: session.language,
+            classType: session.classType,
+            sessionNumber: session.sessionNumber,
+            slotTime: session.slotTime,
+            date: selectedEducationDate || new Date().toISOString().slice(0, 10)
+          },
+          reason: '신청 인원 미달'
+        })
+      })
+
+      const result = await response.json()
+
+      if (response.ok && result.success) {
+        alert(
+          `폐강 알림 발송이 완료되었습니다!\n\n` +
+          `성공: ${result.summary.success}건\n` +
+          `실패: ${result.summary.failed}건\n\n` +
+          `${result.message}`
+        )
+        console.log('✅ [폐강 알림] 발송 완료:', result)
+      } else {
+        throw new Error(result.error || '폐강 알림 발송에 실패했습니다.')
+      }
+
+    } catch (error) {
+      console.error('❌ [폐강 알림] 발송 오류:', error)
+      alert(`폐강 알림 발송 중 오류가 발생했습니다:\n${error instanceof Error ? error.message : '알 수 없는 오류'}`)
+    }
+  }
+
+  // 녹음 체크인 기록을 불러와 당일(또는 선택 날짜)의 출석을 계산
   const loadAttendance = async (dateStr?: string): Promise<Record<string, boolean>> => {
     try {
       // 선택 날짜의 00:00~23:59 범위를 계산
       const selected = dateStr || selectedApplicantDate || new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' })
       // selected는 'YYYY년 M월 D일' 또는 'YYYY년M월D일' 형식 → ISO로 변환
       const m = selected.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/)
-      let startISO = '', endISO = ''
+      let dateParam = ''
       if (m) {
         const y = parseInt(m[1], 10)
         const mo = parseInt(m[2], 10) - 1
         const d = parseInt(m[3], 10)
-        const start = new Date(y, mo, d, 0, 0, 0)
-        const end = new Date(y, mo, d, 23, 59, 59)
-        startISO = start.toISOString()
-        endISO = end.toISOString()
+        const targetDate = new Date(y, mo, d)
+        dateParam = targetDate.toISOString().split('T')[0] // YYYY-MM-DD 형식
       }
-      const qs = startISO && endISO ? `&startDate=${encodeURIComponent(startISO)}&endDate=${encodeURIComponent(endISO)}` : ''
-      const res = await fetch(`/api/auth/login-log?limit=1000&page=1${qs}`)
+      
+      const qs = dateParam ? `?date=${encodeURIComponent(dateParam)}` : ''
+      const res = await fetch(`/api/recording/checkin${qs}`)
       const data = await res.json()
       const map: Record<string, boolean> = {}
-      ;(data.logs || []).forEach((log: any) => {
-        if (log.success) {
-          if (log.employeeId) map[log.employeeId] = true
-          if (log.email) map[log.email] = true
-        }
-      })
+      
+      if (data.success && data.checkins) {
+        data.checkins.forEach((checkin: any) => {
+          if (checkin.employeeId) {
+            map[checkin.employeeId] = true
+          }
+        })
+      }
+      
       setAttendanceByEmployeeId(map)
       return map
     } catch (e) {
-      console.warn('출석(로그인) 기록 로드 실패:', e)
+      console.warn('출석(녹음 체크인) 기록 로드 실패:', e)
       setAttendanceByEmployeeId({})
       return {}
     }
@@ -293,10 +499,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   const loadCandidates = async () => {
     setIsLoading(true)
     try {
-      // Dropbox에서 제출된 녹음 데이터 읽기
+      // 데이터베이스에서 제출된 녹음 데이터 읽기
       let submittedRecordings = []
       try {
-        const response = await fetch("/api/evaluations/load-dropbox?limit=1000&page=1")
+        const response = await fetch("/api/evaluations/load-database?limit=1000&page=1")
         console.log('📡 [loadCandidates] API 응답 상태:', response.status, response.statusText)
         
         if (response.ok) {
@@ -306,24 +512,15 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           // API 응답 구조에 맞게 수정: ev.candidateInfo와 ev.status를 함께 사용
           submittedRecordings = result.evaluations || []
           
-          // API에서 데이터가 없으면 localStorage에서 시도
-          if (submittedRecordings.length === 0) {
-            console.warn('⚠️ [loadCandidates] API에서 데이터가 없음, localStorage 확인')
-            const localData = JSON.parse(localStorage.getItem("submittedRecordings") || "[]")
-            if (localData.length > 0) {
-              submittedRecordings = localData.map((s: any) => ({ candidateInfo: s, status: s.status || 'pending' }))
-              console.log('✅ [loadCandidates] localStorage에서 데이터 복원:', submittedRecordings.length, '개')
-            }
-          }
+          // Database API만 사용 - localStorage 사용 중단 (중복 방지)
+          console.log('✅ [loadCandidates] Database API에서만 데이터 로드:', submittedRecordings.length, '개')
         } else {
-          console.warn('⚠️ [loadCandidates] Dropbox API 호출 실패, localStorage 사용')
-          const localData = JSON.parse(localStorage.getItem("submittedRecordings") || "[]")
-          submittedRecordings = localData.map((s: any) => ({ candidateInfo: s, status: s.status || 'pending' }))
+          console.warn('⚠️ [loadCandidates] Database API 호출 실패, 빈 배열 반환')
+          submittedRecordings = []
         }
       } catch (error) {
-        console.error('❌ [loadCandidates] Dropbox 로드 중 에러, localStorage 사용', error)
-        const localData = JSON.parse(localStorage.getItem("submittedRecordings") || "[]")
-        submittedRecordings = localData.map((s: any) => ({ candidateInfo: s, status: s.status || 'pending' }))
+        console.error('❌ [loadCandidates] Database 로드 중 에러, 빈 배열 반환', error)
+        submittedRecordings = []
       }
 
       console.log("📋 [평가 대시보드] 로드된 평가 데이터:", submittedRecordings)
@@ -348,7 +545,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             : evaluation;
           console.log(`[디버깅] submission[${idx}]:`, submission);
           return {
-            id: submission.id || `submission-${Date.now()}-${Math.random()}`,
+            id: evaluation.id || submission.id || `submission-${Date.now()}-${Math.random()}`,
             name: submission.name || "(이름없음)",
             employeeId: submission.employeeId || "(사번없음)",
             language: submission.language || "",
@@ -386,15 +583,18 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           (candidate.language || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
           (candidate.category || '').toLowerCase().includes(searchTerm.toLowerCase());
         const matchesLanguage = languageFilter === "all" || candidate.language === languageFilter;
-        // 'submitted'만 제외하고 모두 보여줌
+        // 평가 대기목록에는 pending, review_requested, re_evaluation 표시
         const matchesStatus = statusFilter === "all"
-          ? status !== "submitted"
+          ? (status === "pending" || status === "review_requested" || status === "re_evaluation")
           : status === statusFilter;
         return matchesSearch && matchesLanguage && matchesStatus;
       })
       .sort((a, b) => {
         const statusA = a.status || 'pending';
         const statusB = b.status || 'pending';
+        // 우선순위: re_evaluation > review_requested > pending
+        if (statusA === "re_evaluation" && statusB !== "re_evaluation") return -1;
+        if (statusA !== "re_evaluation" && statusB === "re_evaluation") return 1;
         if (statusA === "review_requested" && statusB !== "review_requested") return -1;
         if (statusA !== "review_requested" && statusB === "review_requested") return 1;
         const dateA = new Date(a.submittedAt).getTime();
@@ -423,6 +623,14 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       const [, year, month, day] = match
       return `${year}년 ${month}월 ${day}일`
     }
+
+    // "2025-09-01" → "2025년 9월 1일"
+    const dateMatch = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/)
+    if (dateMatch) {
+      const [, year, month, day] = dateMatch
+      return `${year}년 ${parseInt(month)}월 ${parseInt(day)}일`
+    }
+
     return dateStr
   }
 
@@ -442,6 +650,9 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     const statusMap: { [key: string]: { text: string; color: string } } = {
       pending: { text: "평가 대기", color: "bg-blue-100 text-blue-800" },
       review_requested: { text: "검토 요청", color: "bg-orange-100 text-orange-800" },
+      re_evaluation: { text: "재평가 대기", color: "bg-red-100 text-red-800" },
+      completed: { text: "평가 완료", color: "bg-green-100 text-green-800" },
+      approved: { text: "승인 완료", color: "bg-purple-100 text-purple-800" },
       submitted: { text: "평가 완료", color: "bg-green-100 text-green-800" },
     }
     return statusMap[status || "pending"] || statusMap.pending
@@ -867,7 +1078,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     if (typeof criteria === "object") {
       return Object.keys(criteria).reduce((sum, subcat) => {
         const scoreKey = selectedCandidate?.language === "korean-english" && langKey 
-          ? `${langKey === "korean" ? "korean-" : "english-"}${category}-${subcat}`
+          ? `${langKey}-${category}-${subcat}`
           : `${category}-${subcat}`
         const maxScore = criteria[subcat]
         const defaultValue = Math.round((Number(maxScore) * 0.8) * 2) / 2
@@ -875,7 +1086,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       }, 0)
     } else {
       const scoreKey = selectedCandidate?.language === "korean-english" && langKey 
-        ? `${langKey === "korean" ? "korean-" : "english-"}${category}`
+        ? `${langKey}-${category}`
         : category
       const defaultValue = Math.round((Number(criteria) * 0.8) * 2) / 2
       return currentScores[scoreKey] !== undefined ? currentScores[scoreKey] : defaultValue
@@ -884,14 +1095,19 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
 
   // 실시간 총점 계산
   const getCurrentTotalScore = () => {
-    const categoryScores = calculateCategoryScores();
+    const categoryScores = calculateCategoryScoresDetailed();
+    console.log("🔍 [DEBUG] categoryScores keys:", Object.keys(categoryScores).slice(0, 10), "...", Object.keys(categoryScores).length)
+    const sampleKeys = [
+      "korean-발음-자음", "korean-발음-모음", "korean-전달력-부드러운 연결",
+      "english-발음_자음-P / F", "english-전달력-자연스러운 연결"
+    ]
+    const sample = Object.fromEntries(sampleKeys.map(k => [k, (categoryScores as any)[k]]))
+    console.log("🔍 [DEBUG] categoryScores sample:", sample)
     if (selectedCandidate?.language === "korean-english") {
-      const koreanScore = Object.entries(categoryScores)
-        .filter(([key]) => key.startsWith("korean-"))
-        .reduce((sum, [, score]) => sum + score, 0);
-      const englishScore = Object.entries(categoryScores)
-        .filter(([key]) => key.startsWith("english-"))
-        .reduce((sum, [, score]) => sum + score, 0);
+      const koreanCategories = ["발음", "억양", "전달력", "음성", "속도"]; 
+      const englishCategories = ["발음_자음", "발음_모음", "억양", "강세", "전달력"]; 
+      const koreanScore = koreanCategories.reduce((sum, cat) => sum + (categoryScores[`korean-${cat}`] || 0), 0);
+      const englishScore = englishCategories.reduce((sum, cat) => sum + (categoryScores[`english-${cat}`] || 0), 0);
       return koreanScore + englishScore;
     } else {
       return Object.values(categoryScores).reduce((sum, score) => sum + score, 0);
@@ -931,16 +1147,222 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     return categoryScores
   }
 
+  // 상세 리포트용: 한/영 평가에서 소항목 점수까지 포함한 categoryScores 생성
+  const calculateCategoryScoresDetailed = () => {
+    const categoryScores: { [key: string]: number } = {}
+    const currentScores = getCurrentScores()
+    
+    // 🔥 브라우저 콘솔 디버깅 시작
+    console.log("🔥🔥🔥 [BROWSER DEBUG] calculateCategoryScoresDetailed 시작 🔥🔥🔥")
+    console.log("🔥 [BROWSER] 언어:", selectedCandidate?.language)
+    console.log("🔥 [BROWSER] currentCandidateId:", currentCandidateId)
+    console.log("🔥 [BROWSER] currentScores:", currentScores)
+    
+    // 저장된 categoryScores가 있으면 우선 사용 (admin 모드에서 중요)
+    const storedCategoryScores = currentCandidateId && evaluationData[currentCandidateId]?.categoryScores
+    console.log("🔥 [BROWSER] storedCategoryScores:", storedCategoryScores)
+    console.log("🔥 [BROWSER] storedCategoryScores keys:", storedCategoryScores ? Object.keys(storedCategoryScores) : 'NONE')
+    console.log("🔥 [BROWSER] evaluationData 전체:", evaluationData[currentCandidateId || ''])
+    if (storedCategoryScores && Object.keys(storedCategoryScores).length > 0) {
+      console.log("✅ 저장된 categoryScores 사용:", storedCategoryScores)
+      
+      // 🔥 중요: 저장된 소항목 점수에서 대항목 합산 점수를 계산해서 추가
+      const enhancedScores = { ...storedCategoryScores }
+      
+      if (selectedCandidate?.language === "korean-english") {
+        // 한국어 대항목 합산
+        const koreanCategories = ["발음", "억양", "전달력", "음성", "속도"]
+        for (const category of koreanCategories) {
+          const sum = Object.entries(storedCategoryScores)
+            .filter(([key]) => key.startsWith(`korean-${category}-`))
+            .reduce((acc, [, score]) => acc + (score || 0), 0)
+          enhancedScores[`korean-${category}`] = sum
+          console.log(`✅ 한국어 ${category} 합산: ${sum}`)
+        }
+        
+        // 영어 대항목 합산
+        const englishCategories = ["발음_자음", "발음_모음", "억양", "강세", "전달력"]
+        for (const category of englishCategories) {
+          const sum = Object.entries(storedCategoryScores)
+            .filter(([key]) => key.startsWith(`english-${category}-`))
+            .reduce((acc, [, score]) => acc + (score || 0), 0)
+          enhancedScores[`english-${category}`] = sum
+          console.log(`✅ 영어 ${category} 합산: ${sum}`)
+        }
+      } else {
+        // 일본어/중국어 대항목 정규화 + 기본값(80%) 보정
+        console.log("🔥 [BROWSER] 일본어/중국어 대항목 합산 시작")
+        console.log("🔥 [BROWSER] evaluationData scores:", evaluationData[currentCandidateId || ""]?.scores)
+        console.log("🔥 [BROWSER] storedCategoryScores:", storedCategoryScores)
+        const baseScores = {
+          ...(evaluationData[currentCandidateId || ""]?.scores || {}),
+          ...storedCategoryScores,
+        } as Record<string, number>
+        console.log("🔥 [BROWSER] baseScores 합성 결과:", baseScores)
+
+        const pickWithAliases = (aliases: string[]): number | undefined => {
+          for (const a of aliases) {
+            // 대/소문자 차이 및 공백 차이 최소화
+            const direct = baseScores[a]
+            if (typeof direct === "number") return direct
+            const foundKey = Object.keys(baseScores).find(k => k.toLowerCase() === a.toLowerCase())
+            if (foundKey && typeof baseScores[foundKey] === "number") return baseScores[foundKey]
+          }
+          return undefined
+        }
+
+        if (selectedCandidate?.language === "japanese") {
+          const expected: Array<{ label: string; max: number; aliases: string[] }> = [
+            { label: "발음",  max: 30, aliases: ["발음", "Pronunciation"] },
+            { label: "억양",  max: 20, aliases: ["억양", "Intonation"] },
+            { label: "Pause", max: 25, aliases: ["Pause", "PAUSE"] },
+            { label: "Speed", max: 10, aliases: ["Speed", "속도"] },
+            { label: "Tone",  max: 10, aliases: ["Tone"] },
+            { label: "Volume",max: 5,  aliases: ["Volume"] },
+          ]
+          for (const item of expected) {
+            const v = pickWithAliases(item.aliases)
+            const value = typeof v === "number" ? v : Math.round(item.max * 0.8 * 2) / 2
+            enhancedScores[item.label] = value
+            console.log(`🔥 [BROWSER] 일본어 ${item.label}: ${value} (aliases: ${item.aliases.join(', ')}, found: ${v})`)
+          }
+        } else if (selectedCandidate?.language === "chinese") {
+          const expected: Array<{ label: string; max: number; aliases: string[] }> = [
+            { label: "성조",   max: 20, aliases: ["성조", "Tones", "Tone marks", "Pitch"] },
+            { label: "억양",   max: 20, aliases: ["억양", "Intonation"] },
+            { label: "PAUSE", max: 20, aliases: ["PAUSE", "Pause"] },
+            { label: "속도",   max: 20, aliases: ["속도", "Speed"] },
+            { label: "Tone",  max: 10, aliases: ["Tone"] },
+            { label: "Volume",max: 10, aliases: ["Volume"] },
+          ]
+          for (const item of expected) {
+            const v = pickWithAliases(item.aliases)
+            const value = typeof v === "number" ? v : Math.round(item.max * 0.8 * 2) / 2
+            enhancedScores[item.label] = value
+            console.log(`✅ 중국어 ${item.label}: ${value}`)
+          }
+        }
+      }
+      
+      console.log("🔥 [BROWSER] 대항목 합산 완료 - enhancedScores:", enhancedScores)
+      console.log("🔥 [BROWSER] enhancedScores 키 목록:", Object.keys(enhancedScores))
+      return enhancedScores
+    }
+
+    if (selectedCandidate?.language === "korean-english") {
+      // 한국어 카테고리: 합계 + 소항목 점수
+      const koreanCategories = Object.keys(evaluationCriteria.korean)
+      for (const category of koreanCategories) {
+        const criteria = evaluationCriteria.korean[category as keyof typeof evaluationCriteria.korean]
+        // 합계
+        categoryScores[`korean-${category}`] = calculateCurrentCategoryScore(category, criteria, "korean")
+        // 소항목
+        Object.entries(criteria).forEach(([subCat, maxValue]) => {
+          const key = `korean-${category}-${subCat}`
+          const defaultValue = Math.round((Number(maxValue) * 0.8) * 2) / 2
+          categoryScores[key] = currentScores[key] !== undefined ? currentScores[key] : defaultValue
+        })
+      }
+
+      // 영어 카테고리: 합계 + 소항목 점수
+      const englishCategories = Object.keys(evaluationCriteria.english)
+      for (const category of englishCategories) {
+        const criteria = evaluationCriteria.english[category as keyof typeof evaluationCriteria.english]
+        // 합계
+        categoryScores[`english-${category}`] = calculateCurrentCategoryScore(category, criteria, "english")
+        // 소항목
+        Object.entries(criteria).forEach(([subCat, maxValue]) => {
+          const key = `english-${category}-${subCat}`
+          const defaultValue = Math.round((Number(maxValue) * 0.8) * 2) / 2
+          categoryScores[key] = currentScores[key] !== undefined ? currentScores[key] : defaultValue
+        })
+      }
+    } else {
+      // 일본어/중국어는 기존 합계 로직 유지
+      const language = selectedCandidate?.language as keyof typeof evaluationCriteria
+      const criteria = evaluationCriteria[language]
+      if (criteria) {
+        Object.entries(criteria).forEach(([category, maxScore]) => {
+          categoryScores[category] = calculateCurrentCategoryScore(category, maxScore)
+        })
+      }
+    }
+
+    return categoryScores
+  }
+
   const handleSubmitEvaluation = async (result: any) => {
     if (!currentCandidateId || !selectedCandidate) return
 
     console.log("최종 평가 결과:", result)
 
     try {
-      const response = await fetch("/api/evaluations/save-database", {
+              // 직원 정보에서 이름 가져오기
+        const employeeName = await getEmployeeName(authenticatedUser?.email || '');
+        
+        // 🔥 중요: 제출 시 0인 점수를 80% 기본값으로 보정
+        const correctedScores = { ...result.scores };
+        console.log("🔥 [BROWSER] 제출 전 점수 보정 시작 - 원본 점수:", result.scores);
+        
+        if (selectedCandidate.language === "korean-english") {
+          const allCategories = [
+            ...Object.keys(evaluationCriteria.korean),
+            ...Object.keys(evaluationCriteria.english)
+          ];
+          
+          for (const category of allCategories) {
+            const koreanPrefix = Object.keys(evaluationCriteria.korean).includes(category) ? "korean-" : "english-";
+            const isKorean = Object.keys(evaluationCriteria.korean).includes(category);
+            const criteriaGroup = isKorean ? evaluationCriteria.korean : evaluationCriteria.english;
+            const criteria = (criteriaGroup as any)[category];
+            
+            if (typeof criteria === 'object') {
+              // 소항목이 있는 경우
+              for (const [subKey, maxScore] of Object.entries(criteria)) {
+                const scoreKey = `${koreanPrefix}${category}-${subKey}`;
+                if (correctedScores[scoreKey] === 0 || correctedScores[scoreKey] === undefined) {
+                  correctedScores[scoreKey] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+                  console.log(`🔥 [BROWSER] ${scoreKey}: 0 → ${correctedScores[scoreKey]} (80%)`);
+                }
+              }
+            } else {
+              // 직접 점수인 경우
+              const scoreKey = `${koreanPrefix}${category}`;
+              if (correctedScores[scoreKey] === 0 || correctedScores[scoreKey] === undefined) {
+                correctedScores[scoreKey] = Math.round((Number(criteria) * 0.8) * 2) / 2;
+                console.log(`🔥 [BROWSER] ${scoreKey}: 0 → ${correctedScores[scoreKey]} (80%)`);
+              }
+            }
+          }
+        } else {
+          // 일본어/중국어
+          const criteria = evaluationCriteria[selectedCandidate.language as keyof typeof evaluationCriteria];
+          for (const [category, maxScore] of Object.entries(criteria)) {
+            if (correctedScores[category] === 0 || correctedScores[category] === undefined) {
+              correctedScores[category] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+              console.log(`🔥 [BROWSER] ${category}: 0 → ${correctedScores[category]} (80%)`);
+            }
+          }
+        }
+        
+        console.log("🔥 [BROWSER] 제출 후 보정된 점수:", correctedScores);
+        
+        // 평가 완료 API 호출
+        const completeData = {
+          evaluationId: currentCandidateId,
+          evaluatedBy: employeeName,
+          scores: correctedScores,
+        comments: result.comments || { korean: '', english: '' },
+        totalScore: result.totalScore || 0,
+        koreanTotalScore: result.koreanTotalScore || 0,
+        englishTotalScore: result.englishTotalScore || 0,
+        grade: result.grade || 'N/A'
+      };
+
+      const response = await fetch("/api/evaluations/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result), // result에 id가 포함되어 있음
+        body: JSON.stringify(completeData),
       })
 
       if (!response.ok) {
@@ -1188,25 +1610,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       // 데이터베이스에서 평가 결과 로드
       const loadFromDatabase = async () => {
         try {
-          // 캐시된 평가 데이터가 있으면 우선 사용 (동일한 매칭 로직 사용)
-          const cachedEvaluations = JSON.parse(localStorage.getItem("cachedEvaluations") || "[]")
-          const cachedEvaluation = cachedEvaluations.find((evaluation: any) => {
-            // 1. candidateId로 매칭
-            if (evaluation.candidateId === candidate.id) return true;
-            
-            // 2. candidateInfo.employeeId로 매칭
-            if (evaluation.candidateInfo?.employeeId === candidate.employeeId) return true;
-            
-            // 3. 직접 ID 매칭
-            if (evaluation.id === candidate.id) return true;
-            
-            return false;
-          })
-          
-          if (cachedEvaluation && cachedEvaluation.scores) {
-            console.log("✅ 캐시된 평가 데이터 사용:", candidate.name)
-            return cachedEvaluation
-          }
+          console.log("🔍 [DEBUG] 캐시를 무시하고 항상 최신 데이터베이스 데이터 사용")
+          // 🔥 캐시 무시: admin 모드에서는 항상 최신 데이터 사용
           
           // 캐시에 없으면 데이터베이스에서 로드
           const response = await fetch("/api/evaluations/load-database?limit=1000")
@@ -1219,25 +1624,38 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               manageLocalStorageCache(evaluation);
             });
             
-            // 해당 후보자의 평가 찾기 (여러 방법으로 매칭 시도)
-            const candidateEvaluation = evaluations.find((evaluation: any) => {
-              // 1. candidateId로 매칭
-              if (evaluation.candidateId === candidate.id) return true;
+                      // 🔥 단순화: 평가 ID로만 매칭 (candidate.id = evaluation.id)
+          const candidateEvaluation = evaluations.find((evaluation: any) => 
+            evaluation.id === candidate.id
+          )
+          
+          if (candidateEvaluation && (candidateEvaluation.scores || candidateEvaluation.categoryScores)) {
+            console.log("🔍 [DEBUG] candidateEvaluation 전체:", candidateEvaluation);
+            console.log("🔍 [DEBUG] candidateEvaluation.scores:", candidateEvaluation.scores);
+            console.log("🔍 [DEBUG] candidateEvaluation.categoryScores:", candidateEvaluation.categoryScores);
+            console.log("🔍 [DEBUG] API에서 받은 categoryScores에 대항목이 있는가?", {
+              hasKoreanPronunciation: candidateEvaluation.categoryScores?.['korean-발음'] !== undefined,
+              hasEnglishConsonant: candidateEvaluation.categoryScores?.['english-발음_자음'] !== undefined,
+              categoryScoresKeys: Object.keys(candidateEvaluation.categoryScores || {})
+            });
               
-              // 2. candidateInfo.employeeId로 매칭
-              if (evaluation.candidateInfo?.employeeId === candidate.employeeId) return true;
+              // 🔥 개별 점수는 categoryScores에서 추출 (korean-발음-자음, english-발음_자음-P / F 등)
+              let individualScores = candidateEvaluation.scores || {};
               
-              // 3. dropboxPath가 일치하는 경우
-              if (evaluation.dropboxPath === candidate.dropboxPath) return true;
+              // categoryScores에서 개별 점수 추출 (API가 잘못 구조화된 경우 대비)
+              if (candidateEvaluation.categoryScores) {
+                Object.entries(candidateEvaluation.categoryScores).forEach(([key, value]) => {
+                  // korean, english 총합이 아닌 개별 항목만 추출
+                  if (key !== 'korean' && key !== 'english' && 
+                      (key.includes('-') || key.includes('_'))) {
+                    individualScores[key] = value;
+                  }
+                });
+              }
               
-              // 4. 직접 ID 매칭
-              if (evaluation.id === candidate.id) return true;
+              console.log("✅ Database에서 평가 데이터 복원:", candidate.name, individualScores)
+              console.log("🔍 [DEBUG] 최종 individualScores 개수:", Object.keys(individualScores).length)
               
-              return false;
-            })
-            
-            if (candidateEvaluation && candidateEvaluation.scores) {
-              console.log("✅ Dropbox에서 평가 데이터 복원:", candidate.name, candidateEvaluation.scores)
               // 코멘트 복원
               let koreanComment = ""
               let englishComment = ""
@@ -1257,7 +1675,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               }
               }
               const candidateData = {
-                scores: candidateEvaluation.scores,
+                scores: individualScores,
+                categoryScores: candidateEvaluation.categoryScores || {},
                 comments: { korean: koreanComment, english: englishComment }
               }
               setEvaluationData(prev => ({
@@ -1268,31 +1687,35 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             }
           }
         } catch (error) {
-          console.warn("Dropbox에서 평가 데이터 로드 실패:", error)
+          console.warn("Database에서 평가 데이터 로드 실패:", error)
         }
         return false
       }
       
       // localStorage에서도 확인 (동일한 매칭 로직 사용)
       const existingEvaluations = JSON.parse(localStorage.getItem("evaluationResults") || "[]")
-      const existingEvaluation = existingEvaluations.find((evaluation: any) => {
-        // 1. candidateId로 매칭
-        if (evaluation.candidateId === candidate.id) return true;
-        
-        // 2. candidateInfo.employeeId로 매칭
-        if (evaluation.candidateInfo?.employeeId === candidate.employeeId) return true;
-        
-        // 3. dropboxPath가 일치하는 경우
-        if (evaluation.dropboxPath === candidate.dropboxPath) return true;
-        
-        // 4. 직접 ID 매칭
-        if (evaluation.id === candidate.id) return true;
-        
-        return false;
-      })
+      // 🔥 단순화: 평가 ID로만 매칭 (candidate.id = evaluation.id)
+      const existingEvaluation = existingEvaluations.find((evaluation: any) => 
+        evaluation.id === candidate.id
+      )
       
-      if (existingEvaluation && existingEvaluation.scores) {
-        console.log("✅ localStorage에서 평가 데이터 복원:", candidate.name, existingEvaluation.scores)
+      if (existingEvaluation && (existingEvaluation.scores || existingEvaluation.categoryScores)) {
+        // 🔥 개별 점수는 categoryScores에서 추출
+        let individualScores = existingEvaluation.scores || {};
+        
+        // categoryScores에서 개별 점수 추출
+        if (existingEvaluation.categoryScores) {
+          Object.entries(existingEvaluation.categoryScores).forEach(([key, value]) => {
+            // korean, english 총합이 아닌 개별 항목만 추출
+            if (key !== 'korean' && key !== 'english' && 
+                (key.includes('-') || key.includes('_'))) {
+              individualScores[key] = value;
+            }
+          });
+        }
+        
+        console.log("✅ localStorage에서 평가 데이터 복원:", candidate.name, individualScores)
+        
         // 코멘트 복원
         let koreanComment = ""
         let englishComment = ""
@@ -1312,7 +1735,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         }
         }
         const candidateData = {
-          scores: existingEvaluation.scores,
+          scores: individualScores,
           comments: { korean: koreanComment, english: englishComment }
         }
         setEvaluationData(prev => ({
@@ -1365,95 +1788,131 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     return false
   }
 
-    // 녹음 파일 로드 함수 추가
-  const loadRecordingsFromDropbox = async (candidate: EvaluationCandidate) => {
+    // 녹음 파일 로드 함수 (데이터베이스에서 Base64 데이터 가져오기)
+  const loadRecordingsFromDatabase = async (candidate: EvaluationCandidate) => {
     try {
       setRecordingsLoading(prev => ({ ...prev, [candidate.id]: true }))
-      console.log(`[loadRecordingsFromDropbox] 진입:`, candidate.name, candidate.employeeId)
+      console.log(`[loadRecordingsFromDatabase] 진입:`, candidate.name, candidate.employeeId)
       
-      // candidate 객체에서 dropboxFiles를 직접 사용
-      const dropboxFiles = candidate.dropboxFiles
+      // 데이터베이스에서 해당 평가의 녹음 파일 정보 가져오기
+      const response = await fetch(`/api/evaluations/load-database?limit=1000`)
       
-      // 파일 정보가 있는지 확인
-      if (!dropboxFiles || dropboxFiles.length === 0) {
-        console.warn(`[loadRecordingsFromDropbox] dropboxFiles가 비어있거나 없습니다.`)
+      if (!response.ok) {
+        console.warn(`[loadRecordingsFromDatabase] API 호출 실패:`, response.status)
         return {}
       }
       
-      console.log("📁 로드할 Dropbox 파일 정보:", dropboxFiles)
+      const result = await response.json()
+      const evaluations = result.evaluations || []
+      
+      // 해당 후보자의 평가 찾기 (고유 ID로 매칭)
+      const candidateEvaluation = evaluations.find((evaluation: any) => {
+        // 평가의 고유 ID로 정확히 매칭
+        return evaluation.id === candidate.id;
+      })
+      
+      if (!candidateEvaluation) {
+        console.warn(`⚠️ [loadRecordingsFromDatabase] 평가 데이터를 찾을 수 없음: ${candidate.id}`)
         
-      // 각 파일 다운로드
-      const downloadPromises = dropboxFiles.map(async (fileInfo: any) => {
-          try {
-            const downloadResponse = await fetch("/api/dropbox-download", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-              filePath: fileInfo.fileId || fileInfo.path // 파일 ID 우선, 없으면 경로
-              })
-            })
-            
-            if (downloadResponse.ok) {
-              const downloadResult = await downloadResponse.json()
-            return { key: fileInfo.scriptKey, base64Data: downloadResult.base64Data, success: true }
-            } else {
-            console.warn('[loadRecordingsFromDropbox] 녹음 파일 다운로드 실패:', fileInfo.fileName || fileInfo.scriptKey, downloadResponse.status)
-            return { key: fileInfo.scriptKey, success: false }
-            }
-          } catch (error) {
-          console.warn('[loadRecordingsFromDropbox] 녹음 파일 다운로드 실패:', fileInfo.fileName || fileInfo.scriptKey, error)
-          return { key: fileInfo.scriptKey, success: false }
+        // 매칭 실패 시 간단한 디버깅 정보 출력
+        console.log(`🔍 [loadRecordingsFromDatabase] 매칭 실패: candidate.id=${candidate.id}`)
+        console.log(`- available evaluation IDs:`, evaluations.map((e: any) => e.id))
+        
+        return {}
+      }
+      
+      console.log("📁 로드할 녹음 파일 정보:", candidateEvaluation.dropboxFiles)
+      
+      // dropboxFiles에서 Base64 데이터 추출
+      const recordingBlobs: { [key: string]: string } = {}
+      
+      if (candidateEvaluation.dropboxFiles && candidateEvaluation.dropboxFiles.length > 0) {
+        console.log(`📁 [loadRecordingsFromDatabase] ${candidateEvaluation.dropboxFiles.length}개의 녹음 파일 처리 중...`)
+        candidateEvaluation.dropboxFiles.forEach((fileInfo: any) => {
+          console.log(`📁 [loadRecordingsFromDatabase] 파일 정보:`, fileInfo.scriptKey, fileInfo.url ? 'Base64 있음' : 'Base64 없음')
+          if (fileInfo.url && fileInfo.url.startsWith('data:audio/')) {
+            // Base64 데이터가 url 필드에 저장되어 있음
+            recordingBlobs[fileInfo.scriptKey] = fileInfo.url
+            console.log(`✅ [loadRecordingsFromDatabase] 녹음 파일 추가: ${fileInfo.scriptKey}`)
           }
         })
-        
-      const downloadedRecordings = await Promise.all(downloadPromises)
-        
-      // Blob URL을 가진 객체 생성
-      const recordingBlobs = downloadedRecordings.reduce((acc, current) => {
-        if (current && current.key && current.base64Data) {
-          acc[current.key] = current.base64Data;
-        }
-        return acc
-      }, {} as { [key: string]: string })
+      } else {
+        console.warn(`⚠️ [loadRecordingsFromDatabase] 녹음 파일이 없음: ${candidate.id}`)
+      }
       
-      console.log("✅ 녹음 파일 다운로드 및 Blob 생성 완료")
+      console.log("✅ 데이터베이스에서 녹음 파일 로드 완료:", Object.keys(recordingBlobs))
       return recordingBlobs
       
     } catch (error) {
-      console.error("Dropbox에서 녹음 파일 로드 중 에러:", error)
+      console.error("데이터베이스에서 녹음 파일 로드 중 에러:", error)
       return {}
     } finally {
       setRecordingsLoading(prev => ({ ...prev, [candidate.id]: false }))
     }
   }
 
-  // 검토 요청된 평가의 기존 데이터 복원 (강화된 버전)
+  // 검토 요청된 평가의 기존 데이터 복원 (데이터베이스에서 직접 로드)
   const loadReviewData = async (candidate: EvaluationCandidate) => {
     console.log("🔍 [loadReviewData] 검토 모드 데이터 로딩 시작:", candidate.name);
     console.log("🔍 [loadReviewData] 후보자 정보:", {
       id: candidate.id,
       employeeId: candidate.employeeId,
-      dropboxPath: candidate.dropboxPath,
       status: candidate.status
     });
     
-    // 기본 로딩 함수 사용하되, 더 자세한 로깅 추가
-    const result = await loadCandidateData(candidate);
-    
-    // 로딩 후 evaluationData 상태 확인
-    setTimeout(() => {
-      const loadedData = evaluationData[candidate.id];
-      if (loadedData) {
-        console.log("✅ [loadReviewData] 로딩 완료 후 데이터 확인:", {
-          scores: loadedData.scores,
-          comments: loadedData.comments
-        });
-      } else {
-        console.warn("⚠️ [loadReviewData] 로딩 후에도 데이터가 없음");
+    try {
+      // 데이터베이스에서 직접 평가 데이터 로드
+      const response = await fetch("/api/evaluations/load-database?limit=1000");
+      if (!response.ok) {
+        throw new Error(`API 요청 실패: ${response.status}`);
       }
-    }, 100);
-    
-    return result;
+      
+      const result = await response.json();
+      const evaluations = result.evaluations || [];
+      
+      // 해당 후보자의 평가 찾기 (정확한 ID 매칭)
+      const candidateEvaluation = evaluations.find((evaluation: any) => 
+        evaluation.id === candidate.id
+      );
+      
+      if (!candidateEvaluation) {
+        console.error("❌ [loadReviewData] 평가 데이터를 찾을 수 없음:", candidate.id);
+        console.log("🔍 [loadReviewData] 사용 가능한 평가 ID들:", evaluations.map((e: any) => e.id));
+        return false;
+      }
+      
+      if (!candidateEvaluation.scores || Object.keys(candidateEvaluation.scores).length === 0) {
+        console.error("❌ [loadReviewData] 평가 데이터에 점수가 없음:", candidate.id);
+        return false;
+      }
+      
+      console.log("✅ [loadReviewData] 검토 데이터 로드 성공:", {
+        id: candidateEvaluation.id,
+        scoresCount: Object.keys(candidateEvaluation.scores).length,
+        hasComments: !!candidateEvaluation.comments,
+        status: candidateEvaluation.status,
+        reviewRequestedBy: candidateEvaluation.reviewRequestedBy
+      });
+      
+      // 평가 데이터 설정 (안전한 기본값 제공)
+      const candidateData = {
+        scores: candidateEvaluation.scores,
+        categoryScores: candidateEvaluation.categoryScores || {},
+        comments: candidateEvaluation.comments || { korean: "", english: "" }
+      };
+      
+      setEvaluationData(prev => ({
+        ...prev,
+        [candidate.id]: candidateData
+      }));
+      
+      console.log("✅ [loadReviewData] evaluationData 설정 완료");
+      return true;
+      
+    } catch (error) {
+      console.error("❌ [loadReviewData] 데이터베이스 로드 실패:", error);
+      return false;
+    }
   }
 
   // 직원 정보 가져오기 함수
@@ -1470,19 +1929,17 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     return email;
   };
 
-  // 검토 요청 함수 추가
+  // 검토 요청 함수 (데이터베이스 API 사용)
   const handleRequestReview = async (result: any) => {
     console.log("🔍 [handleRequestReview] 받은 데이터:", result)
-    if (!currentCandidateId || !selectedCandidate || !result.dropboxPath) {
-      console.error("❌ [handleRequestReview] dropboxPath가 없습니다!")
-      console.error("currentCandidateId:", currentCandidateId)
+    if (!selectedCandidate) {
+      console.error("❌ [handleRequestReview] 필수 정보가 없습니다!")
       console.error("selectedCandidate:", selectedCandidate)
-      console.error("result.dropboxPath:", result.dropboxPath)
       return
     }
 
     // 확인 메시지 표시
-    const confirmMessage = `🔍 검토 요청을 진행하시겠습니까?\n\n현재 입력하신 평가 내용 (점수 및 코멘트)이 드롭박스에 저장되어\n다른 교관이 검토할 수 있게 됩니다.\n\n• 대상자: ${selectedCandidate.name} (${selectedCandidate.employeeId})\n• 언어: ${selectedCandidate.language}\n• 카테고리: ${selectedCandidate.category}`;
+    const confirmMessage = `🔍 검토 요청을 진행하시겠습니까?\n\n현재 입력하신 평가 내용 (점수 및 코멘트)이 데이터베이스에 저장되어\n다른 교관이 검토할 수 있게 됩니다.\n\n• 대상자: ${selectedCandidate.name} (${selectedCandidate.employeeId})\n• 언어: ${selectedCandidate.language}\n• 카테고리: ${selectedCandidate.category}`;
     
     if (!confirm(confirmMessage)) {
       return; // 사용자가 취소한 경우
@@ -1492,35 +1949,79 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       // 직원 정보에서 이름 가져오기
       const employeeName = await getEmployeeName(authenticatedUser?.email || '');
       
-      // 🔥 현재 evaluationData에서 최신 점수와 코멘트 가져오기
-      const currentEvalData = evaluationData[currentCandidateId] || { scores: {}, comments: { korean: "", english: "" } };
-      const currentScores = currentEvalData.scores || {};
+      // 🔥 현재 evaluationData에서 최신 점수와 코멘트 가져오기 + 기본값 포함
+      const currentEvalData = evaluationData[selectedCandidate.id] || { 
+        scores: {}, 
+        comments: { korean: "", english: "" },
+        totalScore: 0,
+        koreanTotalScore: 0,
+        englishTotalScore: 0,
+        grade: 'N/A'
+      };
+      
+      // 📊 모든 평가 항목의 점수를 수집 (기본값 포함)
+      const criteria = getEvaluationCriteria(selectedCandidate.language)
+      const allScores: { [key: string]: number } = {}
+      
+      // 기본값(80%) 설정
+      Object.entries(criteria).forEach(([langKey, langCriteria]) => {
+        Object.entries(langCriteria as Record<string, any>).forEach(([category, subcriteria]) => {
+          if (typeof subcriteria === "object" && subcriteria !== null) {
+            // 세부 항목이 있는 경우
+            Object.entries(subcriteria as Record<string, number>).forEach(([subcat, maxScore]) => {
+              const scoreKey = selectedCandidate.language === "korean-english" 
+                ? `${langKey}-${category}-${subcat}` 
+                : `${category}-${subcat}`
+              const defaultScore = Math.round((Number(maxScore) * 0.8) * 2) / 2
+              allScores[scoreKey] = defaultScore
+            })
+          } else {
+            // 세부 항목이 없는 경우
+            const scoreKey = selectedCandidate.language === "korean-english" 
+              ? `${langKey}-${category}` 
+              : category
+            const defaultScore = Math.round((Number(subcriteria) * 0.8) * 2) / 2
+            allScores[scoreKey] = defaultScore
+          }
+        })
+      })
+      
+      // 실제 조정된 점수로 덮어쓰기
+      const currentScores = { ...allScores, ...(currentEvalData.scores || {}) }
       const currentComments = currentEvalData.comments || { korean: "", english: "" };
+      
+      console.log("📊 [handleRequestReview] 전체 점수 (기본값 + 조정값):", {
+        totalItems: Object.keys(allScores).length,
+        adjustedItems: Object.keys(currentEvalData.scores || {}).length,
+        finalScores: currentScores
+      });
       
       console.log("🔍 [handleRequestReview] 현재 평가 데이터:", {
         scores: currentScores,
         comments: currentComments
       });
       
-      // result 데이터를 현재 평가 데이터로 업데이트
-      const updatedResult = {
-        ...result,
+      // 검토 요청 API 호출 (점수와 의견 포함)
+      const reviewRequestData = {
+        evaluationId: selectedCandidate.id,
+        requestedBy: employeeName,
         scores: currentScores,
-        categoryScores: calculateCategoryScores(), // 카테고리별 점수 재계산
-        comments: currentComments,
-        status: "review_requested",
-        reviewRequestedBy: employeeName,
-        reviewRequestedAt: new Date().toISOString(),
-        evaluatedAt: new Date().toISOString(),
-        evaluatedBy: employeeName,
+        comments: currentComments
       };
       
-      console.log("🔍 [handleRequestReview] 전송할 데이터:", updatedResult);
+      console.log("🔍 [handleRequestReview] 검토 요청 데이터:", {
+        evaluationId: reviewRequestData.evaluationId,
+        requestedBy: reviewRequestData.requestedBy,
+        scoresCount: Object.keys(reviewRequestData.scores).length,
+        hasComments: !!(reviewRequestData.comments.korean || reviewRequestData.comments.english),
+        scores: reviewRequestData.scores,
+        comments: reviewRequestData.comments
+      });
       
-      const response = await fetch("/api/evaluations/save-database", {
+              const response = await fetch("/api/evaluations/request-review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedResult),
+        body: JSON.stringify(reviewRequestData),
       })
 
       console.log("📡 [handleRequestReview] API 응답 상태:", response.status, response.statusText)
@@ -1534,7 +2035,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       const apiResult = await response.json()
       console.log("✅ [handleRequestReview] 검토 요청 성공:", apiResult)
 
-      alert(`✅ 검토 요청이 성공적으로 처리되었습니다!\n\n• 평가 내용이 드롭박스에 저장되었습니다.\n• 다른 교관이 검토할 수 있도록 평가 대시보드에 표시됩니다.\n• 검토자는 현재 입력하신 점수와 코멘트를 확인할 수 있습니다.`)
+      alert(`✅ 검토 요청이 성공적으로 처리되었습니다!\n\n• 평가 상태가 '검토 요청됨'으로 변경되었습니다.\n• 다른 교관이 검토할 수 있도록 평가 대시보드에 표시됩니다.\n• 검토자는 현재 입력하신 점수와 코멘트를 확인할 수 있습니다.`)
     } catch (error) {
       console.error("❌ [handleRequestReview] 검토 요청 저장 실패:", error)
       alert(`❌ 검토 요청 처리 중 오류가 발생했습니다:\n${error instanceof Error ? error.message : "알 수 없는 오류"}\n\n다시 시도해 주세요.`)
@@ -1555,18 +2056,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   const handleSelectCandidate = async (candidate: EvaluationCandidate, isReview: boolean = false) => {
     console.log('[handleSelectCandidate] 후보자 선택:', candidate)
     setRecordingsLoading(prev => ({ ...prev, [candidate.id]: true }))
+    
+    try {
     // 1. 평가 정보와 녹음파일 병렬 로드
     const [evaluationLoaded, recordingsLoaded] = await Promise.all([
       isReview ? loadReviewData(candidate) : loadCandidateData(candidate),
-      loadRecordingsFromDropbox(candidate)
+                loadRecordingsFromDatabase(candidate)
     ])
     console.log('[handleSelectCandidate] 평가 정보 로드 완료:', evaluationLoaded)
     console.log('[handleSelectCandidate] 녹음파일 로드 완료:', recordingsLoaded)
+      
     // 2. 최신 평가 정보와 녹음파일을 모두 병합해서 setSelectedCandidate
     // (최신 데이터를 evaluationData, recordings에서 가져옴)
     const evalData = evaluationData[candidate.id] ?? {}
 
-    // recordingsLoaded는 loadRecordingsFromDropbox가 반환한 객체 (key→base64)
+            // recordingsLoaded는 loadRecordingsFromDatabase가 반환한 객체 (key→base64)
     const recordingsFromDropbox = (recordingsLoaded && typeof recordingsLoaded === "object") ? recordingsLoaded as { [key:string]: string } : {}
 
     // 후보 JSON에 이미 포함된 recordings (share url 또는 base64)
@@ -1576,40 +2080,25 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     const recordings = { ...baseRecordings, ...recordingsFromDropbox }
 
     console.log('[handleSelectCandidate] 최종 recordings:', recordings)
-    setSelectedCandidate({
-      ...candidate,
-      recordings
-    })
-    setRecordingsLoading(prev => ({ ...prev, [candidate.id]: false }))
-  }
-
-  // 후보자 선택 시 슬라이더 기본값 80%로 초기화 (검토 모드가 아닌 경우에만)
-  useEffect(() => {
-    if (selectedCandidate && selectedCandidate.id && !evaluationData[selectedCandidate.id]) {
-      // 🔥 검토 요청된 평가는 기본값으로 초기화하지 않음
-      if (selectedCandidate.status === "review_requested") {
-        console.log("🔍 검토 요청된 평가 - 기본값 초기화 건너뜀:", selectedCandidate.name);
-        setCurrentCandidateId(selectedCandidate.id);
-        return;
-      }
+    
+    // 🔥 Clean Sheet 로직: 신규 평가(pending)만 기본값으로 초기화 (안전한 처리)
+    try {
+      const shouldInitializeAsCleanSheet = 
+        !evaluationData[candidate.id] && // 기존 데이터가 없고
+        candidate.status === "pending";  // 신규 평가(pending) 상태인 경우만 (re_evaluation은 기존 데이터 유지)
       
-      // 평가 기준을 가져와서 각 항목의 최대값의 80%로 초기화 (신규 평가만)
-      console.log("🆕 신규 평가 - 기본값으로 초기화:", selectedCandidate.name);
-      console.log("🔍 언어:", selectedCandidate.language);
-      const criteria = getEvaluationCriteria(selectedCandidate.language)
-      console.log("🔍 평가 기준:", criteria);
+      if (shouldInitializeAsCleanSheet) {
+        console.log("🆕 신규 평가 Clean Sheet - 기본값(80%) 초기화:", candidate.name);
+        const criteria = getEvaluationCriteria(candidate.language)
       const scores: { [key: string]: number } = {}
       
-      if (selectedCandidate.language === 'korean-english') {
-        // 한/영 평가의 경우
-        console.log("🔍 한/영 평가 기준 설정 중...");
+        if (candidate.language === 'korean-english') {
         Object.entries(evaluationCriteria.korean).forEach(([category, subcriteria]) => {
           if (typeof subcriteria === 'object' && subcriteria !== null) {
             Object.entries(subcriteria as Record<string, any>).forEach(([subcat, maxScore]) => {
               const key = `korean-${category}-${subcat}`
               const score = Math.round((maxScore as number) * 0.8 * 2) / 2
               scores[key] = score
-              console.log(`✅ ${key}: ${maxScore} * 0.8 = ${score}`);
             })
           }
         })
@@ -1620,31 +2109,115 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               const key = `english-${category}-${subcat}`
               const score = Math.round((maxScore as number) * 0.8 * 2) / 2
               scores[key] = score
-              console.log(`✅ ${key}: ${maxScore} * 0.8 = ${score}`);
             })
           }
         })
       } else {
-        // 일본어/중국어 평가의 경우
-        console.log("🔍 일본어/중국어 평가 기준 설정 중...");
         Object.entries(criteria).forEach(([category, maxScore]) => {
           const score = Math.round((maxScore as number) * 0.8 * 2) / 2
           scores[category] = score
-          console.log(`✅ ${category}: ${maxScore} * 0.8 = ${score}`);
         })
       }
       
-      console.log("🎯 최종 설정된 점수:", scores);
       setEvaluationData(prev => ({
         ...prev,
-        [selectedCandidate.id]: {
+        [candidate.id]: {
           scores,
+          categoryScores: {}, // 빈 객체로 초기화, 실시간 계산됨
           comments: { korean: '', english: '' }
         }
       }))
-      setCurrentCandidateId(selectedCandidate.id)
+        console.log("✅ Clean Sheet 초기화 완료 - 기본 점수 설정됨");
+      } else {
+        console.log("🔍 기존 데이터 유지 또는 검토/완료 상태:", {
+          hasExistingData: !!evaluationData[candidate.id],
+          status: candidate.status,
+          name: candidate.name
+        });
+      }
+    } catch (initError) {
+      console.error("❌ Clean Sheet 초기화 중 오류 발생:", initError);
+      // 오류가 발생해도 평가 진입은 계속 진행
     }
-  }, [selectedCandidate])
+    
+      setSelectedCandidate({
+        ...candidate,
+        recordings
+      })
+      
+    } catch (error) {
+      console.error("❌ [handleSelectCandidate] 후보자 선택 중 오류 발생:", error);
+      // 오류가 발생해도 사용자에게 알림
+      alert(`평가 진입 중 오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    } finally {
+      // 항상 로딩 상태 해제
+      setRecordingsLoading(prev => ({ ...prev, [candidate.id]: false }))
+    }
+  }
+
+  // 후보자 선택 시 currentCandidateId 설정 및 초기 80% 점수 설정
+  useEffect(() => {
+    if (selectedCandidate && selectedCandidate.id) {
+      setCurrentCandidateId(selectedCandidate.id);
+      
+      // 🔥 중요: 평가 진행 모드에서 초기 80% 점수 자동 설정 (pending 상태인 경우만)
+      if (selectedCandidate.status === "pending") {
+        console.log("🔥 [BROWSER] 초기 80% 점수 설정 시작 - 언어:", selectedCandidate.language);
+        
+        const initialScores: { [key: string]: number } = {};
+        const currentScores = getCurrentScores();
+        
+        // 이미 점수가 설정된 항목은 유지, 없는 항목만 80% 기본값 설정
+        if (selectedCandidate.language === "korean-english") {
+          const allCategories = [
+            ...Object.keys(evaluationCriteria.korean),
+            ...Object.keys(evaluationCriteria.english)
+          ];
+          
+          for (const category of allCategories) {
+            const koreanPrefix = Object.keys(evaluationCriteria.korean).includes(category) ? "korean-" : "english-";
+            const isKorean = Object.keys(evaluationCriteria.korean).includes(category);
+            const criteriaGroup = isKorean ? evaluationCriteria.korean : evaluationCriteria.english;
+            const criteria = (criteriaGroup as any)[category];
+            
+            if (typeof criteria === 'object') {
+              // 소항목이 있는 경우
+              for (const [subKey, maxScore] of Object.entries(criteria)) {
+                const scoreKey = `${koreanPrefix}${category}-${subKey}`;
+                if (currentScores[scoreKey] === undefined) {
+                  initialScores[scoreKey] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+                }
+              }
+            } else {
+              // 직접 점수인 경우
+              const scoreKey = `${koreanPrefix}${category}`;
+              if (currentScores[scoreKey] === undefined) {
+                initialScores[scoreKey] = Math.round((Number(criteria) * 0.8) * 2) / 2;
+              }
+            }
+          }
+        } else {
+          // 일본어/중국어
+          const criteria = evaluationCriteria[selectedCandidate.language as keyof typeof evaluationCriteria];
+          for (const [category, maxScore] of Object.entries(criteria)) {
+            if (currentScores[category] === undefined) {
+              initialScores[category] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+            }
+          }
+        }
+        
+        console.log("🔥 [BROWSER] 설정할 초기 점수:", initialScores);
+        console.log("🔥 [BROWSER] 기존 점수:", currentScores);
+        
+        // 초기 점수와 기존 점수 병합
+        if (Object.keys(initialScores).length > 0) {
+          const mergedScores = { ...currentScores, ...initialScores };
+          setCurrentScores(mergedScores);
+          console.log("🔥 [BROWSER] 최종 병합된 점수:", mergedScores);
+        }
+      }
+    }
+  }, [selectedCandidate, getCurrentScores, setCurrentScores])
 
   // 슬라이더 값 변경을 부드럽게 반영하도록 최적화 (매우 짧은 딜레이)
   const debouncedUpdateScore = useCallback(
@@ -1670,8 +2243,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             <div className="flex flex-col gap-2">
               <h1 className="text-3xl font-bold text-gray-900">Evaluate</h1>
               <p className="text-gray-600 text-sm leading-relaxed max-w-2xl">
-                <span className="font-medium text-purple-600">녹음 응시 목록</span>에서 기내방송 녹음 응시자의 출결을 관리하고,<br />
-                <span className="font-medium text-blue-600">평가 대기 목록</span>에서 제출된 녹음 파일을 확인하여 평가를 진행할 수 있습니다.
+                <span className="font-medium text-purple-600">녹음 응시/교육 신청자 목록 :</span> 기내방송 녹음 응시자/교육 신청자의 출결 관리<br />
+                <span className="font-medium text-blue-600">평가 대기 목록 :</span> 제출된 녹음 파일을 확인하여 평가를 진행
               </p>
             </div>
           </div>
@@ -1775,7 +2348,161 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             </CardContent>
           </Card>
 
-          
+          {/* 교육 신청자 목록 카드 */}
+          <Card className="mb-4 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+            <CardHeader className="bg-gray-50/80 rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                  <User className="w-5 h-5 text-indigo-600" />
+                  교육 신청자 목록
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Select value={selectedEducationDate || ""} onValueChange={async (v) => { setSelectedEducationDate(v); await loadEducationApplicants(v); }}>
+                    <SelectTrigger className="w-48 h-9 px-2">
+                      <SelectValue placeholder={loadingEducationApplicants ? "로딩 중..." : "날짜 선택"}>
+                        {selectedEducationDate ? formatDisplayDate(selectedEducationDate) : (loadingEducationApplicants ? "로딩 중..." : "날짜 선택")}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {educationDates.length === 0 && loadingEducationApplicants ? (
+                        <div className="p-2 text-sm text-gray-500">날짜 로딩 중...</div>
+                      ) : educationDates.length === 0 ? (
+                        <div className="p-2 text-sm text-gray-500">신청 기록이 없습니다</div>
+                      ) : (
+                        educationDates.map((d) => (
+                          <SelectItem key={`edu-${d}`} value={d}>{formatDisplayDate(d)}</SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" size="sm" onClick={async () => { await loadEducationApplicants(selectedEducationDate || undefined); }}>
+                    <RefreshCw className="w-3 h-3 mr-1" /> Update
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-3">
+              {loadingEducationApplicants ? (
+                <div className="text-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-3"></div>
+                  <p className="text-gray-600">교육 신청자 목록을 불러오는 중입니다...</p>
+                </div>
+              ) : educationSessions.length === 0 ? (
+                <div className="text-center py-6 text-gray-500">교육 세션이 없습니다.</div>
+              ) : (
+                <div className="grid grid-cols-4 gap-3 max-h-96 overflow-y-auto">
+                  {educationSessions.map((session, index) => (
+                    <div key={`${session.language}-${session.classType}-${session.sessionNumber}`} className="border rounded-lg p-3 bg-gray-50 hover:bg-gray-100 transition-colors">
+                      {/* 세션 헤더 */}
+                      <div className="mb-2">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center">
+                            <span className="text-xs font-bold text-indigo-600">{session.sessionNumber}차수</span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {session.applicants.length}/{session.capacity}
+                          </div>
+                        </div>
+                        <div className="text-xs font-semibold text-gray-900 mb-1">
+                          {session.language} • {session.classType}
+                        </div>
+                        <div className="text-xs text-gray-600 mb-2">
+                          {session.slotTime}
+                        </div>
+                        
+                        {/* 폐강 알림 버튼 - 소규모 교육에만 표시 (모바일) */}
+                        {session.classType === '소규모' && session.applicants.length > 0 && (
+                          <button
+                            onClick={() => handleCancellationNotification(session)}
+                            className="w-full px-2 py-1 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors duration-200 hover:text-red-700 mb-2"
+                          >
+                            폐강 알림
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 신청자 목록 (간소화) */}
+                      {session.applicants.length > 0 ? (
+                        <div className="space-y-1">
+                          {session.applicants.slice(0, 3).map((applicant: any, appIndex: number) => (
+                            <div key={`${applicant.employeeId}-${appIndex}`} className="bg-white rounded p-1">
+                              <div className="flex items-center gap-1 text-xs">
+                                {/* 체크인 상태에 따른 체크 표시 */}
+                                <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                                  applicant.isCheckedIn 
+                                    ? 'bg-green-100' 
+                                    : 'bg-gray-100'
+                                }`}>
+                                  {applicant.isCheckedIn && (
+                                    <span className="text-xs text-green-600">✓</span>
+                                  )}
+                                </div>
+                                <div className="truncate flex-1">
+                                  <div className="font-medium text-gray-900 truncate">
+                                    {applicant.name}
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              {/* 1:1 교육인 경우 Google Meet 버튼 표시 */}
+                              {session.classType === '1:1' && (
+                                <div className="mt-1 flex gap-1">
+                                  {applicant.googleMeetLink ? (
+                                    <button
+                                      onClick={() => window.open(applicant.googleMeetLink, '_blank')}
+                                      className="flex-1 bg-green-500 hover:bg-green-600 text-white text-xs py-1 px-2 rounded transition-colors flex items-center justify-center gap-1"
+                                    >
+                                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M15 12h2c0-1.1.9-2 2-2V8c0-1.1-.9-2-2-2h-2v6zM9 12V6H7c-1.1 0-2 .9-2 2v2c1.1 0 2 .9 2 2z"/>
+                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+                                      </svg>
+                                      Meet 입장
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => generateGoogleMeet(applicant.applicationId, applicant.name)}
+                                      disabled={generatingMeet[applicant.applicationId]}
+                                      className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white text-xs py-1 px-2 rounded transition-colors flex items-center justify-center gap-1"
+                                    >
+                                      {generatingMeet[applicant.applicationId] ? (
+                                        <>
+                                          <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                                          생성중...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                          </svg>
+                                          Meet 생성
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {session.applicants.length > 3 && (
+                            <div className="text-xs text-gray-500 text-center">
+                              +{session.applicants.length - 3}명 더
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-center py-2 text-gray-400 text-xs">
+                          신청자 없음
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-3 text-sm text-gray-500 text-center">
+                {selectedEducationDate ? formatDisplayDate(selectedEducationDate) : '오늘'} · 총 {educationSessions.length}개 세션
+              </div>
+            </CardContent>
+          </Card>
 
           <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
             <CardHeader className="bg-gray-50/80">
@@ -1822,6 +2549,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       <SelectItem value="all">모든 상태</SelectItem>
                       <SelectItem value="pending">평가 대기</SelectItem>
                       <SelectItem value="review_requested">검토 요청</SelectItem>
+                      <SelectItem value="re_evaluation">재평가 대기</SelectItem>
                     </SelectContent>
                   </Select>
                   {(languageFilter !== "all" || statusFilter !== "all" || searchTerm) && (
@@ -2101,12 +2829,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
 
   // CardHeader에서 사용할 언어별 총점 계산 함수 추가
   function getLanguageTotalScore(lang: "korean" | "english") {
-    // calculateCategoryScores로 산출된 카테고리 점수(기본값 포함)를 사용해 합산
-    const categoryScores = calculateCategoryScores();
-    const prefix = lang === "korean" ? "korean-" : "english-";
-    return Object.entries(categoryScores)
-      .filter(([key]) => key.startsWith(prefix))
-      .reduce((sum, [, score]) => sum + (Number(score) || 0), 0);
+    // 대분류 합계만 계산 (소항목 제외)
+    const categoryScores = calculateCategoryScoresDetailed();
+    if (lang === "korean") {
+      return ["발음", "억양", "전달력", "음성", "속도"].reduce((sum, cat) => sum + (categoryScores[`korean-${cat}`] || 0), 0);
+    } else {
+      return ["발음_자음", "발음_모음", "억양", "강세", "전달력"].reduce((sum, cat) => sum + (categoryScores[`english-${cat}`] || 0), 0);
+    }
   }
 
   // CardHeader에서 사용할 총점 변수 선언 (return 바로 위에서!)
@@ -2123,7 +2852,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       return null;
     }
 
-    const categoryScores = calculateCategoryScores();
+    const categoryScores = calculateCategoryScoresDetailed();
     const totalScore = getCurrentTotalScore();
     
     console.log("🔍 등급 계산 디버깅:", { categoryScores, totalScore });
@@ -2183,13 +2912,39 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   if (showSummary && selectedCandidate) {
     console.log("🔍 EvaluationSummary 렌더링 조건 만족:", { showSummary, selectedCandidate })
     
-    const categoryScores = calculateCategoryScores();
-    const koreanTotalScore = Object.entries(categoryScores)
-      .filter(([key]) => key.startsWith("korean-"))
-      .reduce((sum, [, score]) => sum + score, 0);
-    const englishTotalScore = Object.entries(categoryScores)
-      .filter(([key]) => key.startsWith("english-"))
-      .reduce((sum, [, score]) => sum + score, 0);
+    const categoryScores = calculateCategoryScoresDetailed();
+    // 언어별 총점은 대분류 합계만 사용 (소항목 제외)
+    // categoryScores의 대분류 값들은 이미 소항목들의 합계이므로 그대로 사용
+    const koreanTotalScore = selectedCandidate?.language === "korean-english" 
+      ? ["발음", "억양", "전달력", "음성", "속도"].reduce((sum, cat) => sum + (categoryScores[`korean-${cat}`] || 0), 0)
+      : getCurrentTotalScore();
+    const englishTotalScore = selectedCandidate?.language === "korean-english"
+      ? ["발음_자음", "발음_모음", "억양", "강세", "전달력"].reduce((sum, cat) => sum + (categoryScores[`english-${cat}`] || 0), 0)
+      : 0;
+    
+    console.log("🔍 [DEBUG] categoryScores 전체 내용:", categoryScores);
+    console.log("🔍 [DEBUG] categoryScores 키 목록:", Object.keys(categoryScores));
+    console.log("🔍 [DEBUG] 언어별 총점 계산:", {
+      koreanCategories: ["발음", "억양", "전달력", "음성", "속도"],
+      koreanScores: ["발음", "억양", "전달력", "음성", "속도"].map(cat => ({ cat, score: categoryScores[`korean-${cat}`] || 0 })),
+      koreanTotalScore,
+      englishCategories: ["발음_자음", "발음_모음", "억양", "강세", "전달력"],
+      englishScores: ["발음_자음", "발음_모음", "억양", "강세", "전달력"].map(cat => ({ cat, score: categoryScores[`english-${cat}`] || 0 })),
+      englishTotalScore,
+      totalScore: getCurrentTotalScore(),
+      expectedKoreanTotal: 15 + 17 + 16 + 16 + 16, // 스크린샷 기준 예상값
+      expectedEnglishTotal: 15 + 16 + 16 + 16 + 16  // 스크린샷 기준 예상값
+    });
+    
+    // 더 자세한 디버깅을 위해 개별 값들도 출력
+    console.log("🔍 [DEBUG] 개별 대분류 점수:");
+    ["발음", "억양", "전달력", "음성", "속도"].forEach(cat => {
+      console.log(`  korean-${cat}: ${categoryScores[`korean-${cat}`] || 0}`);
+    });
+    ["발음_자음", "발음_모음", "억양", "강세", "전달력"].forEach(cat => {
+      console.log(`  english-${cat}: ${categoryScores[`english-${cat}`] || 0}`);
+    });
+    console.log(`🔍 [DEBUG] 계산된 총점: koreanTotalScore=${koreanTotalScore}, englishTotalScore=${englishTotalScore}`);
     
     const evaluationResult = {
       ...selectedCandidate,
@@ -2206,7 +2961,15 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       evaluatedBy: userInfo?.name || authenticatedUser?.name || '교관',
     }
 
-    console.log("📊 evaluationResult 생성 완료:", evaluationResult)
+    console.log("📊 evaluationResult 생성 완료:", {
+      id: (evaluationResult as any).id,
+      language: (evaluationResult as any).language,
+      totalScore: (evaluationResult as any).totalScore,
+      koreanTotalScore: (evaluationResult as any).koreanTotalScore,
+      englishTotalScore: (evaluationResult as any).englishTotalScore,
+      scoresCount: Object.keys((evaluationResult as any).scores || {}).length,
+      categoryScoresCount: Object.keys((evaluationResult as any).categoryScores || {}).length
+    })
 
     return (
       <div className="p-6">
@@ -2214,7 +2977,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         <EvaluationSummary
           isOpen={showSummary}
           onClose={handleEvaluationComplete}
-          evaluationResult={evaluationResult}
+          evaluationResult={evaluationResult as any}
           onSubmit={handleSubmitEvaluation}
           onRequestReview={handleRequestReview}
           authenticatedUser={authenticatedUser}
@@ -2307,6 +3070,131 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           </CardContent>
         </Card>
         )}
+
+        {/* 교육 신청자 목록 카드 */}
+        {!selectedCandidate && (
+        <Card className="mb-4 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+          <CardHeader className="pb-2 bg-gray-50/80 rounded-t-2xl">
+            <CardTitle className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <User className="w-5 h-5 text-indigo-600" />
+              교육 신청자 목록
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Select value={selectedEducationDate || undefined} onValueChange={async (v) => { setSelectedEducationDate(v); await loadEducationApplicants(v); }}>
+                  <SelectTrigger className="w-48 h-8">
+                    <SelectValue placeholder="날짜 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {educationDates.map((d) => (
+                      <SelectItem key={`edu-${d}`} value={d}>{d}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" onClick={async () => { await loadEducationApplicants(selectedEducationDate || undefined); }}>
+                  <RefreshCw className="w-3 h-3 mr-1" /> 업데이트
+                </Button>
+              </div>
+              <div className="text-sm text-gray-500">총 {educationSessions.length}개 세션</div>
+            </div>
+            {loadingEducationApplicants ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+                <span className="text-gray-600">교육 신청자 목록을 불러오는 중...</span>
+              </div>
+            ) : educationSessions.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">교육 세션이 없습니다</div>
+            ) : (
+              <div className="grid gap-3 max-h-96 overflow-y-auto">
+                {educationSessions.map((session, index) => (
+                  <div key={`${session.language}-${session.classType}-${session.sessionNumber}`} className="border rounded-lg p-4 bg-gray-50 hover:bg-gray-100 transition-colors">
+                    {/* 세션 헤더 */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
+                          <span className="text-sm font-bold text-indigo-600">{session.sessionNumber}차수</span>
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900">
+                            {session.language} • {session.classType}
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            {session.slotTime}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="text-right">
+                          <div className="text-sm font-medium text-gray-900">
+                            {session.applicants.length}/{session.capacity}명
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {session.applicants.length === 0 ? '신청자 없음' :
+                             session.applicants.length === session.capacity ? '정원 마감' : '신청 가능'}
+                          </div>
+                        </div>
+                        
+                        {/* 폐강 알림 버튼 - 소규모 교육에만 표시 */}
+                        {(() => {
+                          console.log(`🔍 [폐강 알림 버튼 체크] ${session.language} ${session.classType} ${session.sessionNumber}차수:`, {
+                            classType: session.classType,
+                            classTypeCheck: session.classType === '소규모',
+                            applicantsLength: session.applicants.length,
+                            applicantsCheck: session.applicants.length > 0,
+                            shouldShow: session.classType === '소규모' && session.applicants.length > 0
+                          });
+                          return null;
+                        })()}
+                        {session.classType === '소규모' && session.applicants.length > 0 && (
+                          <button
+                            onClick={() => handleCancellationNotification(session)}
+                            className="px-3 py-1 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors duration-200 hover:text-red-700"
+                          >
+                            폐강 알림
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 신청자 목록 */}
+                    {session.applicants.length > 0 ? (
+                      <div className="grid gap-2">
+                        {session.applicants.map((applicant: any, appIndex: number) => (
+                          <div key={`${applicant.employeeId}-${appIndex}`} className="flex items-center justify-between p-2 bg-white rounded border">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
+                                <span className="text-xs font-medium text-green-600">✓</span>
+                              </div>
+                              <div>
+                                <div className="text-sm font-medium text-gray-900">
+                                  {applicant.name}
+                                </div>
+                                <div className="text-xs text-gray-600">
+                                  {applicant.employeeId}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-xs text-green-600 font-medium">
+                              {applicant.status}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-3 text-gray-400 text-sm">
+                        신청자가 없습니다
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        )}
+
         {/* 헤더: 좌우 분할, 오른쪽 하단에 총점 카드 */}
         <div className="mb-6">
           <div className="flex items-center gap-4 mb-2">
@@ -2410,10 +3298,12 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   <div className={`text-4xl font-bold ${
                     currentTotalScore < 80 ? 'text-red-600' : 'text-purple-600'
                   }`}>{currentTotalScore}</div>
-                  <div className="text-sm text-gray-500">/ 100점</div>
+                  <div className="text-sm text-gray-500">/ 100점            </div>
                 </CardContent>
               </Card>
             )}
+
+
           </div>
         </div>
 

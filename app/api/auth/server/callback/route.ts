@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { employeeDatabase } from "@/lib/employee-database"
+import { employeeDB } from "@/lib/employee-database"
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
     console.log("✅ User info received:", { email: googleUser.email, name: googleUser.name })
 
     // 직원 정보 조회
-    const employee = employeeDatabase.findByEmail(googleUser.email)
+    const employee = employeeDB.findByEmail(googleUser.email)
     console.log("👤 Employee lookup:", { found: !!employee, email: googleUser.email })
 
     // 사용자 세션 데이터 생성

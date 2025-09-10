@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Play, Upload, CheckCircle, Pause, AlertCircle } from "lucide-react"
@@ -27,6 +27,35 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
   const [audioElements, setAudioElements] = useState<{ [key: string]: HTMLAudioElement }>({})
   const [uploadStatus, setUploadStatus] = useState<string>("")
 
+  // 컴포넌트 마운트 시 모든 녹음 파일을 미리 로딩
+  useEffect(() => {
+    const preloadAudios = async () => {
+      console.log("🎵 [preloadAudios] 녹음 파일 미리 로딩 시작")
+      const newAudioElements: { [key: string]: HTMLAudioElement } = {}
+      
+      for (const [key, recording] of Object.entries(recordings)) {
+        if (recording) {
+          try {
+            const audio = new Audio(URL.createObjectURL(recording))
+            audio.onended = () => setCurrentlyPlaying(null)
+            audio.onerror = (error) => {
+              console.error(`🎵 [preloadAudios] 오디오 로딩 오류: ${key}`, error)
+            }
+            newAudioElements[key] = audio
+            console.log(`🎵 [preloadAudios] 오디오 로딩 완료: ${key}`)
+          } catch (error) {
+            console.error(`🎵 [preloadAudios] 오디오 생성 실패: ${key}`, error)
+          }
+        }
+      }
+      
+      setAudioElements(newAudioElements)
+      console.log("🎵 [preloadAudios] 모든 오디오 로딩 완료")
+    }
+    
+    preloadAudios()
+  }, [recordings])
+
   const getLanguageDisplay = (language: string) => {
     const displays: { [key: string]: string } = {
       "korean-english": "한/영",
@@ -37,28 +66,42 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
   }
 
   const playRecording = (key: string) => {
-    const recording = recordings[key]
-    if (!recording) return
+    console.log(`🎵 [playRecording] 재생 버튼 클릭: ${key}`)
+    
+    // 오디오가 로딩되지 않았으면 무시
+    if (!audioElements[key]) {
+      console.warn(`🎵 [playRecording] 오디오가 로딩되지 않음: ${key}`)
+      return
+    }
 
     // 현재 재생 중인 오디오 정지
     if (currentlyPlaying && audioElements[currentlyPlaying]) {
       audioElements[currentlyPlaying].pause()
     }
 
+    // 같은 녹음이 재생 중이면 정지
     if (currentlyPlaying === key) {
       setCurrentlyPlaying(null)
       return
     }
 
-    // 새 오디오 재생
-    if (!audioElements[key]) {
-      const audio = new Audio(URL.createObjectURL(recording))
-      audio.onended = () => setCurrentlyPlaying(null)
-      setAudioElements((prev) => ({ ...prev, [key]: audio }))
+    // 미리 로딩된 오디오 재생
+    try {
+      console.log(`🎵 [playRecording] 즉시 재생 시작: ${key}`)
+      const playPromise = audioElements[key].play()
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            console.log(`🎵 [playRecording] 재생 성공: ${key}`)
+            setCurrentlyPlaying(key)
+          })
+          .catch((error) => {
+            console.error(`🎵 [playRecording] 재생 실패: ${key}`, error)
+          })
+      }
+    } catch (error) {
+      console.error(`🎵 [playRecording] 재생 실패: ${key}`, error)
     }
-
-    audioElements[key]?.play()
-    setCurrentlyPlaying(key)
   }
 
   const stopAllPlayback = () => {
@@ -87,11 +130,40 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
       for (const [key, blob] of Object.entries(recordings)) {
         if (blob) {
           try {
-            const arrayBuffer = await blob.arrayBuffer()
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-            base64Recordings[key] = `data:audio/webm;base64,${base64}`
+            // 🔥 FileReader API를 사용한 안전한 Base64 변환 (큰 파일 지원)
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => {
+                const result = reader.result as string
+                resolve(result)
+              }
+              reader.onerror = () => reject(reader.error)
+              reader.readAsDataURL(blob)
+            })
+            
+            base64Recordings[key] = base64
+            console.log(`✅ 큰 파일 Base64 변환 성공 (${key}): ${(blob.size / 1024).toFixed(1)}KB, 시간: ${blob.size > 1024 * 1024 ? '1MB+' : 'normal'}`)
           } catch (error) {
             console.error(`Blob 변환 실패 (${key}):`, error)
+            // 폴백: 청크 방식으로 재시도
+            try {
+              console.log(`🔄 청크 방식으로 재시도 중... (${key})`)
+              const arrayBuffer = await blob.arrayBuffer()
+              const bytes = new Uint8Array(arrayBuffer)
+              let binary = ''
+              const chunkSize = 8192 // 8KB 청크로 처리
+              
+              for (let i = 0; i < bytes.length; i += chunkSize) {
+                const chunk = bytes.slice(i, i + chunkSize)
+                binary += String.fromCharCode.apply(null, Array.from(chunk))
+              }
+              
+              const base64 = btoa(binary)
+              base64Recordings[key] = `data:audio/webm;base64,${base64}`
+              console.log(`✅ 청크 방식 Base64 변환 성공 (${key})`)
+            } catch (fallbackError) {
+              console.error(`청크 방식도 실패 (${key}):`, fallbackError)
+            }
           }
         }
       }
@@ -105,7 +177,6 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
       // 제출 정보 서버에 전송
       const submissionData = {
         ...userInfo,
-        id: `submission-${Date.now()}-${Math.random()}`,
         submittedAt: new Date().toISOString(),
         recordings: base64Recordings,
         recordingCount: validRecordings.length,
@@ -140,17 +211,17 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
           existingSubmissions.splice(0, existingSubmissions.length - 49)
         }
         
-        // Base64 데이터를 제외한 경량화된 데이터만 저장
-        const lightweightSubmission = {
-          id: result.evaluationId || submissionData.id,
-          name: submissionData.name,
-          employeeId: submissionData.employeeId,
-          language: submissionData.language,
-          category: submissionData.category,
-          submittedAt: submissionData.submittedAt,
-          recordingCount: submissionData.recordingCount,
-          status: submissionData.status,
-        }
+                            // Base64 데이터를 제외한 경량화된 데이터만 저장
+                    const lightweightSubmission = {
+                      id: result.evaluationId, // 실제 데이터베이스 ID 사용
+                      name: submissionData.name,
+                      employeeId: submissionData.employeeId,
+                      language: submissionData.language,
+                      category: submissionData.category,
+                      submittedAt: submissionData.submittedAt,
+                      recordingCount: submissionData.recordingCount,
+                      status: submissionData.status,
+                    }
         console.log('✅ [handleSubmit] lightweightSubmission 저장:', lightweightSubmission)
         
         existingSubmissions.push(lightweightSubmission)
@@ -161,6 +232,7 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
         // localStorage 저장 실패해도 업로드는 성공했으므로 무시
       }
 
+      setIsSubmitted(true)
       setTimeout(() => onSubmit(), 2000)
     } catch (error) {
       console.error("업로드 오류:", error)
