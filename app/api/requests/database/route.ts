@@ -13,7 +13,7 @@ interface RequestData {
   details: {
     // 교육용 필드
     language?: 'korean-english' | 'japanese' | 'chinese'
-    mode?: '1:1' | 'small'
+    mode?: '1:1' | 'small' | 'small-group'
     category?: '신규' | '재자격' | '공통' | 'PUS'
     // 녹음용 필드  
     recordingLanguage?: 'korean-english' | 'japanese' | 'chinese'
@@ -152,16 +152,29 @@ export async function POST(request: NextRequest) {
       console.log('👤 [Database] 새 사용자 생성:', user.employeeId)
     }
 
+    // 관리자가 시간 제한을 비활성화했는지 확인
+    let timeRestrictionsDisabled = false
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/admin/time-restrictions`)
+      const result = await response.json()
+      if (result.success) {
+        timeRestrictionsDisabled = result.disabled
+      }
+    } catch (error) {
+      console.warn('시간 제한 상태 확인 실패:', error)
+    }
+
     // 신청 시간 제한 체크: 교육/녹음 날짜 전전날 오후 2시까지만 신청 가능
-    const scheduleDate = new Date(date)
-    const twoDaysBefore = new Date(scheduleDate)
-    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
-    twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
-    
-    const now = new Date()
-    
-    if (now > twoDaysBefore) {
-      return NextResponse.json(
+    if (!timeRestrictionsDisabled) {
+      const scheduleDate = new Date(date)
+      const twoDaysBefore = new Date(scheduleDate)
+      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+      twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+      
+      const now = new Date()
+      
+      if (now > twoDaysBefore) {
+        return NextResponse.json(
         { 
           error: '신청기간만료',
           message: '신청 기간이 만료되었습니다.',
@@ -170,6 +183,9 @@ export async function POST(request: NextRequest) {
         },
         { status: 400 }
       )
+      }
+    } else {
+      console.log('🔧 [Admin] 시간 제한이 비활성화되어 있어 신청 시간 제한 무시')
     }
 
     // 월 추출
@@ -187,14 +203,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 중복 신청 검사
+    // 중복 신청 검사 - 카테고리도 고려
+    const category = details?.category || '공통' // 카테고리 추출
     const existingApplication = await prisma.scheduleApplication.findFirst({
       where: {
         employeeId,
         schedule: {
           date,
           type: type === 'recording' ? 'recording' : getScheduleType(details),
-          classType: type === 'recording' ? 'recording' : getClassType(details)
+          classType: type === 'recording' ? 'recording' : getClassType(details),
+          category: category // 🔧 [FIX] 카테고리별로 중복 검사
         },
         slot,
         status: 'ACTIVE'
@@ -259,24 +277,55 @@ export async function POST(request: NextRequest) {
     }
 
     // 해당 스케줄 찾기 또는 생성
+    // UI에서 'small-group'이 넘어오는 경우 DB 스키마의 'small'로 정규화
+    const normalizedClassType = (type === 'recording') ? 'recording' : normalizeClassType(details)
+    const normalizedScheduleType = (type === 'recording') ? 'recording' : getScheduleType(details)
+    // category는 위에서 이미 선언됨
+
+    console.log('🔍 [Database API] 스케줄 찾기:', {
+      date,
+      type: normalizedScheduleType,
+      classType: normalizedClassType,
+      category: category,
+      originalDetails: details
+    })
+
     let schedule = await prisma.schedule.findFirst({
       where: {
         date,
-        type: type === 'recording' ? 'recording' : getScheduleType(details),
-        classType: type === 'recording' ? 'recording' : getClassType(details)
+        type: normalizedScheduleType,
+        classType: normalizedClassType,
+        category: category // 카테고리별로 스케줄 구분
       }
     })
 
+    console.log('📋 [Database API] 찾은 스케줄:', schedule ? {
+      id: schedule.id,
+      date: schedule.date,
+      type: schedule.type,
+      classType: schedule.classType,
+      category: schedule.category,
+      classroom: schedule.classroom
+    } : 'null')
+
     if (!schedule) {
       // 스케줄 생성 (동적)
+      console.log('🆕 [Database API] 새 스케줄 생성:', {
+        date,
+        type: normalizedScheduleType,
+        classType: normalizedClassType,
+        category: category
+      })
+      
       schedule = await prisma.schedule.create({
         data: {
           month,
           date,
-          type: type === 'recording' ? 'recording' : getScheduleType(details),
-          classType: type === 'recording' ? 'recording' : getClassType(details),
+          type: normalizedScheduleType,
+          classType: normalizedClassType,
+          category: category, // 카테고리 포함
           slots: type === 'recording' ? [1,2,3,4,5,6,7,8] : [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
-          capacity: getCapacity(type, details),
+          capacity: getCapacity(type, { ...details, mode: normalizedClassType }),
           visible: true
         }
       })
@@ -322,6 +371,20 @@ export async function POST(request: NextRequest) {
     }
 
     // 신청 생성
+    console.log('📝 [Database API] 신청 생성:', {
+      scheduleId: schedule.id,
+      employeeId,
+      slot,
+      scheduleInfo: {
+        date: schedule.date,
+        type: schedule.type,
+        classType: schedule.classType,
+        category: schedule.category,
+        classroom: schedule.classroom
+      },
+      details: { type, ...details, notes }
+    })
+
     const application = await prisma.scheduleApplication.create({
       data: {
         scheduleId: schedule.id,
@@ -336,7 +399,7 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    console.log(`✅ [Database] 신청 완료: ${application.id}`)
+    console.log(`✅ [Database] 신청 완료: ${application.id} → 스케줄 ${schedule.id} (${schedule.category})`)
 
     return NextResponse.json({
       success: true,
@@ -491,25 +554,41 @@ export async function DELETE(request: NextRequest) {
       )
     }
 
+    // 관리자가 시간 제한을 비활성화했는지 확인
+    let timeRestrictionsDisabled = false
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/admin/time-restrictions`)
+      const result = await response.json()
+      if (result.success) {
+        timeRestrictionsDisabled = result.disabled
+      }
+    } catch (error) {
+      console.warn('시간 제한 상태 확인 실패:', error)
+    }
+
     // 취소 시간 제한 체크: 교육/녹음 날짜 이틀 전 오후 2시까지만 취소 가능
-    const scheduleDate = new Date(application.schedule.date)
-    const twoDaysBefore = new Date(scheduleDate)
-    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
-    twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
-    
-    const now = new Date()
-    
-    if (now > twoDaysBefore) {
-      return NextResponse.json(
-        { 
-          error: '기간만료', 
-          message: '취소 기간이 만료되었습니다.',
-          contactRequired: true,
-          scheduleDate: application.schedule.date,
-          deadline: twoDaysBefore.toISOString()
-        },
-        { status: 400 }
-      )
+    if (!timeRestrictionsDisabled) {
+      const scheduleDate = new Date(application.schedule.date)
+      const twoDaysBefore = new Date(scheduleDate)
+      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+      twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+      
+      const now = new Date()
+      
+      if (now > twoDaysBefore) {
+        return NextResponse.json(
+          { 
+            error: '기간만료', 
+            message: '취소 기간이 만료되었습니다.',
+            contactRequired: true,
+            scheduleDate: application.schedule.date,
+            deadline: twoDaysBefore.toISOString()
+          },
+          { status: 400 }
+        )
+      }
+    } else {
+      console.log('🔧 [Admin] 시간 제한이 비활성화되어 있어 취소 시간 제한 무시')
     }
 
     // 신청 취소 (완전 삭제)
@@ -544,8 +623,10 @@ function getScheduleType(details: any): string {
 }
 
 function getClassType(details: any): string {
-  if (details.mode) {
-    return details.mode
+  // 🔧 [FIX] educationType 필드도 확인 (모바일에서 전송)
+  const mode = details.mode || details.educationType
+  if (mode) {
+    return mode === 'small-group' ? 'small' : mode
   }
   return '1:1' // 기본값
 }
@@ -555,10 +636,22 @@ function getCapacity(type: string, details: any): number {
     return 8 // 녹음은 8명
   }
   
-  if (details.mode === 'small') {
-    return 4 // 소그룹은 4명
+  const mode = details.mode === 'small-group' ? 'small' : details.mode
+  if (mode === 'small') {
+    // PUS 카테고리는 3명, 나머지는 4명
+    return details.category === 'PUS' ? 3 : 4
   }
   
   return 1 // 1:1은 1명
+}
+
+function normalizeClassType(details: any): '1:1' | 'small' | 'recording' {
+  if (!details) return '1:1'
+  
+  // 🔧 [FIX] educationType 필드도 확인 (모바일에서 전송)
+  const mode = details.mode || details.educationType
+  if (mode === 'small-group' || mode === 'small') return 'small'
+  if (mode === '1:1') return '1:1'
+  return '1:1'
 }
 

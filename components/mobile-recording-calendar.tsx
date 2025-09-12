@@ -460,7 +460,7 @@ ${guidance}`,
     setSelectedRecordingSlot(null)
   }
 
-  // 가용성 확인 - 교육과 녹음 API 모두 호출
+  // 가용성 확인 - 녹음 전역 가용성(DB) 사용
   const checkAvailability = async (date: string) => {
     if (!authenticatedUser) return null
     
@@ -471,71 +471,68 @@ ${guidance}`,
     }
     
     try {
-      let currentMonth: string
-      if (typeof date === 'string') {
-        if (date.includes('-')) {
-          currentMonth = date.slice(0, 7)
-        } else {
-          const dateObj = new Date(date)
-          if (isNaN(dateObj.getTime())) {
-            console.error('유효하지 않은 날짜 형식:', date)
-            return null
-          }
-          currentMonth = dateObj.toISOString().slice(0, 7)
-        }
-      } else {
-        console.error('날짜가 없거나 문자열이 아님:', date)
-        return null
-      }
-      
+      // userInfo에서 employeeId 우선 사용
       const employeeId = userInfo.employeeId || 
                          authenticatedUser.email?.split('@')[0] || 
                          'TEMP001'
       
-      // 간단한 가용성 API 사용 (교육 + 녹음 통합)
-      const simpleResponse = await fetch(`/api/requests/availability-simple?date=${date}`)
-      
-      if (simpleResponse.ok) {
-        const simpleData = await simpleResponse.json()
-        console.log(`🔍 ${date} 통합 가용성 확인:`, simpleData)
-        
-        // 언어 제한은 기본값으로 설정 (기존 API 호출 제거)
-        const languageRestrictions: any[] = []
-        
-        const combinedData = {
-          success: true,
-          date,
-          slotAvailability: simpleData.educationAvailability,
-          recordingSlotAvailability: simpleData.recordingAvailability,
-          languageRestrictions,
-          totalApplications: simpleData.totalApplications
-        }
-        
-        console.log('🔍 [모바일 녹음 컴포넌트] 교육 가용성 데이터 확인:', {
-          educationAvailability: simpleData.educationAvailability?.slice(0, 3),
-          recordingAvailability: simpleData.recordingAvailability?.slice(0, 3)
-        })
-        
-        // 캐시에 저장
-        setAvailabilityCache(prev => {
-          const newCache = new Map(prev)
-          newCache.set(cacheKey, combinedData)
-          return newCache
-        })
-        
-        // 언어별 제한 사항 설정
-        const restrictions: Record<string, boolean> = {}
-        languageRestrictions.forEach((restriction: any) => {
-          restrictions[restriction.language] = restriction.hasExistingApplication
-        })
-        setUserLanguageRestrictions(restrictions)
-        
-        return combinedData
+      // 녹음 가용성 API 호출 (DB 기반)
+      const recordingResponse = await fetch(`/api/requests/recording-availability?date=${date}&employeeId=${employeeId}`)
+      if (!recordingResponse.ok) {
+        console.warn('⚠️ [모바일 녹음] recording-availability 응답 오류:', recordingResponse.status)
+        return null
       }
+      const recordingData = await recordingResponse.json()
+      console.log(`🔍 ${date} 녹음 가용성(DB):`, recordingData)
+      
+      const combinedData = {
+        success: true,
+        date,
+        recordingSlotAvailability: recordingData.slotAvailability,
+        recordingHasExistingApplication: recordingData.hasExistingApplication,
+        totalApplications: recordingData.totalApplications || 0
+      }
+      
+      setAvailabilityCache(prev => {
+        const newCache = new Map(prev)
+        newCache.set(cacheKey, combinedData)
+        return newCache
+      })
+      
+      return combinedData
     } catch (error) {
       console.error('가용성 확인 실패:', error)
+      return null
     }
-    return null
+  }
+
+  // 월 단위 가용성 미리 로드 (Bulk API)
+  const preloadMonthAvailability = async () => {
+    if (!authenticatedUser) return
+    try {
+      const employeeId = userInfo.employeeId || authenticatedUser.email?.split('@')[0] || 'TEMP001'
+      const res = await fetch(`/api/requests/bulk-availability?employeeId=${employeeId}`)
+      if (!res.ok) {
+        console.warn('⚠️ [모바일 녹음] Bulk API 실패, 건너뜀')
+        return
+      }
+      const bulkData = await res.json()
+      if (bulkData.success && bulkData.data) {
+        const newCache = new Map(availabilityCache)
+        Object.entries(bulkData.data as Record<string, any>).forEach(([date, dateData]: [string, any]) => {
+          newCache.set(date, {
+            recordingSlotAvailability: dateData.recording?.slots || [],
+            recordingHasExistingApplication: dateData.recording?.hasExistingApplication || false,
+            fromBulkApi: true,
+            lastUpdated: dateData.lastUpdated
+          })
+        })
+        setAvailabilityCache(newCache)
+        console.log('💾 [모바일 녹음] Bulk 데이터 캐시 저장 완료')
+      }
+    } catch (e) {
+      console.warn('⚠️ [모바일 녹음] Bulk API 에러, 건너뜀', e)
+    }
   }
 
   // 캘린더 생성 (useMemo로 최적화)

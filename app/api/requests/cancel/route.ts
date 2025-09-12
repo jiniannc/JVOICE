@@ -15,23 +15,39 @@ export async function POST(req: NextRequest) {
 
     console.log(`🗑️ [취소 요청] type: ${type}, date: ${date}, slot: ${slot}, employeeId: ${employeeId}`)
 
+    // 관리자가 시간 제한을 비활성화했는지 확인
+    let timeRestrictionsDisabled = false
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/admin/time-restrictions`)
+      const result = await response.json()
+      if (result.success) {
+        timeRestrictionsDisabled = result.disabled
+      }
+    } catch (error) {
+      console.warn('시간 제한 상태 확인 실패:', error)
+    }
+
     // 취소 시간 제한 체크: 교육/녹음 날짜 이틀 전 오후 2시까지만 취소 가능
-    const scheduleDate = new Date(date)
-    const twoDaysBefore = new Date(scheduleDate)
-    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
-    twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
-    
-    const now = new Date()
-    
-    if (now > twoDaysBefore) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '기간만료',
-        message: '취소 기간이 만료되었습니다.',
-        contactRequired: true,
-        scheduleDate: date,
-        deadline: twoDaysBefore.toISOString()
-      }, { status: 400 })
+    if (!timeRestrictionsDisabled) {
+      const scheduleDate = new Date(date)
+      const twoDaysBefore = new Date(scheduleDate)
+      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+      twoDaysBefore.setHours(14, 0, 0, 0) // 오후 2시로 설정
+      
+      const now = new Date()
+      
+      if (now > twoDaysBefore) {
+        return NextResponse.json({ 
+          success: false, 
+          error: '기간만료',
+          message: '취소 기간이 만료되었습니다.',
+          contactRequired: true,
+          scheduleDate: date,
+          deadline: twoDaysBefore.toISOString()
+        }, { status: 400 })
+      }
+    } else {
+      console.log('🔧 [Admin] 시간 제한이 비활성화되어 있어 취소 시간 제한 무시')
     }
 
     // 1. Database에서 먼저 취소 시도

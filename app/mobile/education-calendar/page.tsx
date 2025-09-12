@@ -257,7 +257,7 @@ export default function MobileEducationCalendarPage() {
     }
   }
 
-  // 데스크톱과 동일한 가용성 확인 로직
+  // 데스크톱과 동일한 가용성 확인 로직 (DB 기반)
   const checkAvailability = async (date: string) => {
     if (!authenticatedUser) return null
     
@@ -268,60 +268,25 @@ export default function MobileEducationCalendarPage() {
     }
 
     try {
-      let currentMonth: string
-      if (typeof date === 'string') {
-        if (date.includes('-')) {
-          currentMonth = date.slice(0, 7)
-        } else {
-          const dateObj = new Date(date)
-          if (isNaN(dateObj.getTime())) {
-            console.error('유효하지 않은 날짜 형식:', date)
-            return null
-          }
-          currentMonth = dateObj.toISOString().slice(0, 7)
-        }
-      } else {
-        console.error('날짜가 없거나 문자열이 아님:', date)
-        return null
+      const employeeId = userInfo.employeeId || authenticatedUser.email?.split('@')[0] || 'TEMP001'
+      const currentMonth = date.slice(0, 7)
+      const res = await fetch(`/api/requests/availability?month=${currentMonth}&date=${date}&employeeId=${employeeId}&email=${authenticatedUser.email}`)
+      if (!res.ok) return null
+      const educationData = await res.json()
+      const combinedData = {
+        success: true,
+        date,
+        slotAvailability: educationData.slotAvailability,
+        languageRestrictions: educationData.languageRestrictions || [],
+        totalApplications: educationData.totalApplications || 0
       }
-      
-      // userInfo에서 employeeId 우선 사용
-      const employeeId = userInfo.employeeId || 
-                         authenticatedUser.email?.split('@')[0] || 
-                         authenticatedUser.email?.split('@')[0] || 
-                         'TEMP001'
-      
-      // 간단한 가용성 API 사용 (교육 + 녹음 통합)
-      // 교육 가용성 API 호출 (기존 API 사용)
-      const educationResponse = await fetch(
-        `/api/requests/availability?month=${currentMonth}&date=${date}&employeeId=${employeeId}&email=${authenticatedUser.email}`
-      )
-      
-      if (educationResponse.ok) {
-        const educationData = await educationResponse.json()
-        console.log(`🔍 ${date} 교육 가용성:`, educationData)
-        
-        const combinedData = {
-          success: true,
-          date,
-          slotAvailability: educationData.slotAvailability,
-          languageRestrictions: educationData.languageRestrictions || [],
-          totalApplications: educationData.totalApplications || 0
-        }
-        
-        setAvailabilityCache(prev => ({
-          ...prev,
-          [cacheKey]: combinedData
-        }))
-        
-        const restrictions: Record<string, boolean> = {}
-        combinedData.languageRestrictions.forEach((restriction: any) => {
-          restrictions[restriction.language] = restriction.hasExistingApplication
-        })
-        setUserLanguageRestrictions(restrictions)
-        
-        return combinedData
-      }
+      setAvailabilityCache(prev => ({ ...prev, [cacheKey]: combinedData }))
+      const restrictions: Record<string, boolean> = {}
+      combinedData.languageRestrictions.forEach((restriction: any) => {
+        restrictions[restriction.language] = restriction.hasExistingApplication
+      })
+      setUserLanguageRestrictions(restrictions)
+      return combinedData
     } catch (error) {
       console.error('가용성 확인 실패:', error)
     }

@@ -187,6 +187,7 @@ model Schedule {
   date        String   // "YYYY-MM-DD"
   type        String   // "korean-english" | "japanese" | "chinese"
   classType   String   // "1:1" | "small"
+  category    String   @default("공통") // "신규" | "재자격" | "공통" | "PUS"
   slots       Json     // [1, 2, 3, 4] - 개설된 슬롯 배열
   capacity    Int      // 슬롯당 최대 인원
   classroom   String?  // "5A" 등
@@ -198,9 +199,10 @@ model Schedule {
   // 관계
   applications ScheduleApplication[]
 
-  @@unique([date, type, classType]) // 중복 방지
+  @@unique([date, type, classType, category]) // 카테고리별 중복 방지
   @@index([month])
   @@index([date, type])
+  @@index([category])
   @@map("schedules")
 }
 

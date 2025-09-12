@@ -17,29 +17,41 @@ export async function GET(request: NextRequest) {
     // 1. 전체 교육 신청 현황 조회
     const educationApplications = await prisma.scheduleApplication.findMany({
       where: {
-        type: 'education',
-        status: 'ACTIVE'
+        status: 'ACTIVE',
+        schedule: {
+          OR: [
+            { classType: '1:1' },
+            { classType: 'small' }
+          ]
+        }
       },
-      select: {
-        date: true,
-        slot: true,
-        language: true,
-        educationType: true,
-        employeeId: true
+      include: {
+        schedule: {
+          select: {
+            type: true,
+            classType: true,
+            category: true
+          }
+        }
       }
     })
 
     // 2. 전체 녹음 신청 현황 조회
     const recordingApplications = await prisma.scheduleApplication.findMany({
       where: {
-        type: 'recording',
-        status: 'ACTIVE'
+        status: 'ACTIVE',
+        schedule: {
+          classType: 'recording'
+        }
       },
-      select: {
-        date: true,
-        slot: true,
-        language: true,
-        employeeId: true
+      include: {
+        schedule: {
+          select: {
+            type: true,
+            classType: true,
+            category: true
+          }
+        }
       }
     })
 

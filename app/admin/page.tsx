@@ -132,9 +132,18 @@ export default function AdminDashboard() {
     setLoadedMonths(months)
   }, [submissions])
 
+  // 컴포넌트 마운트 시 시간 제한 상태 로드
+  useEffect(() => {
+    loadTimeRestrictionsStatus()
+  }, [])
+
   // 필터 및 검색 상태
   // 검색 기능 제거
   const [searchTerm, setSearchTerm] = useState("")
+  
+  // 시간 제한 토글 상태
+  const [timeRestrictionsDisabled, setTimeRestrictionsDisabled] = useState(false)
+  const [timeRestrictionsLoading, setTimeRestrictionsLoading] = useState(false)
   const [searchMode, setSearchMode] = useState<"all" | "monthly">("monthly")
   const [languageFilter, setLanguageFilter] = useState<string>("all")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
@@ -1201,6 +1210,44 @@ export default function AdminDashboard() {
     }
   }
 
+  // 시간 제한 상태 로드
+  const loadTimeRestrictionsStatus = async () => {
+    try {
+      const response = await fetch('/api/admin/time-restrictions')
+      const result = await response.json()
+      if (result.success) {
+        setTimeRestrictionsDisabled(result.disabled)
+      }
+    } catch (error) {
+      console.error('시간 제한 상태 로드 실패:', error)
+    }
+  }
+
+  // 시간 제한 토글
+  const toggleTimeRestrictions = async () => {
+    setTimeRestrictionsLoading(true)
+    try {
+      const response = await fetch('/api/admin/time-restrictions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disabled: !timeRestrictionsDisabled })
+      })
+      const result = await response.json()
+      
+      if (result.success) {
+        setTimeRestrictionsDisabled(result.disabled)
+        alert(result.message)
+      } else {
+        alert('시간 제한 설정 실패: ' + result.error)
+      }
+    } catch (error) {
+      console.error('시간 제한 토글 실패:', error)
+      alert('시간 제한 설정 중 오류가 발생했습니다.')
+    } finally {
+      setTimeRestrictionsLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen p-3">
       <div className="max-w-7xl mx-auto">
@@ -1213,6 +1260,29 @@ export default function AdminDashboard() {
             </div>
           </div>
           <div className="flex gap-2">
+            {/* 시간 제한 토글 버튼 */}
+            <Button
+              onClick={toggleTimeRestrictions}
+              disabled={timeRestrictionsLoading}
+              className={`${
+                timeRestrictionsDisabled 
+                  ? 'bg-red-600 hover:bg-red-700' 
+                  : 'bg-blue-600 hover:bg-blue-700'
+              } text-white font-semibold`}
+            >
+              {timeRestrictionsLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  설정 중...
+                </>
+              ) : (
+                <>
+                  <Clock className="w-4 h-4 mr-2" />
+                  시간 제한 {timeRestrictionsDisabled ? 'OFF' : 'ON'}
+                </>
+              )}
+            </Button>
+            
             <Button 
               onClick={async () => { 
                 // 캐시 무효화 후 데이터 다시 로드

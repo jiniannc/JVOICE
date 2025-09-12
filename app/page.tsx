@@ -739,7 +739,7 @@ export default function HomePage() {
             <button
               onClick={() => setModeState("request")}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                mode === "request" ? "bg-indigo-100 text-indigo-700" : "text-gray-600 hover:bg-indigo-50 hover:text-indigo-700"
+                String(mode) === "request" ? "bg-indigo-100 text-indigo-700" : "text-gray-600 hover:bg-indigo-50 hover:text-indigo-700"
               }`}
             >
               <Calendar className="w-4 h-4" />
@@ -1352,11 +1352,14 @@ function RequestMode({
   const [showMyRequests, setShowMyRequests] = useState(false)
   const [myRequests, setMyRequests] = useState<any[]>([])
   const [myRequestsLoading, setMyRequestsLoading] = useState(false)
+  const [myRequestsFilter, setMyRequestsFilter] = useState<'all' | 'recording' | 'education'>('all')
+  const filteredMyRequests = myRequests.filter((r: any) => myRequestsFilter === 'all' || r.type === myRequestsFilter)
   const [availabilityCache, setAvailabilityCache] = useState<Record<string, any>>({})
   const [userLanguageRestrictions, setUserLanguageRestrictions] = useState<Record<string, boolean>>({})
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [syncedMonths, setSyncedMonths] = useState<string[]>([])
   const [syncedMonthsLoading, setSyncedMonthsLoading] = useState(false)
+  const [classroomInfoMap, setClassroomInfoMap] = useState<Map<string, string>>(new Map())
   
   // 언어 선택 팝업 상태
   const [showLanguageSelection, setShowLanguageSelection] = useState(false)
@@ -1372,9 +1375,25 @@ function RequestMode({
 
   // 해당 월의 모든 날짜 가용성 미리 로드 (Bulk API 사용)
   const preloadMonthAvailability = async (scheduleData: any[]) => {
-    if (!authenticatedUser) return
+    console.log('🔥 [DEBUG] preloadMonthAvailability 함수 실행됨!!!', {
+      timestamp: new Date().toISOString(),
+      authenticatedUser: !!authenticatedUser,
+      scheduleData: scheduleData,
+      scheduleDataLength: scheduleData?.length,
+      userInfo: userInfo
+    })
 
-    console.log('🚀 [데스크톱] 월 가용성 미리 로드 시작 (Bulk API)')
+    if (!authenticatedUser) {
+      console.log('❌ [DEBUG] 인증되지 않은 사용자 - 함수 종료')
+      return
+    }
+
+    console.log('🚀 [데스크톱] 월 가용성 미리 로드 시작 (Bulk API)', {
+      scheduleDataLength: scheduleData.length,
+      authenticatedUser: !!authenticatedUser,
+      userInfo: userInfo
+    })
+
 
     // 스케줄 데이터 유효성 검사
     if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
@@ -1384,14 +1403,25 @@ function RequestMode({
 
     try {
       // Bulk API로 모든 가용성 데이터 한 번에 조회
-      const employeeId = userInfo.employeeId || 'TEMP001'
-      console.log('📡 [데스크톱] Bulk API 호출 시작:', employeeId)
+      const employeeId = userInfo?.employeeId || 'TEMP001'
+      console.log('📡 [데스크톱] Bulk API 호출 준비:', { employeeId, scheduleDataLength: scheduleData.length })
 
-      const response = await fetch(`/api/requests/bulk-availability?employeeId=${employeeId}`)
+      const bulkApiUrl = `/api/requests/bulk-availability?employeeId=${employeeId}`
+      console.log('🔗 [DEBUG] Bulk API URL:', bulkApiUrl)
+
+      console.log('📡 [데스크톱] Bulk API 호출 시작...')
+      const response = await fetch(bulkApiUrl)
+      console.log('📡 [데스크톱] Bulk API 응답 상태:', response.status, response.statusText)
+
       const bulkData = await response.json()
+      console.log('📡 [데스크톱] Bulk API 응답 데이터:', {
+        success: bulkData.success,
+        dataKeys: bulkData.data ? Object.keys(bulkData.data) : 'no data',
+        error: bulkData.error
+      })
 
       if (bulkData.success && bulkData.data) {
-        console.log(`✅ [데스크톱] Bulk API 응답: ${Object.keys(bulkData.data).length}개 날짜`)
+        console.log(`✅ [데스크톱] Bulk API 성공! ${Object.keys(bulkData.data).length}개 날짜 데이터`)
 
         // Bulk 데이터를 기존 캐시 형식으로 변환
         const transformedData: Record<string, any> = {}
@@ -1412,20 +1442,24 @@ function RequestMode({
           }
         })
 
+        console.log('🔄 [데스크톱] Bulk 데이터 변환 완료:', Object.keys(transformedData))
+
         // 변환된 데이터를 캐시에 저장
         setAvailabilityCache(prev => ({
           ...prev,
           ...transformedData
         }))
 
-        console.log('💾 [데스크톱] Bulk 데이터 변환 및 캐시 저장 완료')
+        console.log('💾 [데스크톱] Bulk 데이터 캐시 저장 완료 - 이제 개별 API 호출 없음!')
+        return // 성공했으므로 여기서 종료
       } else {
-        console.warn('⚠️ [데스크톱] Bulk API 실패, 기존 방식으로 폴백')
+        console.warn('⚠️ [데스크톱] Bulk API 실패, 기존 방식으로 폴백:', bulkData.error)
         // 기존 방식으로 폴백
         await loadAvailabilityFallback(scheduleData)
       }
     } catch (error) {
-      console.warn('⚠️ [데스크톱] Bulk API 에러, 기존 방식으로 폴백:', error)
+      console.error('❌ [데스크톱] Bulk API 에러 상세:', error)
+      console.warn('⚠️ [데스크톱] Bulk API 에러로 기존 방식으로 폴백')
       // 기존 방식으로 폴백
       await loadAvailabilityFallback(scheduleData)
     }
@@ -1552,11 +1586,35 @@ function RequestMode({
           console.log(`📅 ${month} 스케줄 로드 완료`)
           
           // 스케줄 로드 후 신청 내역도 함께 로드
+          console.log('🔥 [DEBUG] 스케줄 로드 완료 - 인증 상태 확인:', {
+            authenticatedUser: !!authenticatedUser,
+            userInfo: userInfo,
+            hasData: !!json.data,
+            hasDays: !!json.data?.days,
+            daysLength: json.data?.days?.length
+          })
+
           if (authenticatedUser) {
+            console.log('✅ [DEBUG] 인증됨 - 신청 내역 로드 시작')
             loadMyRequests()
-            
+
             // 🚀 해당 월의 모든 날짜 가용성 미리 로드
-            preloadMonthAvailability(json.data?.days || [])
+            console.log('🚀 [스케줄 로드 완료] 가용성 미리 로드 시작:', {
+              hasData: !!json.data,
+              hasDays: !!json.data?.days,
+              daysLength: json.data?.days?.length,
+              authenticatedUser: !!authenticatedUser
+            })
+
+            // 함수가 존재하는지 확인
+            if (typeof preloadMonthAvailability === 'function') {
+              console.log('✅ [DEBUG] preloadMonthAvailability 함수 존재 확인')
+              preloadMonthAvailability(json.data?.days || [])
+            } else {
+              console.error('❌ [DEBUG] preloadMonthAvailability 함수가 존재하지 않음!')
+            }
+          } else {
+            console.log('❌ [DEBUG] 인증되지 않음 - 가용성 로드 건너뜀')
           }
         }
         else throw new Error(json.error)
@@ -1604,6 +1662,32 @@ function RequestMode({
     return items
   },[data, myRequests])
 
+  // 스케줄 데이터 리프레시 함수
+  const refreshScheduleData = async () => {
+    console.log('🔄 [Schedule] 스케줄 데이터 리프레시 시작')
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/schedules?month=${month}`, { cache: "no-store" })
+      const json = await res.json()
+
+      if (json.success) {
+        setData(json.data)
+        console.log(`📅 ${month} 스케줄 리프레시 완료`)
+
+        // 리프레시 후 가용성 데이터도 갱신
+        if (json.data?.days && Array.isArray(json.data.days)) {
+          await preloadMonthAvailability(json.data.days)
+        }
+      } else {
+        console.error(`❌ ${month} 스케줄 리프레시 실패:`, json)
+      }
+    } catch (error) {
+      console.error('❌ [Schedule] 리프레시 오류:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const loadMyRequests = async () => {
     if (!authenticatedUser) return
     
@@ -1633,6 +1717,109 @@ function RequestMode({
         }))
         
         setMyRequests(convertedRequests)
+        
+        // 교육별 교실 정보 로드
+        const uniqueDates = new Set<string>()
+        convertedRequests.forEach((req: any) => {
+          if (req.type === 'education') {
+            uniqueDates.add(req.date)
+          }
+        })
+        
+        // 교육별 교실 정보 로드
+        if (uniqueDates.size > 0) {
+          const months = Array.from(uniqueDates).map(date => date.slice(0, 7))
+          const uniqueMonths = [...new Set(months)]
+          
+          const educationClassroomMap = new Map<string, string>() // key: date_slot_language_type_category, value: classroom
+          
+          for (const month of uniqueMonths) {
+            try {
+              console.log(`🔍 [Request mode] ${month} 월 스케줄 로드 중...`)
+              const scheduleRes = await fetch(`/api/schedules?month=${month}`, { cache: 'no-store' })
+              const scheduleData = await scheduleRes.json()
+              console.log(`📅 [Request mode] ${month} 스케줄 응답:`, scheduleData)
+              
+              if (scheduleData.success && scheduleData.data?.days) {
+                scheduleData.data.days.forEach((day: any) => {
+                  console.log(`🔍 [Request mode] 날짜 ${day.date} 교육 데이터:`, day.education)
+                  
+                  // 교육별로 교실 정보 매핑 (카테고리 포함)
+                  if (day.education && Array.isArray(day.education)) {
+                    day.education.forEach((edu: any) => {
+                      console.log(`🔍 [Request mode] 교육 객체:`, edu)
+                      if (edu.classroomInfo && edu.type && edu.slots) {
+                        // 모든 slots에 대해 매핑 (카테고리별)
+                        edu.slots.forEach((slot: number) => {
+                          // 카테고리가 있는 경우와 없는 경우 모두 처리
+                          if (edu.type.category) {
+                            // 카테고리별 키 (한/영 소규모)
+                            const categoryKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category}`
+                            educationClassroomMap.set(categoryKey, edu.classroomInfo)
+                            console.log(`✅ [Request mode] 교육별 교실 정보 추가 (카테고리): ${categoryKey} → ${edu.classroomInfo}`)
+                          }
+                          
+                          // 기본 키 (모든 교육)
+                          const baseKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`
+                          educationClassroomMap.set(baseKey, edu.classroomInfo)
+                          console.log(`✅ [Request mode] 교육별 교실 정보 추가 (기본): ${baseKey} → ${edu.classroomInfo}`)
+                        })
+                      }
+                    })
+                  }
+                })
+              } else {
+                console.log(`❌ [Request mode] ${month} 스케줄 로드 실패:`, scheduleData)
+              }
+            } catch (error) {
+              console.error(`Failed to load classroom info for ${month}:`, error)
+            }
+          }
+          
+          setClassroomInfoMap(educationClassroomMap)
+          console.log('🏫 [Request mode] 교육별 교실 정보:', Object.fromEntries(educationClassroomMap))
+          
+          // 교실 정보를 포함한 enriched 데이터 생성 (모바일과 동일한 로직)
+          const enrichedItems = convertedRequests.map((item: any) => {
+            if (item.type !== 'education') {
+              return { ...item, classroomInfo: '' }
+            }
+            
+            const language = item.details?.language || 'korean-english'
+            const mode = item.details?.mode || item.details?.educationType || '1:1'
+            const category = item.details?.category || '공통'
+            const normalizedMode = mode === 'small' || mode === 'small-group' ? 'small' : '1:1'
+            
+            let classroom = ''
+            
+            // 1. 카테고리별 키 시도 (한/영 소규모만)
+            if (category && language === 'korean-english' && normalizedMode === 'small') {
+              const categoryKey = `${item.date}_${item.slot}_${language}_${normalizedMode}_${category}`
+              classroom = educationClassroomMap.get(categoryKey) || ''
+              console.log(`🔍 [Request mode] 카테고리 키 시도: ${categoryKey} → ${classroom}`)
+            }
+            
+            // 2. 기본 키 시도 (모든 교육)
+            if (!classroom) {
+              const baseKey = `${item.date}_${item.slot}_${language}_${normalizedMode}`
+              classroom = educationClassroomMap.get(baseKey) || ''
+              console.log(`🔍 [Request mode] 기본 키 시도: ${baseKey} → ${classroom}`)
+            }
+            
+            const formattedClassroom = classroom ? (classroom.includes('학과장') ? classroom : `${classroom} 학과장`) : ''
+            console.log(`🔍 [Request mode] 교실 매칭: ${item.date}_${item.slot}_${language}_${normalizedMode} (카테고리: ${category}) → ${classroom} → ${formattedClassroom}`)
+            
+            return {
+              ...item,
+              classroomInfo: formattedClassroom
+            }
+          })
+          
+          console.log('📊 [Request mode] 교육 신청 내역 (클래스룸 정보 포함):', enrichedItems)
+          setMyRequests(enrichedItems)
+        } else {
+          setMyRequests(convertedRequests)
+        }
         console.log('✅ [Database] 신청 내역 로드 완료:', convertedRequests.length, '개')
       } else {
         // Database API 실패시 Dropbox API로 fallback
@@ -1751,25 +1938,37 @@ function RequestMode({
   }
 
   // 특정 차수가 신청 가능한지 확인
-  const getCurrentApplicants = useCallback((date: string, slot: number, language: string, educationType: string) => {
+  const getCurrentApplicants = useCallback((date: string, slot: number, language: string, educationType: string, category?: string) => {
     // availability-simple API 응답을 우선적으로 활용 (전체 신청 현황 기반)
     const availabilityData = availabilityCache[date]
     if (availabilityData?.slotAvailability) {
-      const slotInfo = availabilityData.slotAvailability.find((s: any) =>
-        s.slot === slot && s.language === language && s.educationType === educationType
+      const normalizedType = educationType === 'small-group' ? 'small' : educationType
+      
+      // 🔧 [FIX] 카테고리별 분리 처리
+      let matchingSlots = availabilityData.slotAvailability.filter((s: any) => 
+        s.slot === slot && s.language === language && s.educationType === normalizedType
       )
-
-      if (slotInfo) {
+      
+      // 한/영 소규모의 경우 카테고리별로 분리
+      if (language === 'korean-english' && normalizedType === 'small' && category) {
+        matchingSlots = matchingSlots.filter((s: any) => s.category === category)
+      }
+      
+      if (matchingSlots.length > 0) {
+        const totalCount = matchingSlots.reduce((sum: number, slot: any) => sum + (slot.currentCount || 0), 0)
+        
         if (process.env.NODE_ENV === 'development') {
-          console.log('✅ [데스크톱 교육] API 기반 신청자 수:', { date, slot, language, educationType, currentCount: slotInfo.currentCount })
+          const categoryInfo = category ? `-${category}` : ''
+          console.log(`👥 [데스크톱] ${language}-${normalizedType}${categoryInfo} 차수${slot}: ${totalCount}명 (카테고리별: ${matchingSlots.map((s: any) => `${s.category}:${s.currentCount}`).join(', ')})`)
         }
-        return slotInfo.currentCount
+        
+        return totalCount
       }
     }
 
     // API 데이터가 없으면 0 반환 (fallback)
     if (process.env.NODE_ENV === 'development') {
-      console.log('⚠️ [데스크톱 교육] API 데이터 없음:', { date, slot, language, educationType })
+      console.log('⚠️ [데스크톱 교육] API 데이터 없음:', { date, slot, language, educationType, category })
     }
     return 0
   }, [availabilityCache])
@@ -1848,19 +2047,22 @@ function RequestMode({
     const availabilityData = availabilityCache[date]
 
     if (availabilityData?.slotAvailability) {
-      const slotInfo = availabilityData.slotAvailability.find((s: any) =>
-        s.slot === slot && s.language === language && s.educationType === educationType
+      const normalizedType = educationType === 'small-group' ? 'small' : educationType
+      
+      // 해당 언어/타입/차수의 모든 카테고리 가용성 확인
+      const matchingSlots = availabilityData.slotAvailability.filter((s: any) => 
+        s.slot === slot && s.language === language && (s.educationType === normalizedType || s.educationType === educationType)
       )
-
-      if (slotInfo) {
+      
+      if (matchingSlots.length > 0) {
+        // 하나라도 가용하면 신청 가능
+        const hasAvailable = matchingSlots.some((s: any) => s.available)
+        
         if (process.env.NODE_ENV === 'development') {
-          console.log('✅ [데스크톱 교육] API 기반 가용성:', { date, slot, language, educationType, available: slotInfo.available })
+          console.log(`✅ [데스크톱] ${language}-${normalizedType} 차수${slot} 가용성: ${hasAvailable} (카테고리별: ${matchingSlots.map((s: any) => `${s.category}:${s.available}`).join(', ')})`)
         }
-        // 🚨 중요: API에서 available이 false면 즉시 false 반환
-        if (!slotInfo.available) {
-          return false
-        }
-        return slotInfo.available
+        
+        return hasAvailable
       }
     }
 
@@ -2053,16 +2255,31 @@ function RequestMode({
     console.log('📝 [Database] 서버 응답:', json)
     if(json.success) {
       const guidance = getEducationGuidance(type)
+      console.log('🎉 [교육 신청 성공] alert() 호출 직전')
       alert(`🎉 교육 신청 완료!
 
 교육 신청이 성공적으로 완료되었습니다!
 
 ${guidance}`)
-      // 신청 내역 즉시 새로고침하여 UI 업데이트
+      console.log('🎉 [교육 신청 성공] alert() 호출 완료')
+      // 신청 내역 즉시 새로고침 및 즉시 UI 반영(낙관적 업데이트)
       loadMyRequests()
-      
-      // 가용성 캐시 전체 클리어 (다른 사용자들도 업데이트된 정보를 보도록)
-      setAvailabilityCache({})
+      setAvailabilityCache(prev => {
+        const prevEntry = prev[date] || {}
+        const prevSlots = prevEntry.recordingSlotAvailability || []
+        const updatedSlots = prevSlots.map((s: any) => s.slot === slot ? {
+          ...s,
+          currentCount: (s.currentCount || 0) + 1,
+          available: ((s.currentCount || 0) + 1) < 8
+        } : s)
+        return { ...prev, [date]: { ...prevEntry, recordingSlotAvailability: updatedSlots } }
+      })
+      // 서버 데이터로 재동기화 (강제)
+      await checkAvailability(date, true)
+      // 월 단위 가용성도 갱신하여 캘린더 전체 동기화
+      if (data?.days && Array.isArray(data.days)) {
+        await preloadMonthAvailability(data.days)
+      }
     } else {
       // 서버에서 반환된 구체적인 오류 메시지 표시
       if (json.error.includes('이미 신청')) {
@@ -2138,18 +2355,27 @@ ${guidance}`)
     console.log('📝 [Database] 서버 응답:', json)
     if(json.success) {
       const guidance = getRecordingGuidance()
+      console.log('🎉 [녹음 신청 성공] alert() 호출 직전')
       alert(`🎉 녹음 신청 완료!
 
 녹음 신청이 성공적으로 완료되었습니다!
 
 ${guidance}`)
-      // 신청 내역 즉시 새로고침하여 UI 업데이트
+      console.log('🎉 [녹음 신청 성공] alert() 호출 완료')
+
+      // 신청 내역 즉시 새로고침
       loadMyRequests()
-      
-      // 가용성 캐시 전체 클리어 (다른 사용자들도 업데이트된 정보를 보도록)
-      setAvailabilityCache({})
+
+      // 해당 날짜 가용성 강제 갱신 (캐시 무시)
+      await checkAvailability(date, true)
+
+      // 전체 캘린더 리프레시
+      await refreshScheduleData()
+
+      // 모달 닫기
       setShowLanguageSelection(false)
       setSelectedRecordingSlot(null)
+      setSelectedDate(null)
     } else {
       // 신청 기간 만료나 기타 오류 처리
       if (json.error === '신청기간만료') {
@@ -2576,7 +2802,30 @@ ${guidance}`)
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {myRequests.map((request) => {
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setMyRequestsFilter('all')}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                    >
+                      전체
+                    </button>
+                    <button
+                      onClick={() => setMyRequestsFilter('recording')}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'recording' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                    >
+                      녹음
+                    </button>
+                    <button
+                      onClick={() => setMyRequestsFilter('education')}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'education' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                    >
+                      교육
+                    </button>
+                  </div>
+
+                  {filteredMyRequests.length === 0 ? (
+                    <div className="text-center py-12 text-gray-500">해당 필터의 신청 내역이 없습니다.</div>
+                  ) : filteredMyRequests.map((request) => {
                     const canCancel = () => {
                       if (request.status !== 'ACTIVE') return false
                       
@@ -2615,6 +2864,10 @@ ${guidance}`)
                             <h3 className="font-semibold text-gray-900 mb-2">
                               {request.date} - {request.slot}차수 ({getSlotTimeInfo(request.type, request.slot, request.details?.mode)})
                             </h3>
+                            
+                            <div className="text-gray-600 mb-2">
+                              {getRequestDetailLabel(request, classroomInfoMap)}
+                            </div>
                             
                             {request.type === 'education' && (
                               <div className="text-sm text-gray-600 space-y-1">
@@ -2800,7 +3053,7 @@ function RequestCalendar(props: {
   renderEduLabel: (type: any) => string
   isSlotAvailable: (date: string, slot: number, language: string, educationType: string) => boolean
   isRecordingSlotAvailable: (date: string, slot: number, language: string) => boolean
-  getCurrentApplicants: (date: string, slot: number, language: string, educationType: string) => number
+  getCurrentApplicants: (date: string, slot: number, language: string, educationType: string, category?: string) => number
   getRecordingCurrentApplicants: (date: string, slot: number) => number
   availabilityCache: Record<string, any>
   userLanguageRestrictions: Record<string, boolean>
@@ -3608,7 +3861,7 @@ function RequestCalendar(props: {
                               const educationType = edu.type.mode === '1:1' ? '1:1' : 'small-group'
                               console.log('🔍 모달에서 isSlotAvailable 호출:', { selectedDate, slot, language: edu.type.lang, educationType })
                               const isAvailable = isSlotAvailable(selectedDate!, slot, edu.type.lang, educationType)
-                              const currentApplicants = getCurrentApplicants(selectedDate!, slot, edu.type.lang, educationType)
+                              const currentApplicants = getCurrentApplicants(selectedDate!, slot, edu.type.lang, educationType, edu.type.category)
                               
                               return (
                                 <button
@@ -3914,19 +4167,112 @@ function MyPageModal({
       if (!userInfo?.employeeId) return
       setLoadingReq(true)
       try {
-        // Database API 우선 시도
-        const res = await fetch(`/api/requests/database?employeeId=${encodeURIComponent(userInfo.employeeId)}`, { cache: 'no-store' })
+        // Database API 우선 시도 (스케줄 정보 포함)
+        const res = await fetch(`/api/requests/database?employeeId=${encodeURIComponent(userInfo.employeeId)}&includeSchedule=true`, { cache: 'no-store' })
         const json = await res.json()
         
         if (json.success && json.items) {
-          // Database API 응답을 기존 형식으로 변환
+          // 캘린더 스케줄 API에서 교실 정보 가져오기 (교육별로 세분화)
+          const uniqueMonths = [...new Set(json.items.map((item: any) => item.date.slice(0, 7)))]
+          const classroomInfoMap = new Map()
+          
+          for (const month of uniqueMonths) {
+            try {
+              const scheduleRes = await fetch(`/api/schedules?month=${month}`)
+              if (scheduleRes.ok) {
+                const scheduleData = await scheduleRes.json()
+                if (scheduleData.data?.days) {
+                  scheduleData.data.days.forEach((day: any) => {
+                    // 교육별로 세분화된 교실 정보 매핑
+                    if (day.education && Array.isArray(day.education)) {
+                      day.education.forEach((edu: any) => {
+                        if (edu.classroomInfo && edu.type && edu.slots) {
+                          edu.slots.forEach((slot: number) => {
+                            // 카테고리가 있는 경우와 없는 경우 모두 처리
+                            if (edu.type.category) {
+                              // 카테고리별 키 (한/영 소규모)
+                              const categoryKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category}`
+                              classroomInfoMap.set(categoryKey, edu.classroomInfo)
+                              console.log(`✅ [MyPage] 교육별 교실 정보 추가 (카테고리): ${categoryKey} → ${edu.classroomInfo}`)
+                            }
+                            
+                            // 기본 키 (모든 교육)
+                            const baseKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`
+                            classroomInfoMap.set(baseKey, edu.classroomInfo)
+                            console.log(`✅ [MyPage] 교육별 교실 정보 추가 (기본): ${baseKey} → ${edu.classroomInfo}`)
+                          })
+                        }
+                      })
+                    }
+                    
+                    // 호환성을 위한 날짜별 전체 교실 정보도 유지
+
+                    if (day.classroomInfo) {
+                      classroomInfoMap.set(day.date, day.classroomInfo)
+                    }
+                  })
+                }
+              }
+            } catch (error) {
+              console.warn(`캘린더 스케줄 로드 실패 (${month}):`, error)
+            }
+          }
+          
+          console.log('🏫 [MyPage] 캘린더에서 가져온 교실 정보:', Object.fromEntries(classroomInfoMap))
+          
+          // Request mode와 동일한 로직 사용 (작동하는 것으로 확인됨)
           const convertedItems = json.items.map((item: any) => ({
             type: item.type,
             date: item.date,
             slot: item.slot,
-            detail: item.type === 'recording' ? item.details.recordingLanguage : 
-                    `${item.details.language || 'korean-english'} ${item.details.mode || '1:1'} ${item.details.category || ''}`
+            detail: getDetailFromItem(item) // Request mode와 동일한 detail 생성 로직
           }))
+          
+          function getDetailFromItem(item: any) {
+            if (item.type === 'recording') {
+              return item.details?.recordingLanguage || 'recording'
+            }
+            
+            // 교육 타입의 경우 details에서 정보 추출
+            const language = item.details?.language || 'korean-english'
+            const languageLabel = language === 'korean-english' ? '한/영' : 
+                                language === 'japanese' ? '일본어' : 
+                                language === 'chinese' ? '중국어' : language
+            
+            const mode = item.details?.mode || item.details?.educationType || '1:1'
+            const modeLabel = (mode === 'small' || mode === 'small-group') ? '소규모' : '1:1'
+            
+            const category = item.details?.category || ''
+            
+            // 캘린더에서 교실 정보 가져오기 (카테고리별 우선, 기본 키, 날짜별 순서)
+            let educationClassroom = ''
+            
+            // 1. 카테고리별 키 시도 (한/영 소규모만)
+            if (category && language === 'korean-english' && (mode === 'small' || mode === 'small-group')) {
+              const categoryKey = `${item.date}_${item.slot}_${language}_small_${category}`
+              educationClassroom = classroomInfoMap.get(categoryKey) || ''
+              console.log(`🔍 [MyPage] 카테고리 키 시도: ${categoryKey} → ${educationClassroom}`)
+            }
+            
+            // 2. 기본 키 시도 (모든 교육)
+            if (!educationClassroom) {
+              const normalizedMode = (mode === 'small' || mode === 'small-group') ? 'small' : mode
+              const baseKey = `${item.date}_${item.slot}_${language}_${normalizedMode}`
+              educationClassroom = classroomInfoMap.get(baseKey) || ''
+              console.log(`🔍 [MyPage] 기본 키 시도: ${baseKey} → ${educationClassroom}`)
+            }
+            
+            // 3. 날짜별 키 시도 (fallback)
+            if (!educationClassroom) {
+              educationClassroom = classroomInfoMap.get(item.date) || ''
+              console.log(`🔍 [MyPage] 날짜별 키 시도: ${item.date} → ${educationClassroom}`)
+            }
+            
+            const classroom = educationClassroom ? (educationClassroom.includes('학과장') ? educationClassroom : `${educationClassroom} 학과장`) : ''
+            const locationPart = (mode === 'small' || mode === 'small-group') && classroom ? ` · ${classroom}` : ''
+            
+            return `${languageLabel} ${modeLabel}${locationPart} ${category}`.trim()
+          }
           setRequests(convertedItems)
         } else {
           // Database API 실패시 기존 API로 fallback
@@ -4228,6 +4574,61 @@ function langLabel(v: string){
   if (v === 'japanese') return '일본어'
   if (v === 'chinese') return '중국어'
   return v
+}
+
+// Request mode에서 사용할 통일된 detail 표시 함수
+function getRequestDetailLabel(request: any, classroomInfoMap: Map<string, string>) {
+  if (request.type === 'recording') {
+    return `녹음: ${langLabel(request.details?.recordingLanguage || 'recording')}`
+  }
+  
+  // 교육 타입의 경우
+  const language = request.details?.language || 'korean-english'
+  const languageLabel = langLabel(language)
+  
+  const mode = request.details?.mode || request.details?.educationType || '1:1'
+  const modeLabel = (mode === 'small' || mode === 'small-group') ? '소규모' : '1:1'
+  
+  const category = request.details?.category || '공통'
+  
+  // 교실 정보 - request.classroomInfo를 우선 사용, 없으면 classroomInfoMap에서 가져오기
+  let classroom = request.classroomInfo?.trim() || ''
+  
+  if (!classroom) {
+    // fallback: classroomInfoMap에서 가져오기
+    const normalizedMode = mode === 'small' || mode === 'small-group' ? 'small' : '1:1'
+    let educationClassroom = ''
+    
+    // 1. 카테고리별 키 시도 (한/영 소규모만)
+    if (category && language === 'korean-english' && normalizedMode === 'small') {
+      const categoryKey = `${request.date}_${request.slot}_${language}_${normalizedMode}_${category}`
+      educationClassroom = classroomInfoMap.get(categoryKey) || ''
+      console.log(`🔍 [Request mode] 카테고리 키 시도 (fallback): ${categoryKey} → ${educationClassroom}`)
+    }
+    
+    // 2. 기본 키 시도 (모든 교육)
+    if (!educationClassroom) {
+      const baseKey = `${request.date}_${request.slot}_${language}_${normalizedMode}`
+      educationClassroom = classroomInfoMap.get(baseKey) || ''
+      console.log(`🔍 [Request mode] 기본 키 시도 (fallback): ${baseKey} → ${educationClassroom}`)
+    }
+    
+    classroom = educationClassroom ? (educationClassroom.includes('학과장') ? educationClassroom : `${educationClassroom} 학과장`) : ''
+  }
+  
+  const locationPart = (mode === 'small' || mode === 'small-group') && classroom ? ` · ${classroom}` : ''
+  
+  console.log(`🔍 [Request mode] 최종 교실 정보: request.classroomInfo=${request.classroomInfo}, classroom=${classroom}, locationPart=${locationPart}`)
+  
+  // 카테고리 이모지 및 라벨
+  const categoryEmoji = category === '신규' ? '✨' :
+                       category === '재자격' ? '🔄' :
+                       category === '공통' ? '👥' :
+                       category === 'PUS' ? '✈️' : '📚'
+  
+  const categoryPart = category ? ` ${categoryEmoji}${category}` : ''
+  
+  return `교육: ${languageLabel} ${modeLabel}${locationPart}${categoryPart}`.trim()
 }
 
 function CancelButton({ employeeId, item }: { employeeId: string, item: any }){
@@ -5357,6 +5758,7 @@ function AdminMode({
         />
         </div>
       )}
+
     </div>
   )
 }

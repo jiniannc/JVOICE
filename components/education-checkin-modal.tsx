@@ -32,14 +32,17 @@ interface EducationRequest {
   date: string
   startTime: string
   endTime: string
-  instructor: string
+  instructor?: string
   location: string
   language: string
-  mode: '1:1' | 'group'
+  mode: '1:1' | 'small-group'
   status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
   description?: string
   requestedAt: string
   googleMeetLink?: string
+  slot: number
+  category?: string
+  isCheckedIn?: boolean
 }
 
 interface EducationCheckinModalProps {
@@ -141,28 +144,49 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
           return '시간미정'
         }
 
-        const educationType = req.details?.educationType || (req.details?.mode === '1:1' ? '1:1' : 'small-group')
+        const educationType = (() => {
+          const classType = req.schedule?.classType
+          if (classType === 'small') return 'small-group'
+          if (classType === '1:1') return '1:1'
+          const detailType = req.details?.educationType
+          if (detailType) return detailType
+          const mode = req.details?.mode
+          if (mode === '1:1') return '1:1'
+          if (mode === 'small-group' || mode === 'small') return 'small-group'
+          return 'small-group'
+        })()
         const slotTime = getSlotTime(req.slot, educationType)
         const [startTime, endTime] = slotTime.split('-')
         
-        // 장소 정보 (소규모만 표시) - 스케줄에서 교실 정보 가져오기
+        // 장소 정보 (소규모만 표시) - req.classroomInfo를 우선 사용
         const getLocation = () => {
           if (educationType === 'small-group') {
-            // 스케줄 정보에서 교실 정보 사용
+            // 1순위: req.classroomInfo 사용 (MyPage와 동일한 로직)
+            let classroom = req.classroomInfo?.trim()
+            
+            if (classroom) {
+              console.log('✅ [Education Checkin] classroomInfo 사용:', classroom)
+              return classroom
+            }
+            
+            // 2순위: fallback으로 스케줄 정보에서 교실 정보 사용
             const scheduleClassroom = req.schedule?.classroom?.trim()
             if (scheduleClassroom) {
               // 이미 "학과장"이 포함되어 있으면 그대로 사용, 없으면 추가
               if (scheduleClassroom.includes('학과장')) {
-                return scheduleClassroom
+                classroom = scheduleClassroom
               } else {
-                return `학과장 ${scheduleClassroom}`
+                classroom = `${scheduleClassroom} 학과장`
               }
+              console.log('🔄 [Education Checkin] 스케줄 fallback 사용:', classroom)
+              return classroom
             }
             
-            // 스케줄 정보가 없으면 빈 문자열 반환 (스케줄 동기화 필요)
-            console.warn('⚠️ [Education Checkin] 스케줄 교실 정보 없음:', { 
+            // 교실 정보가 없으면 빈 문자열 반환
+            console.warn('⚠️ [Education Checkin] 교실 정보 없음:', { 
               date: req.date, 
               language: req.details?.language,
+              classroomInfo: req.classroomInfo,
               schedule: req.schedule 
             })
             return ''
@@ -201,7 +225,12 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
       })
       
       console.log('🎓 신청된 모든 활성 교육:', activeEducations)
-      setEducationRequests(activeEducations)
+      // 정렬: 미체크인 우선, 체크인 완료 항목은 최신 날짜가 위로
+      const unchecked = activeEducations.filter((e: any) => !e.isCheckedIn)
+      const checkedSorted = activeEducations
+        .filter((e: any) => e.isCheckedIn)
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      setEducationRequests([...unchecked, ...checkedSorted])
     } catch (error) {
       console.error('교육 신청 내역 로드 실패:', error)
       setError(error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.')
@@ -265,8 +294,16 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
     return timeStr
   }
 
-  const getTimeStatus = (startTime: string, endTime: string) => {
-    // 테스트를 위해 신청 즉시 체크인 가능하게 변경
+  const getTimeStatus = (dateStr: string, startTime: string, endTime: string) => {
+    if (!dateStr || !startTime) return 'early'
+    // 브라우저 로컬 시간 기준으로 비교
+    const start = new Date(`${dateStr}T${startTime}:00`)
+    const end = endTime ? new Date(`${dateStr}T${endTime}:00`) : null
+    const now = new Date()
+    const startMinus30 = new Date(start.getTime() - 30 * 60 * 1000)
+
+    if (now < startMinus30) return 'early'
+    if (end && now > end) return 'late'
     return 'available'
   }
 
@@ -326,7 +363,7 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
               </div>
               
               {educationRequests.map((education) => {
-                const timeStatus = getTimeStatus(education.startTime, education.endTime)
+                const timeStatus = getTimeStatus(education.date, education.startTime, education.endTime)
                 const canCheckin = timeStatus === 'available'
                 const isCheckedIn = education.isCheckedIn || checkedInEducations.has(education.id) // 서버 상태 우선
                 
@@ -417,7 +454,7 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
                               className="text-blue-600 border-blue-200 hover:bg-blue-50"
                             >
                               <Video className="w-4 h-4 mr-2" />
-                              Meet 입장
+                              교육 입장
                             </Button>
                           )}
                         </div>

@@ -75,7 +75,7 @@ export function MobileEducationCalendar({ isOpen, onClose, authenticatedUser, us
   const [loading, setLoading] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [selectedDaySchedules, setSelectedDaySchedules] = useState<any[]>([])
-  const [availabilityCache, setAvailabilityCache] = useState<Map<string, any>>(new Map())
+  const [availabilityCache, setAvailabilityCache] = useState<Record<string, any>>({})
   const [userLanguageRestrictions, setUserLanguageRestrictions] = useState({
     recording: false,
     education: false
@@ -381,6 +381,12 @@ export function MobileEducationCalendar({ isOpen, onClose, authenticatedUser, us
         
         console.log('📅 [Mobile Education Calendar] 최종 스케줄:', scheduleSlots)
         setSchedules(scheduleSlots)
+        
+        // 데스크톱과 동일: 스케줄 로드 후 자동으로 가용성 프리로드
+        if (authenticatedUser && scheduleSlots.length > 0) {
+          console.log('🔄 [Mobile Education Calendar] 스케줄 로드 완료, 가용성 프리로드 시작')
+          await preloadMonthAvailability(scheduleSlots)
+        }
       } else {
         console.warn('스케줄 로드 실패:', response.status)
         setSchedules([])
@@ -393,106 +399,223 @@ export function MobileEducationCalendar({ isOpen, onClose, authenticatedUser, us
     }
   }
 
-  // 교육 슬롯 가용성 확인 - availability-simple API 응답 우선 활용
-  const isSlotAvailable = (date: string, slot: number, language: string, educationType: string) => {
-    // 신청 기한 체크 - 기한이 지나면 무조건 비활성화
+  // 데스크톱과 동일한 신청 기한 확인 함수
+  const isApplicationDeadlinePassed = useCallback((date: string) => {
     const scheduleDate = new Date(date)
     const twoDaysBefore = new Date(scheduleDate)
     twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
     twoDaysBefore.setHours(14, 0, 0, 0)
     const now = new Date()
-    
-    if (now > twoDaysBefore) {
-      console.log('❌ [Mobile Education] 신청 기한 경과로 비활성화:', { date, slot, language, educationType })
+    return now > twoDaysBefore
+  }, [])
+
+  // 교육 슬롯 가용성 확인 - 데스크톱과 완전히 동일한 로직
+  const isSlotAvailable = useCallback((date: string, slot: number, language: string, educationType: string) => {
+    // 신청 기한 체크 - 기한이 지나면 무조건 비활성화
+    if (isApplicationDeadlinePassed(date)) {
+      console.log('❌ [모바일 교육] 신청 기한 경과로 비활성화:', { date, slot, language, educationType })
       return false
     }
-    
-    // availability-simple API 응답을 우선적으로 활용 (전체 신청 현황 기반)
-    const availabilityData = availabilityCache.get(date)
+
+    // availability API 응답을 우선적으로 활용 (전체 신청 현황 기반) - 데스크톱과 동일
+    const availabilityData = availabilityCache[date]
+
     if (availabilityData?.slotAvailability) {
-      const slotInfo = availabilityData.slotAvailability.find((s: any) => 
-        s.slot === slot && s.language === language && s.educationType === educationType
+      const normalizedType = educationType === 'small-group' ? 'small' : educationType
+      
+      // 🔧 [FIX] 서버 데이터는 'small'로 저장되므로 normalizedType으로만 매칭
+      const matchingSlots = availabilityData.slotAvailability.filter((s: any) => 
+        s.slot === slot && s.language === language && s.educationType === normalizedType
       )
       
-      if (slotInfo) {
-        console.log('🔍 [Mobile Education] availability-simple API 기반 가용성:', { date, slot, language, educationType, available: slotInfo.available, currentCount: slotInfo.currentCount, maxCount: slotInfo.maxCount })
-        return slotInfo.available
+      if (matchingSlots.length > 0) {
+        // 하나라도 가용하면 신청 가능
+        const hasAvailable = matchingSlots.some((s: any) => s.available)
+        
+        console.log(`✅ [모바일] ${language}-${normalizedType} 차수${slot} 가용성: ${hasAvailable} (카테고리별: ${matchingSlots.map((s: any) => `${s.category}:${s.available}`).join(', ')})`)
+        
+        return hasAvailable
       }
     }
-    
-    // availability API 응답이 없으면 기존 로직 사용 (fallback)
-    if (!myRequests || myRequests.length === 0) {
-      console.log('🔍 [Mobile Education] isSlotAvailable: 신청 내역 없음, 모든 차수 활성화')
-      return true // 신청 내역이 없으면 모든 차수 활성화
-    }
-    
-    console.log('🔍 [Mobile Education] isSlotAvailable 호출 (fallback):', { date, slot, language, educationType })
-    
-    // 1:1 교육인 경우 - 한 명이라도 신청하면 비활성화
-    if (educationType === '1:1') {
-      const hasExistingApplication = myRequests.some((request: any) => {
-        const matches = request.date === date && 
-               request.slot === slot &&
-               request.details?.language === language &&
-               request.details?.educationType === educationType &&
-               request.status === 'ACTIVE'
-        
-        if (matches) {
-          console.log('❌ [Mobile Education] 1:1 신청된 차수 발견:', request)
-        }
-        
-        return matches
-      })
-      
-      console.log('🔍 [Mobile Education] 1:1 가용성 결과:', !hasExistingApplication)
-      return !hasExistingApplication
-    }
-    
-    // 소규모 교육인 경우 - 4명 미만일 때만 활성화
-    if (educationType === 'small-group') {
-      const currentApplicants = myRequests.filter((request: any) => {
-        return request.date === date && 
-               request.slot === slot &&
-               request.details?.language === language &&
-               request.details?.educationType === educationType &&
-               request.status === 'ACTIVE'
-      }).length
-      
-      console.log('🔍 [Mobile Education] 소규모 현재 신청 인원:', currentApplicants, '/ 4')
-      return currentApplicants < 4
-    }
-    
+
+    // API 데이터가 없으면 기본적으로 활성화 (fallback)
+    console.log('⚠️ [모바일 교육] API 데이터 없음, 기본 활성화:', { date, slot, language, educationType })
     return true
+  }, [availabilityCache, isApplicationDeadlinePassed])
+
+  // 현재 신청자 수 확인 - 데스크톱과 동일한 로직 (카테고리별 분리)
+  const getCurrentApplicants = (date: string, slot: number, language: string, educationType: string, category?: string) => {
+    const availabilityData = availabilityCache[date]
+    if (availabilityData?.slotAvailability) {
+      const normalizedType = educationType === 'small-group' ? 'small' : educationType
+      
+      // 🔧 [FIX] 카테고리별 분리 처리
+      let matchingSlots = availabilityData.slotAvailability.filter((s: any) => 
+        s.slot === slot && s.language === language && s.educationType === normalizedType
+      )
+      
+      // 한/영 소규모의 경우 카테고리별로 분리
+      if (language === 'korean-english' && normalizedType === 'small' && category) {
+        matchingSlots = matchingSlots.filter((s: any) => s.category === category)
+      }
+      
+      const totalCount = matchingSlots.reduce((sum: number, slot: any) => sum + (slot.currentCount || 0), 0)
+      const categoryInfo = category ? `-${category}` : ''
+      console.log(`👥 [모바일] ${language}-${normalizedType}${categoryInfo} 차수${slot}: ${totalCount}명 (카테고리별: ${matchingSlots.map((s: any) => `${s.category}:${s.currentCount}`).join(', ')})`)
+      
+      return totalCount
+    }
+    return 0
   }
 
-  // 현재 신청자 수 확인 - availability-simple API 응답 우선 활용
-  const getCurrentApplicants = (date: string, slot: number, language: string, educationType: string) => {
-    // availability-simple API 응답을 우선적으로 활용 (전체 신청 현황 기반)
-    const availabilityData = availabilityCache.get(date)
-    if (availabilityData?.slotAvailability) {
-      const slotInfo = availabilityData.slotAvailability.find((s: any) => 
-        s.slot === slot && s.language === language && s.educationType === educationType
+  // 가용성 조회 - 데스크톱과 완전히 동일한 로직
+  const checkAvailability = async (date: string, forceRefresh = false) => {
+    if (!authenticatedUser) return null
+    
+    const cacheKey = date
+    if (availabilityCache[cacheKey] && !forceRefresh) {
+      console.log(`📋 [모바일] ${date} 가용성 캐시 사용`)
+      return availabilityCache[cacheKey]
+    }
+    
+    // 진행 중인 요청이 있으면 기다림
+    if (availabilityCache[`${date}_loading`]) {
+      console.log(`⏳ [모바일] ${date} 가용성 체크 진행 중, 대기...`)
+      return null
+    }
+    
+    // 로딩 상태 표시
+    setAvailabilityCache(prev => ({ ...prev, [`${date}_loading`]: true }))
+
+    try {
+      // date 형식 검증 및 변환
+      let currentMonth: string
+      if (date && typeof date === 'string') {
+        if (date.includes('-')) {
+          // YYYY-MM-DD 형식
+          currentMonth = date.slice(0, 7)
+        } else {
+          // 다른 형식이면 Date 객체로 변환 시도
+          const dateObj = new Date(date)
+          if (isNaN(dateObj.getTime())) {
+            console.error('유효하지 않은 날짜 형식:', date)
+            return null
+          }
+          currentMonth = dateObj.toISOString().slice(0, 7)
+        }
+      } else {
+        console.error('날짜가 없거나 문자열이 아님:', date)
+        return null
+      }
+      
+      const employeeId = userInfo.employeeId || 'TEMP001'
+      
+      // 교육 가용성 API 호출 (데스크톱과 동일)
+      const educationResponse = await fetch(
+        `/api/requests/availability?month=${currentMonth}&date=${date}&employeeId=${employeeId}&email=${authenticatedUser.email}`
       )
       
-      if (slotInfo) {
-        console.log('🔍 [Mobile Education] availability-simple API 기반 신청자 수:', { date, slot, language, educationType, currentCount: slotInfo.currentCount })
-        return slotInfo.currentCount
+      if (educationResponse.ok) {
+        const educationData = await educationResponse.json()
+        
+        console.log(`🔍 [모바일] ${date} 교육 가용성:`, educationData)
+        
+        const combinedData = {
+          success: true,
+          date,
+          slotAvailability: educationData.slotAvailability,
+          languageRestrictions: educationData.languageRestrictions || []
+        }
+        
+        // 캐시에 저장 (로딩 상태 제거) - 데스크톱과 동일
+        setAvailabilityCache(prev => {
+          const newCache = { ...prev }
+          delete newCache[`${date}_loading`] // 로딩 상태 제거
+          newCache[cacheKey] = combinedData
+          return newCache
+        })
+        
+        // 언어별 제한 업데이트
+        const restrictions: Record<string, boolean> = {}
+        combinedData.languageRestrictions.forEach((restriction: any) => {
+          restrictions[restriction.language] = restriction.hasExistingApplication
+        })
+        setUserLanguageRestrictions(prev => ({ 
+          ...prev, 
+          education: Object.values(restrictions).some(Boolean) 
+        }))
+        
+        return combinedData
+      } else {
+        console.error(`❌ [모바일] ${date} 교육 가용성 조회 실패:`, educationResponse.status)
+        // 로딩 상태 제거
+        setAvailabilityCache(prev => {
+          const newCache = { ...prev }
+          delete newCache[`${date}_loading`]
+          return newCache
+        })
+        return null
       }
+    } catch (error) {
+      console.error(`❌ [모바일] ${date} 가용성 조회 오류:`, error)
+      // 로딩 상태 제거
+      setAvailabilityCache(prev => {
+        const newCache = { ...prev }
+        delete newCache[`${date}_loading`]
+        return newCache
+      })
+      return null
     }
-    
-    // availability API 응답이 없으면 기존 로직 사용 (fallback)
-    if (!myRequests || myRequests.length === 0) {
-      return 0
-    }
-    
-    return myRequests.filter((request: any) => {
-      return request.date === date && 
-             request.slot === slot &&
-             request.details?.language === language &&
-             request.details?.educationType === educationType &&
-             request.status === 'ACTIVE'
-    }).length
   }
+
+  // 월 단위 가용성 프리로드 - 데스크톱과 완전히 동일한 로직
+  const preloadMonthAvailability = async (scheduleData: any[]) => {
+    console.log('🔥 [모바일] 월 가용성 미리 로드 시작', {
+      timestamp: new Date().toISOString(),
+      authenticatedUser: !!authenticatedUser,
+      scheduleData: scheduleData,
+      scheduleDataLength: scheduleData?.length,
+      userInfo: userInfo
+    })
+
+    if (!authenticatedUser) {
+      console.log('❌ [모바일] 인증되지 않은 사용자 - 함수 종료')
+      return
+    }
+
+    if (!scheduleData || scheduleData.length === 0) {
+      console.log('⚠️ [모바일] 스케줄 데이터 없음 - 가용성 로드 스킵')
+      return
+    }
+
+    // 스케줄이 있는 날짜들 추출
+    const uniqueDates = [...new Set(scheduleData.map((item: any) => item.date).filter(Boolean))]
+    console.log(`📅 [모바일] ${uniqueDates.length}개 날짜 가용성 로드 시작`)
+
+    // 병렬로 모든 날짜의 가용성 로드 (데스크톱과 동일)
+    const promises = uniqueDates.map(async (date) => {
+      try {
+        await checkAvailability(date, true) // 강제 새로고침
+        console.log(`✅ [모바일] ${date} 가용성 로드 완료`)
+      } catch (error) {
+        console.warn(`⚠️ [모바일] ${date} 가용성 로드 실패:`, error)
+      }
+    })
+
+    await Promise.all(promises)
+    console.log('🎯 [모바일] 월 가용성 프리로드 완료')
+  }
+
+  // 선택된 날짜가 바뀌면 가용성 강제 새로고침 (데스크톱과 동일)
+  useEffect(() => {
+    if (selectedDate && authenticatedUser) {
+      console.log('🔄 [모바일] 모달 열림, 가용성 강제 새로고침:', selectedDate)
+      checkAvailability(selectedDate, true) // forceRefresh = true
+    }
+  }, [selectedDate, authenticatedUser])
+
+  // 모달 열릴 때는 이미 로드된 가용성 사용 (데스크톱과 동일)
+  // preloadMonthAvailability는 스케줄 로드 시 자동 호출됨
 
   // 1:1 교육 시간 - 기존 page와 완전히 동일
   const getOneOnOneSlotTime = (slot: number) => {
@@ -606,6 +729,25 @@ export function MobileEducationCalendar({ isOpen, onClose, authenticatedUser, us
     
     console.log('👤 [Mobile Education] 교육 신청:', { date, slot, type })
     
+    // 🚨 [DEBUG] 타입 변환 과정 상세 로깅
+    const educationType = type.mode === '1:1' ? '1:1' : 'small-group'
+    const category = (() => {
+      if (type.lang === 'japanese' || type.lang === 'chinese') {
+        return '공통'
+      }
+      return type.category || '공통'
+    })()
+    
+    console.log('🔍 [DEBUG] 타입 변환 과정:', {
+      originalType: type,
+      originalTypeJson: JSON.stringify(type),
+      convertedEducationType: educationType,
+      originalCategory: type.category,
+      finalCategory: category,
+      language: type.lang,
+      categoryLogic: type.lang === 'japanese' || type.lang === 'chinese' ? 'forced_공통' : 'use_original_or_default'
+    })
+    
     try {
       const requestData = { 
         name: userInfo.name || authenticatedUser.name,
@@ -614,20 +756,11 @@ export function MobileEducationCalendar({ isOpen, onClose, authenticatedUser, us
         date: date,
         slot: slot,
         type: 'education',
-        details: {
-          language: type.lang,
-          educationType: type.mode === '1:1' ? '1:1' : 'small-group',
-          category: (() => {
-            // 일본어와 중국어는 분류가 없으므로 언어명만 사용
-            if (type.lang === 'japanese') {
-              return '일본어'
-            } else if (type.lang === 'chinese') {
-              return '중국어'
-            }
-            // 한/영만 신규/재자격/공통 분류 사용
-            return type.category || '신규'
-          })()
-        }
+          details: {
+            language: type.lang,
+            educationType: educationType,
+            category: category
+          }
       }
 
       console.log('📤 [Mobile Education] 신청 데이터:', requestData)
@@ -655,8 +788,16 @@ ${guidance}`,
         // 신청 내역 새로고침
         loadMyRequests()
         
-        // 가용성 캐시 전체 클리어 (다른 사용자들도 업데이트된 정보를 보도록)
-        setAvailabilityCache(new Map())
+        // 가용성 캐시 전체 클리어 및 전체 월 가용성 갱신 (데스크톱과 동일)
+        setAvailabilityCache({})
+        
+        // 전체 월 가용성 갱신으로 모든 사용자 신청 반영
+        setTimeout(async () => {
+          await checkAvailability(date, true) // 해당 날짜 우선 갱신
+          if (schedules.length > 0) {
+            await preloadMonthAvailability(schedules) // 전체 월 동기화
+          }
+        }, 500)
         
         // 모달 닫기
         setSelectedDate(null)
@@ -684,41 +825,13 @@ ${guidance}`,
             type: 'error'
           })
         } else {
-          // Dropbox API 폴백
-          console.log('🔄 [Mobile Education] Dropbox API 폴백 시도')
-          const dropboxResponse = await fetch('/api/requests/dropbox', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestData)
+          // Database API 실패 시 일반 오류 메시지 (Dropbox 폴백 제거)
+          console.error('❌ [Mobile Education] Database API 실패, Dropbox 폴백 스킵')
+          showAlert({
+            title: '신청 실패',
+            message: '신청 처리 중 오류가 발생했습니다. 다시 시도해주세요.',
+            type: 'error'
           })
-
-          if (dropboxResponse.ok) {
-            const dropboxResult = await dropboxResponse.json()
-            console.log('✅ [Mobile Education] Dropbox 신청 성공:', dropboxResult)
-            showAlert({
-              title: '신청 완료',
-              message: '교육 신청이 완료되었습니다!',
-              type: 'success'
-            })
-            
-            // 신청 내역 새로고침
-            loadMyRequests()
-            
-            // 가용성 캐시 전체 클리어 (다른 사용자들도 업데이트된 정보를 보도록)
-            setAvailabilityCache(new Map())
-            
-            // 모달 닫기
-            setSelectedDate(null)
-            setSelectedDaySchedules([])
-          } else {
-            const dropboxError = await dropboxResponse.text()
-            console.error('❌ [Mobile Education] Dropbox 신청 실패:', dropboxError)
-            showAlert({
-              title: '신청 실패',
-              message: '신청 처리 중 오류가 발생했습니다.',
-              type: 'error'
-            })
-          }
         }
       }
     } catch (error) {
@@ -774,6 +887,14 @@ ${guidance}`,
       loadSchedules()
     }
   }, [isOpen, currentDate, authenticatedUser?.email])
+
+  // 월이 변경될 때도 가용성 자동 로드 (데스크톱과 동일)
+  useEffect(() => {
+    if (schedules.length > 0 && authenticatedUser) {
+      console.log('📅 [Mobile Education Calendar] 월 변경, 가용성 재로드')
+      preloadMonthAvailability(schedules)
+    }
+  }, [currentDate.getMonth(), currentDate.getFullYear(), schedules, authenticatedUser])
 
   // userInfo가 로드되면 신청 내역 로드
   useEffect(() => {
@@ -1222,7 +1343,13 @@ ${guidance}`,
                                           <div className="flex items-center gap-1 bg-amber-100 px-2 py-1 rounded-full border border-amber-300">
                                             <Building className="w-3 h-3 text-amber-700" />
                                             <span className="text-sm font-semibold text-amber-800">
-                                              {(edu as any).classroomInfo || selectedDaySchedules[0].classroomInfo} 학과장
+                                              {(() => {
+                                                const eduClassroom = (edu as any).classroomInfo
+                                                const dayClassroom = selectedDaySchedules[0].classroomInfo
+                                                const finalClassroom = eduClassroom || dayClassroom
+                                                console.log(`🏫 [캘린더 교실 표시] edu.classroomInfo: "${eduClassroom}", day.classroomInfo: "${dayClassroom}", 최종: "${finalClassroom}"`)
+                                                return finalClassroom
+                                              })()} 학과장
                                             </span>
                                           </div>
                                         )}
@@ -1300,13 +1427,24 @@ ${guidance}`,
                                       // 가용성 확인 - 기존 page와 완전히 동일
                                       const educationType = edu.type.mode === '1:1' ? '1:1' : 'small-group'
                                       const isAvailable = isSlotAvailable(selectedDate!, slot, edu.type.lang, educationType)
-                                      const currentApplicants = getCurrentApplicants(selectedDate!, slot, edu.type.lang, educationType)
+                                      const currentApplicants = getCurrentApplicants(selectedDate!, slot, edu.type.lang, educationType, edu.type.category)
                                       
                                       return (
                                         <button
                                           key={slot}
                                           onClick={() => {
                                             if (isAvailable) {
+                                              // 🔍 [DEBUG] 신청 시 전달되는 데이터 로깅
+                                              console.log(`🚨 [DEBUG] 신청 버튼 클릭:`, {
+                                                date: selectedDate,
+                                                slot: slot,
+                                                eduType: edu.type,
+                                                eduTypeJson: JSON.stringify(edu.type),
+                                                educationType: edu.type.mode === '1:1' ? '1:1' : 'small-group',
+                                                hasCategory: !!edu.type.category,
+                                                categoryValue: edu.type.category
+                                              })
+                                              
                                               // 기존 page와 완전히 동일 - edu.type 전체 전달
                                               handleEducationApplication(selectedDate!, slot, edu.type)
                                             }
@@ -1330,7 +1468,7 @@ ${guidance}`,
                                             )}
                                             {edu.type.mode === '1:1' && !isAvailable && (
                                               <div className="text-xs text-red-500 mt-1">
-                                                예약됨
+                                                신청 마감
                                               </div>
                                             )}
                                           </div>

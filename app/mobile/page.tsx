@@ -218,8 +218,133 @@ export default function MobilePage() {
         const data = await response.json();
         const educationItems = data.items?.filter((item: any) => item.type === 'education') || [];
         
-        console.log('📊 [모바일] 교육 신청 내역:', educationItems);
+        // 클래스룸 정보 추가 로드
+        if (educationItems.length > 0) {
+          const uniqueMonths = [...new Set(educationItems.map((item: any) => item.date.slice(0, 7)))];
+          const classroomInfoMap = new Map();
+          
+          for (const month of uniqueMonths) {
+            try {
+              const scheduleRes = await fetch(`/api/schedules?month=${month}`);
+              if (scheduleRes.ok) {
+                const scheduleData = await scheduleRes.json();
+                if (scheduleData.data?.days) {
+                  scheduleData.data.days.forEach((day: any) => {
+                    if (day.education && Array.isArray(day.education)) {
+                      day.education.forEach((edu: any) => {
+                        if (edu.classroomInfo && edu.type && edu.slots) {
+                          edu.slots.forEach((slot: number) => {
+                            // 카테고리가 있는 경우와 없는 경우 모두 처리
+                            if (edu.type.category) {
+                              // 카테고리별 키 (한/영 소규모)
+                              const categoryKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category}`;
+                              classroomInfoMap.set(categoryKey, edu.classroomInfo);
+                              console.log(`✅ [모바일 MyPage] 카테고리별 교실 정보: ${categoryKey} → ${edu.classroomInfo}`);
+                            } else {
+                              // 기본 키 (카테고리 없는 교육: 일본어/중국어, 1:1)
+                              const baseKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`;
+                              classroomInfoMap.set(baseKey, edu.classroomInfo);
+                              console.log(`✅ [모바일 MyPage] 기본 교실 정보: ${baseKey} → ${edu.classroomInfo}`);
+                            }
+                          });
+                        }
+                      });
+                    }
+                  });
+                }
+              }
+            } catch (error) {
+              console.warn(`모바일 클래스룸 정보 로드 실패 (${month}):`, error);
+            }
+          }
+          
+          console.log('🏫 [모바일 MyPage] 최종 교실 정보 맵:', Object.fromEntries(classroomInfoMap));
+          
+          // 교육 항목에 클래스룸 정보 추가
+          const enrichedItems = educationItems.map((item: any) => {
+            const language = item.details?.language || 'korean-english';
+            const mode = item.details?.mode || item.details?.educationType || '1:1';
+            const category = item.details?.category;
+            const normalizedMode = mode === 'small-group' ? 'small' : mode;
+            
+            console.log(`🔍 [모바일 MyPage] 원본 신청 데이터:`, {
+              date: item.date,
+              slot: item.slot,
+              details: item.details,
+              schedule: item.schedule,
+              language,
+              mode,
+              category,
+              normalizedMode,
+              expectedCategoryKey: `${item.date}_${item.slot}_${language}_${normalizedMode}_${category}`,
+              expectedBaseKey: `${item.date}_${item.slot}_${language}_${normalizedMode}`
+            });
+            
+            // 클래스룸 정보 매칭 (우선순위: Database API → 스케줄 API)
+            let classroomInfo = null;
+            
+            // 1. Database API에서 제공하는 클래스룸 정보 확인
+            if (item.schedule?.classroom) {
+              console.log(`🚨 [모바일 MyPage] Database API 클래스룸 발견: ${item.schedule.classroom} (카테고리: ${category})`);
+              // 카테고리별 매칭을 우선 시도하고, 실패하면 Database API 사용
+            }
+            
+            // 2. 스케줄 API 매칭 우선 시도
+            {
+              // 소규모 교육의 경우 차수를 녹음 슬롯으로 변환
+              let actualSlots = [item.slot];
+              if (normalizedMode === 'small') {
+                // 소규모 교육: 차수 → 녹음 슬롯 변환
+                const slotMapping = {
+                  1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]
+                };
+                actualSlots = slotMapping[item.slot as keyof typeof slotMapping] || [item.slot];
+                console.log(`🔄 [모바일 MyPage] 소규모 차수 변환: ${item.slot}차 → 녹음슬롯 [${actualSlots}]`);
+              }
+              
+              // 각 녹음 슬롯에 대해 카테고리별 키 시도
+              if (category && language === 'korean-english' && normalizedMode === 'small') {
+                for (const slot of actualSlots) {
+                  const categoryKey = `${item.date}_${slot}_${language}_${normalizedMode}_${category}`;
+                  classroomInfo = classroomInfoMap.get(categoryKey);
+                  console.log(`🔍 [모바일 MyPage] 카테고리 키 시도: ${categoryKey} → ${classroomInfo}`);
+                  if (classroomInfo) break;
+                }
+              }
+              
+              // 기본 키 시도 (카테고리 없는 교육이거나 카테고리별 매칭 실패)
+              if (!classroomInfo) {
+                for (const slot of actualSlots) {
+                  const baseKey = `${item.date}_${slot}_${language}_${normalizedMode}`;
+                  classroomInfo = classroomInfoMap.get(baseKey);
+                  console.log(`🔍 [모바일 MyPage] 기본 키 시도: ${baseKey} → ${classroomInfo}`);
+                  if (classroomInfo) break;
+                }
+              }
+              
+              // 스케줄 API 매칭 실패 시 Database API 폴백
+              if (!classroomInfo && item.schedule?.classroom) {
+                classroomInfo = item.schedule.classroom;
+                console.log(`🔄 [모바일 MyPage] Database API 폴백: ${classroomInfo}`);
+              }
+            }
+            
+            // 클래스룸 정보 포맷팅
+            const formattedClassroom = classroomInfo ? (classroomInfo.includes('학과장') ? classroomInfo : `${classroomInfo} 학과장`) : '';
+            
+            console.log(`🔍 [모바일 MyPage] 교실 매칭: ${item.date}_${item.slot}_${language}_${normalizedMode} (카테고리: ${category || 'none'}) → ${classroomInfo} → ${formattedClassroom}`);
+            
+            return {
+              ...item,
+              classroomInfo: formattedClassroom
+            };
+          });
+          
+          console.log('📊 [모바일] 교육 신청 내역 (클래스룸 정보 포함):', enrichedItems);
+          setEducationRequests(enrichedItems);
+        } else {
         setEducationRequests(educationItems);
+        }
       } else {
         console.error('❌ [모바일] 교육 신청 내역 로드 실패:', response.status);
         setEducationRequests([]);
@@ -303,6 +428,12 @@ export default function MobilePage() {
     const educationDate = new Date(latest.date);
     
     console.log('🎓 교육 신청 내역 디버그:', { latest, requestDate, educationDate });
+    console.log('🔍 [getEducationStatusMessage] latest 객체 상세:', {
+      classroomInfo: latest.classroomInfo,
+      details: latest.details,
+      hasClassroomInfo: !!latest.classroomInfo,
+      classroomInfoType: typeof latest.classroomInfo
+    });
     
     const formatDate = (date: Date) => {
       return date.toLocaleDateString("ko-KR", {
@@ -340,9 +471,17 @@ export default function MobilePage() {
     
     const modeText = educationType === '1:1' ? '1:1 교육' : '소규모 교육';
 
-    console.log('🎓 교육 상태 메시지 디버그:', { latest, language, educationType, languageText, modeText });
+    // 카테고리 정보 (한/영 소규모만)
+    const category = latest.details?.category;
+    const categoryText = (language === 'korean-english' && (educationType === 'small' || educationType === 'small-group') && category) ? ` ${category}` : '';
+    
+    // 클래스룸 정보 추가 (소규모 교육만)
+    const classroomInfo = latest.classroomInfo;
+    const locationPart = (educationType === 'small' || educationType === 'small-group') && classroomInfo ? ` (${classroomInfo})` : '';
 
-    return `${formatDate(educationDate)} ${formatTime(latest.slot, educationType)} ${languageText} ${modeText}을 신청하셨습니다.`;
+    console.log('🎓 교육 상태 메시지 디버그:', { latest, language, educationType, languageText, modeText, category, categoryText, classroomInfo, locationPart });
+
+    return `${formatDate(educationDate)} ${formatTime(latest.slot, educationType)} ${languageText} ${modeText}${categoryText}${locationPart}을 신청하셨습니다.`;
   };
 
   const shouldEmphasizeReviewCard = React.useMemo(() => {
@@ -980,7 +1119,7 @@ export default function MobilePage() {
       />
 
       {/* 캘린더 모달들 */}
-      {calendarType === 'recording' && (
+      {calendarType === 'recording' && authenticatedUser && (
         <MobileRecordingCalendar
           isOpen={showCalendarModal}
           onClose={() => setShowCalendarModal(false)}
@@ -989,7 +1128,7 @@ export default function MobilePage() {
         />
       )}
       
-      {calendarType === 'education' && (
+      {calendarType === 'education' && authenticatedUser && (
         <MobileEducationCalendar
           isOpen={showCalendarModal}
           onClose={() => setShowCalendarModal(false)}
@@ -1020,6 +1159,9 @@ function MobileMyPageModal({
   const [loading, setLoading] = useState(false)
   const [myRequests, setMyRequests] = useState<any[]>([])
   const [myRequestsLoading, setMyRequestsLoading] = useState(false)
+  const [classroomInfoMap, setClassroomInfoMap] = useState<Map<string, string>>(new Map())
+  const [requestFilter, setRequestFilter] = useState<'all' | 'recording' | 'education'>('all')
+  const filteredRequests = myRequests.filter(r => requestFilter === 'all' || r.type === requestFilter)
   
   const myPageDialogHook = useCustomDialog()
   const { isOpen: customDialogOpen, config: customDialogConfig, close: customDialogClose, showAlert, showConfirm } = myPageDialogHook
@@ -1039,19 +1181,152 @@ function MobileMyPageModal({
       console.log('📄 [모바일 MyPage] 신청 내역 응답:', data)
       
       if (data.success && data.items) {
-        // Database API 응답을 기존 형식으로 변환
-        const convertedRequests = data.items.map((item: any) => ({
+        // 캘린더 스케줄 API에서 교실 정보 가져오기 (메인 페이지와 동일한 로직)
+        const uniqueMonths = [...new Set(data.items.map((item: any) => item.date.slice(0, 7)))]
+        const classroomInfoMap = new Map()
+        
+        for (const month of uniqueMonths) {
+          try {
+            console.log(`🔍 [모바일 MyPage] ${month} 월 스케줄 로드 중...`)
+            const scheduleRes = await fetch(`/api/schedules?month=${month}`)
+            if (scheduleRes.ok) {
+              const scheduleData = await scheduleRes.json()
+              console.log(`📅 [모바일 MyPage] ${month} 스케줄 응답:`, scheduleData)
+              
+              if (scheduleData.data?.days) {
+                scheduleData.data.days.forEach((day: any) => {
+                  console.log(`🔍 [모바일 MyPage] 날짜 ${day.date} 교육 데이터:`, day.education)
+                  if (day.education && Array.isArray(day.education)) {
+                    day.education.forEach((edu: any) => {
+                      console.log(`🔍 [모바일 MyPage] 교육 객체:`, edu)
+                      if (edu.classroomInfo && edu.type && edu.slots) {
+                        edu.slots.forEach((slot: number) => {
+                          // 카테고리가 있는 경우와 없는 경우 모두 처리
+                          if (edu.type.category) {
+                            // 카테고리별 키 (한/영 소규모)
+                            const categoryKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category}`;
+                            classroomInfoMap.set(categoryKey, edu.classroomInfo);
+                            console.log(`✅ [모바일 MyPage] 카테고리별 교실 정보: ${categoryKey} → ${edu.classroomInfo}`);
+                          } else {
+                            // 기본 키 (카테고리 없는 교육: 일본어/중국어, 1:1)
+                            const baseKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`;
+                            classroomInfoMap.set(baseKey, edu.classroomInfo);
+                            console.log(`✅ [모바일 MyPage] 기본 교실 정보: ${baseKey} → ${edu.classroomInfo}`);
+                          }
+                        });
+                      }
+                    });
+                  }
+                });
+              }
+            }
+          } catch (error) {
+            console.warn(`모바일 클래스룸 정보 로드 실패 (${month}):`, error)
+          }
+        }
+        
+        console.log('🏫 [모바일 MyPage] 최종 교실 정보 맵:', Object.fromEntries(classroomInfoMap))
+        
+        // 교육 항목에 클래스룸 정보 추가 (메인 페이지와 동일한 로직)
+        const enrichedItems = data.items.map((item: any) => {
+          const language = item.details?.language || 'korean-english';
+          const mode = item.details?.mode || item.details?.educationType || '1:1';
+          const category = item.details?.category;
+          const normalizedMode = mode === 'small-group' ? 'small' : mode;
+          
+          console.log(`🔍 [모바일 MyPage] 원본 신청 데이터:`, {
+            date: item.date,
+            slot: item.slot,
+            details: item.details,
+            schedule: item.schedule,
+            language,
+            mode,
+            category,
+            normalizedMode,
+            expectedCategoryKey: `${item.date}_${item.slot}_${language}_${normalizedMode}_${category}`,
+            expectedBaseKey: `${item.date}_${item.slot}_${language}_${normalizedMode}`
+          });
+          
+          // 클래스룸 정보 매칭 (스케줄 API 우선)
+          let classroomInfo = null;
+          
+          // 1. Database API에서 제공하는 클래스룸 정보 확인
+          if (item.schedule?.classroom) {
+            console.log(`🚨 [모바일 MyPage] Database API 클래스룸 발견: ${item.schedule.classroom} (카테고리: ${category})`);
+            // 카테고리별 매칭을 우선 시도하고, 실패하면 Database API 사용
+          }
+          
+          // 2. 스케줄 API 매칭 우선 시도
+          {
+            // 소규모 교육의 경우 차수를 녹음 슬롯으로 변환
+            let actualSlots = [item.slot];
+            if (normalizedMode === 'small') {
+              // 소규모 교육: 차수 → 녹음 슬롯 변환
+              const slotMapping = {
+                1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]
+              };
+              actualSlots = slotMapping[item.slot as keyof typeof slotMapping] || [item.slot];
+              console.log(`🔄 [모바일 MyPage] 소규모 차수 변환: ${item.slot}차 → 녹음슬롯 [${actualSlots}]`);
+            }
+            
+            // 각 녹음 슬롯에 대해 카테고리별 키 시도
+            if (category && language === 'korean-english' && normalizedMode === 'small') {
+              for (const slot of actualSlots) {
+                const categoryKey = `${item.date}_${slot}_${language}_${normalizedMode}_${category}`;
+                classroomInfo = classroomInfoMap.get(categoryKey);
+                console.log(`🔍 [모바일 MyPage] 카테고리 키 시도: ${categoryKey} → ${classroomInfo}`);
+                if (classroomInfo) break;
+              }
+            }
+            
+            // 기본 키 시도 (카테고리 없는 교육이거나 카테고리별 매칭 실패)
+            if (!classroomInfo) {
+              for (const slot of actualSlots) {
+                const baseKey = `${item.date}_${slot}_${language}_${normalizedMode}`;
+                classroomInfo = classroomInfoMap.get(baseKey);
+                console.log(`🔍 [모바일 MyPage] 기본 키 시도: ${baseKey} → ${classroomInfo}`);
+                if (classroomInfo) break;
+              }
+            }
+            
+            // 스케줄 API 매칭 실패 시 Database API 폴백
+            if (!classroomInfo && item.schedule?.classroom) {
+              classroomInfo = item.schedule.classroom;
+              console.log(`🔄 [모바일 MyPage] Database API 폴백: ${classroomInfo}`);
+            }
+          }
+          
+          // 클래스룸 정보 포맷팅
+          const formattedClassroom = classroomInfo ? (classroomInfo.includes('학과장') ? classroomInfo : `${classroomInfo} 학과장`) : '';
+          
+          console.log(`🔍 [모바일 MyPage] 교실 매칭: ${item.date}_${item.slot}_${language}_${normalizedMode} (카테고리: ${category || 'none'}) → ${classroomInfo} → ${formattedClassroom}`);
+          
+          return {
           id: item.id,
           type: item.type,
           date: item.date,
           slot: item.slot,
           details: item.details,
           applicationTime: item.appliedAt,
-          status: item.status
-        }))
+            status: item.status,
+            classroomInfo: formattedClassroom
+          };
+        });
         
-        setMyRequests(convertedRequests)
-        console.log('✅ [모바일 MyPage] 신청 내역 로드 완료:', convertedRequests.length, '개')
+        console.log('📊 [모바일 MyPage] 교육 신청 내역 (클래스룸 정보 포함):', enrichedItems);
+        setMyRequests(enrichedItems);
+        console.log('✅ [모바일 MyPage] 신청 내역 로드 완료:', enrichedItems.length, '개')
+        
+        // 실제 설정된 데이터 확인
+        setTimeout(() => {
+          console.log('🔍 [모바일 MyPage] setMyRequests 후 실제 데이터 확인:', enrichedItems.map(item => ({
+            id: item.id,
+            date: item.date,
+            slot: item.slot,
+            classroomInfo: item.classroomInfo,
+            hasClassroomInfo: !!item.classroomInfo
+          })));
+        }, 100);
       } else {
         // Database API 실패시 Dropbox API로 fallback
         console.log('🔄 [모바일 MyPage] Database 실패, Dropbox API로 fallback')
@@ -1417,6 +1692,28 @@ function MobileMyPageModal({
 
           {activeTab === "requests" && (
             <div className="space-y-6">
+              {!myRequestsLoading && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setRequestFilter('all')}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${requestFilter === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                  >
+                    전체
+                  </button>
+                  <button
+                    onClick={() => setRequestFilter('recording')}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${requestFilter === 'recording' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                  >
+                    녹음
+                  </button>
+                  <button
+                    onClick={() => setRequestFilter('education')}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${requestFilter === 'education' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                  >
+                    교육
+                  </button>
+                </div>
+              )}
 
               {myRequestsLoading ? (
                 <div className="bg-white rounded-xl shadow-lg p-8 border border-blue-100">
@@ -1435,7 +1732,7 @@ function MobileMyPageModal({
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {myRequests.map((request) => {
+                  {filteredRequests.map((request) => {
                     const canCancel = () => {
                       if (request.status !== 'ACTIVE') return false
                       
@@ -1474,17 +1771,42 @@ function MobileMyPageModal({
                         return `녹음: ${langMap[recordingLang] || recordingLang || '알 수 없음'}`
                       } else if (request.type === 'education') {
                         const eduTypeMap: Record<string, string> = {
-                          '1:1': '1:1 교육',
-                          'small-group': '소규모 교육'
+                          '1:1': '1:1',
+                          'small-group': '소규모',
+                          'small': '소규모'
                         }
                         const langMap: Record<string, string> = {
                           'korean-english': '한/영',
                           'chinese': '중국어',
                           'japanese': '일본어'
                         }
-                        const eduType = eduTypeMap[request.details?.educationType] || '교육'
+                        
+                        const eduType = eduTypeMap[request.details?.educationType || request.details?.mode] || '교육'
                         const lang = langMap[request.details?.language] || request.details?.language || ''
-                        return `${eduType}: ${lang}`
+                        
+                        // 카테고리 정보 (한/영 소규모만)
+                        const category = request.details?.category
+                        const categoryText = (request.details?.language === 'korean-english' && 
+                                            (request.details?.educationType === 'small' || request.details?.educationType === 'small-group') && 
+                                            category) ? ` ${category}` : ''
+                        
+                        // 클래스룸 정보 (소규모 교육만)
+                        const classroomInfo = request.classroomInfo
+                        const locationPart = (request.details?.educationType === 'small' || request.details?.educationType === 'small-group') && classroomInfo ? ` (${classroomInfo})` : ''
+                        
+                        console.log(`🔍 [모바일 MyPage] getRequestLabel 디버그:`, {
+                          requestId: request.id,
+                          date: request.date,
+                          slot: request.slot,
+                          language: request.details?.language,
+                          educationType: request.details?.educationType,
+                          category,
+                          classroomInfo,
+                          locationPart,
+                          fullRequest: request
+                        })
+                        
+                        return `${lang} ${eduType}${categoryText}${locationPart}`
                       }
                       return '알 수 없음'
                     }
@@ -1513,7 +1835,7 @@ function MobileMyPageModal({
                                   {request.type === 'education' ? '교육' : '녹음'}
                                 </div>
                                 <div className="text-white/80 text-sm">
-                                  {getRequestLabel(request).split(': ')[1] || getRequestLabel(request)}
+                                  {getMobileRequestDetailLabel(request, classroomInfoMap)}
                                 </div>
                               </div>
                             </div>
@@ -1671,4 +1993,51 @@ function MobileMyPageModal({
 
     </div>
   )
+}
+
+// 모바일에서 사용할 통일된 detail 표시 함수
+function getMobileRequestDetailLabel(request: any, classroomInfoMap: Map<string, string>) {
+  if (request.type === 'recording') {
+    const language = request.details?.recordingLanguage || 'recording'
+    const languageLabel = language === 'korean-english' ? '한/영' : 
+                         language === 'japanese' ? '일본어' : 
+                         language === 'chinese' ? '중국어' : language
+    return languageLabel
+  }
+  
+  // 교육 타입의 경우
+  const language = request.details?.language || 'korean-english'
+  const languageLabel = language === 'korean-english' ? '한/영' : 
+                       language === 'japanese' ? '일본어' : 
+                       language === 'chinese' ? '중국어' : language
+  
+  const mode = request.details?.mode || request.details?.educationType || '1:1'
+  const modeLabel = (mode === 'small' || mode === 'small-group') ? '소규모' : '1:1'
+  
+  const category = request.details?.category || '공통'
+  
+  // 교실 정보 - request.classroomInfo를 우선 사용, 없으면 classroomInfoMap에서 가져오기
+  let classroom = request.classroomInfo || ''
+  
+  if (!classroom) {
+    // fallback: classroomInfoMap에서 가져오기
+    const educationKey = `${request.date}_${request.slot}_${language}_${mode === 'small' || mode === 'small-group' ? 'small' : '1:1'}`
+    const educationClassroom = classroomInfoMap.get(educationKey) || ''
+    classroom = educationClassroom ? (educationClassroom.includes('학과장') ? educationClassroom : `${educationClassroom} 학과장`) : ''
+    console.log(`🔍 [모바일 MyPage] 교실 매칭 (fallback): ${educationKey} → ${educationClassroom} → ${classroom}`)
+  }
+  
+  const locationPart = (mode === 'small' || mode === 'small-group') && classroom ? ` · ${classroom}` : ''
+  
+  console.log(`🔍 [모바일 MyPage] 최종 교실 정보: request.classroomInfo=${request.classroomInfo}, classroom=${classroom}, locationPart=${locationPart}`)
+  
+  // 카테고리 이모지 및 라벨
+  const categoryEmoji = category === '신규' ? '✨' :
+                       category === '재자격' ? '🔄' :
+                       category === '공통' ? '👥' :
+                       category === 'PUS' ? '✈️' : '📚'
+  
+  const categoryPart = category ? ` ${categoryEmoji}${category}` : ''
+  
+  return `${languageLabel} ${modeLabel}${locationPart}${categoryPart}`.trim()
 }
