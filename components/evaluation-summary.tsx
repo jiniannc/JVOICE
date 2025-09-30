@@ -88,7 +88,24 @@ export function EvaluationSummary({
     englishTotalScore = 0, // 누락된 속성 추가
   } = evaluationResult;
 
-
+  // 한영 소규모 체크인 기록 확인 (상세 평가 결과 표시 권한)
+  const hasDetailedReviewAccess = (() => {
+    if (!isReviewMode || language !== 'korean-english') return false;
+    
+    try {
+      const checkinRecords = JSON.parse(localStorage.getItem('koreanEnglishSmallCheckins') || '[]')
+      const hasCheckin = checkinRecords.some((record: any) => record.employeeId === employeeId)
+      console.log('🔍 [EvaluationSummary] 한영 소규모 체크인 기록 확인:', {
+        employeeId,
+        hasCheckin,
+        checkinRecords: checkinRecords.length
+      })
+      return hasCheckin
+    } catch (error) {
+      console.error('체크인 기록 확인 오류:', error)
+      return false
+    }
+  })()
 
   const gradeInfo = getGradeInfo(totalScore, categoryScores, language, category);
 
@@ -571,8 +588,8 @@ export function EvaluationSummary({
           </div>
         </Card>
 
-        {/* 카테고리별 상세 점수 (한/영 기준만) */}
-        {!isReviewMode && language === "korean-english" && (
+        {/* 카테고리별 상세 점수 (한/영 기준만) - admin 또는 한영 소규모 체크인 시 표시 */}
+        {(!isReviewMode || hasDetailedReviewAccess) && language === "korean-english" && (
           <Card className="mb-6 bg-white shadow-lg rounded-2xl overflow-hidden border-purple-100">
             <CardHeader className="bg-gray-50/80">
               <CardTitle className="flex items-center gap-3">
@@ -648,8 +665,8 @@ export function EvaluationSummary({
             </CardContent>
           </Card>
         )}
-        {/* 일본어/중국어만: 카테고리별 상세 점수 */}
-        {!isReviewMode && (language === "japanese" || language === "chinese") && (
+        {/* 일본어/중국어만: 카테고리별 상세 점수 - admin 또는 한영 소규모 체크인 시 표시 */}
+        {(!isReviewMode || hasDetailedReviewAccess) && (language === "japanese" || language === "chinese") && (
           <Card className="mb-6 bg-white shadow-lg rounded-2xl overflow-hidden border-purple-100">
             <CardHeader className="bg-gray-50/80">
               <CardTitle className="flex items-center gap-3">
@@ -688,8 +705,26 @@ export function EvaluationSummary({
         )}
       </div>
 
-      {/* PDF 2페이지: 평가 결과 분석, 평가 의견 */}
-      {!isReviewMode && (
+      {/* 한영 소규모 체크인 시 특별 안내 메시지 */}
+      {isReviewMode && hasDetailedReviewAccess && (
+        <div className="max-w-4xl mx-auto mb-6">
+          <Card className="bg-gradient-to-r from-green-50 to-blue-50 border-green-200 shadow-lg">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <CheckCircle className="w-6 h-6 text-green-600" />
+                <h3 className="text-lg font-bold text-green-800">한영 소규모 교육 체크인 완료</h3>
+              </div>
+              <p className="text-green-700 leading-relaxed">
+                한영 소규모 교육에 참여하셨으므로 <strong>상세 평가 결과</strong>를 확인할 수 있습니다. 
+                아래에서 admin과 동일한 수준의 상세 분석 결과를 확인해보세요.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* PDF 2페이지: 평가 결과 분석, 평가 의견 - admin 또는 한영 소규모 체크인 시 표시 */}
+      {(!isReviewMode || hasDetailedReviewAccess) && (
       <div id="pdf-page2" className="max-w-4xl mx-auto mt-6">
         {/* 평가 결과 분석 */}
           <Card className="mb-6 bg-white shadow-lg rounded-2xl overflow-hidden border-purple-100">

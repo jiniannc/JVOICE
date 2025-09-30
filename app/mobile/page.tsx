@@ -28,6 +28,7 @@ import { GoogleAuth } from "@/components/google-auth"
 import { employeeDB } from "@/lib/employee-database"
 import { MobileReviewPage } from "@/components/mobile-review-page"
 import { EducationCheckinModal } from "@/components/education-checkin-modal"
+import { EducationManagementModal } from "@/components/education-management-modal"
 import { MobileRecordingCalendar } from "@/components/mobile-recording-calendar"
 import { MobileEducationCalendar } from "@/components/mobile-education-calendar"
 import { CustomDialog } from "@/components/ui/custom-dialog"
@@ -137,6 +138,8 @@ export default function MobilePage() {
   const [loadingEducation, setLoadingEducation] = useState(false)
   const [currentTab, setCurrentTab] = useState<'evaluation' | 'education'>('evaluation')
   const [showEducationCheckin, setShowEducationCheckin] = useState(false)
+  const [showEducationManagement, setShowEducationManagement] = useState(false)
+  const [isInstructorOrAdmin, setIsInstructorOrAdmin] = useState(false)
   
   // 캘린더 모달 상태
   const [showCalendarModal, setShowCalendarModal] = useState(false)
@@ -330,7 +333,7 @@ export default function MobilePage() {
             }
             
             // 클래스룸 정보 포맷팅
-            const formattedClassroom = classroomInfo ? (classroomInfo.includes('학과장') ? classroomInfo : `${classroomInfo} 학과장`) : '';
+            const formattedClassroom = classroomInfo || '';
             
             console.log(`🔍 [모바일 MyPage] 교실 매칭: ${item.date}_${item.slot}_${language}_${normalizedMode} (카테고리: ${category || 'none'}) → ${classroomInfo} → ${formattedClassroom}`);
             
@@ -511,6 +514,15 @@ export default function MobilePage() {
               isAdmin: employeeInfo.isAdmin,
               roles: employeeInfo.roles,
             }))
+            
+            // 교관 또는 관리자 권한 확인
+            setIsInstructorOrAdmin(employeeInfo.isInstructor || employeeInfo.isAdmin)
+            console.log('🔍 [Mobile] 사용자 권한:', {
+              isInstructor: employeeInfo.isInstructor,
+              isAdmin: employeeInfo.isAdmin,
+              roles: employeeInfo.roles,
+              canAccessEducationManagement: employeeInfo.isInstructor || employeeInfo.isAdmin
+            })
           } else {
             setUserInfo((prev) => ({
               ...prev,
@@ -521,6 +533,7 @@ export default function MobilePage() {
               isAdmin: false,
               roles: [],
             }))
+            setIsInstructorOrAdmin(false)
           }
         } else {
           setAuthenticatedUser(null)
@@ -635,6 +648,9 @@ export default function MobilePage() {
       } else if (action === "educationCheckin") {
         console.log('✅ 교육 체크인 모달 열기')
         setShowEducationCheckin(true)
+      } else if (action === "educationManagement") {
+        console.log('📊 교육 관리 모달 열기')
+        setShowEducationManagement(true)
       }
     }
   }
@@ -1047,6 +1063,38 @@ export default function MobilePage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* 교육 관리 카드 - 교관/관리자만 표시 */}
+              {isInstructorOrAdmin && (
+                <Card 
+                  className={`bg-gradient-to-br from-white via-red-50/30 to-pink-50/20 shadow-2xl rounded-2xl border border-white/50 card-hover cursor-pointer overflow-hidden group ${
+                    isPageLoaded ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'
+                  }`}
+                  style={{ transitionDelay: '1250ms' }}
+                  onClick={(e) => handleCardClick("educationManagement", e)}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-red-500/3 via-pink-500/2 to-rose-500/3 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
+                  <CardContent className="p-8 relative">
+                    <div className="flex items-center gap-6">
+                      <div className="bg-gradient-to-br from-red-600 via-pink-600 to-rose-600 p-5 rounded-2xl shadow-2xl group-hover:shadow-3xl transition-all duration-500 subtle-float">
+                        <Monitor className="w-10 h-10 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-xl font-black text-gray-900 mb-2">교육 관리</h3>
+                        <p className="text-gray-600 text-sm mb-4 leading-relaxed">
+                          교육 출석 현황 및 교육 일지 관리
+                        </p>
+                        <div className="flex items-center gap-3">
+                          <Badge className="bg-gradient-to-r from-red-600 to-pink-600 text-white border-0 text-xs font-bold px-3 py-1 shadow-lg">
+                            <Monitor className="w-3 h-3 mr-1" />
+                            교관 전용
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </>
           )}
          </div>
@@ -1115,6 +1163,13 @@ export default function MobilePage() {
       <EducationCheckinModal
         isOpen={showEducationCheckin}
         onClose={() => setShowEducationCheckin(false)}
+        userInfo={userInfo}
+      />
+
+      {/* 교육 관리 모달 */}
+      <EducationManagementModal
+        isOpen={showEducationManagement}
+        onClose={() => setShowEducationManagement(false)}
         userInfo={userInfo}
       />
 
@@ -1297,7 +1352,7 @@ function MobileMyPageModal({
           }
           
           // 클래스룸 정보 포맷팅
-          const formattedClassroom = classroomInfo ? (classroomInfo.includes('학과장') ? classroomInfo : `${classroomInfo} 학과장`) : '';
+          const formattedClassroom = classroomInfo || '';
           
           console.log(`🔍 [모바일 MyPage] 교실 매칭: ${item.date}_${item.slot}_${language}_${normalizedMode} (카테고리: ${category || 'none'}) → ${classroomInfo} → ${formattedClassroom}`);
           
@@ -1429,6 +1484,20 @@ function MobileMyPageModal({
         })
         // 신청 내역 새로고침하여 UI 업데이트
         loadMyRequests()
+        
+        // 🚀 모바일 캘린더들에게 리프레시 신호 전송 (취소 후 즉시 반영)
+        console.log('🔄 [모바일 취소 완료] 캘린더 리프레시 신호 전송')
+        
+        // CustomEvent를 통해 모든 캘린더 컴포넌트에게 리프레시 신호 전송
+        const refreshEvent = new CustomEvent('mobile-calendar-refresh', {
+          detail: { 
+            reason: 'request-cancelled',
+            timestamp: Date.now()
+          }
+        })
+        window.dispatchEvent(refreshEvent)
+        
+        console.log('✅ [모바일 취소 완료] 캘린더 리프레시 신호 전송 완료')
       } else {
         // 데스크톱과 동일한 오류 처리
         if (data.error === '취소기간만료') {
@@ -1913,7 +1982,16 @@ function MobileMyPageModal({
                                   <>
                                     <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                                     <span className="text-sm text-green-600 font-medium">
-                                      취소 가능 ({Math.floor(hoursDiff)}시간 남음)
+                                      취소 가능 ({(() => {
+                                        const totalHours = Math.floor(hoursDiff);
+                                        const days = Math.floor(totalHours / 24);
+                                        const hours = totalHours % 24;
+                                        if (days > 0) {
+                                          return hours > 0 ? `${days}일 ${hours}시간 남음` : `${days}일 남음`;
+                                        } else {
+                                          return `${hours}시간 남음`;
+                                        }
+                                      })()})
                                     </span>
                                   </>
                                 ) : (
@@ -2023,7 +2101,7 @@ function getMobileRequestDetailLabel(request: any, classroomInfoMap: Map<string,
     // fallback: classroomInfoMap에서 가져오기
     const educationKey = `${request.date}_${request.slot}_${language}_${mode === 'small' || mode === 'small-group' ? 'small' : '1:1'}`
     const educationClassroom = classroomInfoMap.get(educationKey) || ''
-    classroom = educationClassroom ? (educationClassroom.includes('학과장') ? educationClassroom : `${educationClassroom} 학과장`) : ''
+    classroom = educationClassroom || ''
     console.log(`🔍 [모바일 MyPage] 교실 매칭 (fallback): ${educationKey} → ${educationClassroom} → ${classroom}`)
   }
   

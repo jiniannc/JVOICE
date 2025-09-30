@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { BottomSheet } from "@/components/ui/bottom-sheet"
 import { CustomDialog } from "@/components/ui/custom-dialog"
 import { useCustomDialog } from "@/hooks/use-custom-dialog"
+import { checkTimeRestrictionsDisabled, isRecordingApplicationPeriodValid } from "@/lib/time-restrictions"
 import { 
   Calendar,
   Clock,
@@ -70,9 +71,76 @@ export function MobileRecordingCalendar({ isOpen, onClose, authenticatedUser, us
   const [availabilityCache, setAvailabilityCache] = useState<Map<string, any>>(new Map())
   const [userLanguageRestrictions, setUserLanguageRestrictions] = useState<Record<string, boolean>>({})
   const [myRequests, setMyRequests] = useState<any[]>([])
+  const [timeRestrictionsDisabled, setTimeRestrictionsDisabled] = useState(false)
+  
+  // 활성화된 월 목록 관리 (데스크톱과 동일)
+  const [syncedMonths, setSyncedMonths] = useState<string[]>([])
+  const [syncedMonthsLoading, setSyncedMonthsLoading] = useState(false)
 
   const recordingDialogHook = useCustomDialog()
   const { isOpen: recordingDialogOpen, config: recordingDialogConfig, close: recordingDialogClose, showAlert } = recordingDialogHook
+
+  // 🚀 모바일 취소 후 캘린더 자동 리프레시 이벤트 리스너
+  useEffect(() => {
+    const handleCalendarRefresh = (event: CustomEvent) => {
+      console.log('🔄 [모바일 녹음 캘린더] 리프레시 신호 수신:', event.detail)
+      
+      // 가용성 캐시 초기화
+      setAvailabilityCache(new Map())
+      
+      // 현재 월 스케줄 다시 로드
+      const currentMonth = currentDate.toISOString().slice(0, 7)
+      loadSchedules(currentMonth)
+      
+      // 내 신청 내역 다시 로드
+      loadMyRequests()
+      
+      console.log('✅ [모바일 녹음 캘린더] 리프레시 완료')
+    }
+
+    // 이벤트 리스너 등록
+    window.addEventListener('mobile-calendar-refresh', handleCalendarRefresh as EventListener)
+    
+    // 컴포넌트 언마운트 시 이벤트 리스너 제거
+    return () => {
+      window.removeEventListener('mobile-calendar-refresh', handleCalendarRefresh as EventListener)
+    }
+  }, [currentDate])
+
+  // 동기화된 월 목록 가져오기 (데스크톱과 동일)
+  const fetchSyncedMonths = async () => {
+    setSyncedMonthsLoading(true)
+    try {
+      const response = await fetch('/api/schedules/sync-from-sheets')
+      const result = await response.json()
+      
+      if (result.success && result.schedules) {
+        const months = result.schedules
+          .filter((s: any) => s.active === true) // 활성화된 스케줄만 필터링
+          .map((s: any) => s.month)
+          .sort()
+          .reverse() // 최신순
+        setSyncedMonths(months)
+        console.log('📅 [Mobile Recording] 활성화된 월 목록:', months)
+        
+        // 현재 선택된 월이 동기화된 월 목록에 없으면 첫 번째 월로 변경
+        const currentMonthStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}`
+        if (months.length > 0 && !months.includes(currentMonthStr)) {
+          const [year, month] = months[0].split('-')
+          setCurrentDate(new Date(parseInt(year), parseInt(month) - 1, 1))
+          console.log('🔄 [Mobile Recording] 현재 월이 비활성화됨, 첫 번째 활성 월로 변경:', months[0])
+        }
+      } else {
+        console.warn('⚠️ [Mobile Recording] 동기화된 월 목록 로드 실패:', result)
+        setSyncedMonths([])
+      }
+    } catch (error) {
+      console.error('❌ [Mobile Recording] 동기화된 월 목록 로드 오류:', error)
+      setSyncedMonths([])
+    } finally {
+      setSyncedMonthsLoading(false)
+    }
+  }
 
   // 모바일 최적화된 간결한 녹음 안내사항 생성 함수
   const getRecordingGuidance = (): string => {
@@ -181,12 +249,43 @@ export function MobileRecordingCalendar({ isOpen, onClose, authenticatedUser, us
     }
   }
 
+  // 컴포넌트 마운트 시 동기화된 월 목록을 가져옴 (데스크톱과 동일)
+  useEffect(() => {
+    fetchSyncedMonths()
+    
+    // 시간 제한 상태 확인
+    const loadTimeRestrictions = async () => {
+      const restrictionsDisabled = await checkTimeRestrictionsDisabled()
+      setTimeRestrictionsDisabled(restrictionsDisabled)
+      console.log('📱 [Mobile Recording] 시간 제한 상태:', restrictionsDisabled ? '비활성화' : '활성화')
+    }
+    loadTimeRestrictions()
+  }, [])
+
+  // 동기화된 월 목록이나 선택된 월이 변경될 때 데이터 로드 (데스크톱과 동일)
   useEffect(() => {
     if (isOpen && authenticatedUser?.email) {
+      // 동기화된 월이 없으면 데이터 로드하지 않음
+      if (syncedMonths.length === 0 && !syncedMonthsLoading) {
+        console.log('⚠️ [Mobile Recording] 활성화된 월이 없어 스케줄 로드 중단')
+        setSchedules([])
+        setLoading(false)
+        return
+      }
+      
+      // 현재 월이 동기화된 월 목록에 있는지 확인
+      const currentMonthStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}`
+      if (syncedMonths.length > 0 && !syncedMonths.includes(currentMonthStr)) {
+        console.log('⚠️ [Mobile Recording] 현재 월이 비활성화됨:', currentMonthStr, '활성 월:', syncedMonths)
+        setSchedules([])
+        setLoading(false)
+        return
+      }
+      
       console.log('🔄 [Mobile Recording Calendar] 모달 열림, 스케줄 로드 시작')
       loadSchedules()
     }
-  }, [isOpen, currentDate, authenticatedUser?.email])
+  }, [isOpen, currentDate, authenticatedUser?.email, syncedMonths, syncedMonthsLoading])
 
   // userInfo가 로드되면 신청 내역 로드
   useEffect(() => {
@@ -198,16 +297,21 @@ export function MobileRecordingCalendar({ isOpen, onClose, authenticatedUser, us
 
   // 녹음 슬롯 가용성 확인 - recording-availability API 응답 우선 활용
   const isRecordingSlotAvailable = (date: string, slot: number, language: string) => {
-    // 신청 기한 체크 - 기한이 지나면 무조건 비활성화
-    const scheduleDate = new Date(date)
-    const twoDaysBefore = new Date(scheduleDate)
-    twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
-    twoDaysBefore.setHours(14, 0, 0, 0)
-    const now = new Date()
-    
-    if (now > twoDaysBefore) {
-      console.log('❌ [Mobile Recording] 신청 기한 경과로 비활성화:', { date, slot, language })
-      return false
+    // 시간 제한이 비활성화된 경우 신청 기한 무시
+    if (timeRestrictionsDisabled) {
+      console.log('📱 [Mobile Recording] 시간 제한 비활성화로 신청 기한 무시:', { date, slot, language })
+    } else {
+      // 신청 기한 체크 - 기한이 지나면 무조건 비활성화
+      const scheduleDate = new Date(date)
+      const twoDaysBefore = new Date(scheduleDate)
+      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
+      twoDaysBefore.setHours(14, 0, 0, 0)
+      const now = new Date()
+      
+      if (now > twoDaysBefore) {
+        console.log('❌ [Mobile Recording] 신청 기한 경과로 비활성화:', { date, slot, language })
+        return false
+      }
     }
     
     // recording-availability API 응답을 우선적으로 활용 (전체 신청 현황 기반)
@@ -380,6 +484,12 @@ ${guidance}`,
           showAlert({
             title: '신청 기간 만료',
             message: '신청 기간이 만료되었습니다.',
+            type: 'warning'
+          })
+        } else if (result.error?.includes('이미 해당 차수에 신청하셨습니다')) {
+          showAlert({
+            title: '차수 중복 신청',
+            message: '해당 차수에 신청 내역이 있습니다. 같은 차수에는 하나의 언어만 신청 가능합니다.',
             type: 'warning'
           })
         } else if (result.error?.includes('이미 신청하셨습니다') || result.error?.includes('이미 이번 달에 신청하셨습니다') || result.error?.includes('언어별로 한 달에 한 번만 신청 가능')) {
@@ -672,19 +782,62 @@ ${guidance}`,
             
             <div className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3">
               <button 
-                onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))}
-                className="p-2 hover:bg-white rounded-xl transition-all duration-200 shadow-sm hover:shadow-md group"
+                onClick={() => {
+                  // 활성화된 월만 이동 가능 (데스크톱과 동일)
+                  const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)
+                  const prevMonthStr = `${prevMonth.getFullYear()}-${(prevMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                  if (syncedMonths.includes(prevMonthStr)) {
+                    setCurrentDate(prevMonth)
+                  }
+                }}
+                disabled={(() => {
+                  const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)
+                  const prevMonthStr = `${prevMonth.getFullYear()}-${(prevMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                  return !syncedMonths.includes(prevMonthStr)
+                })()}
+                className={`p-2 rounded-xl transition-all duration-200 ${
+                  (() => {
+                    const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)
+                    const prevMonthStr = `${prevMonth.getFullYear()}-${(prevMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                    return syncedMonths.includes(prevMonthStr) 
+                      ? 'hover:bg-white shadow-sm hover:shadow-md group cursor-pointer' 
+                      : 'opacity-30 cursor-not-allowed'
+                  })()
+                }`}
               >
                 <ChevronLeft className="w-5 h-5 text-gray-600 group-hover:text-gray-900" />
               </button>
               
               <h2 className="text-lg font-bold text-gray-900">
                 {currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월
+                {syncedMonths.length > 0 && !syncedMonths.includes(`${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}`) && (
+                  <span className="text-sm text-red-500 ml-2">(비활성)</span>
+                )}
               </h2>
               
               <button 
-                onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))}
-                className="p-2 hover:bg-white rounded-xl transition-all duration-200 shadow-sm hover:shadow-md group"
+                onClick={() => {
+                  // 활성화된 월만 이동 가능 (데스크톱과 동일)
+                  const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)
+                  const nextMonthStr = `${nextMonth.getFullYear()}-${(nextMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                  if (syncedMonths.includes(nextMonthStr)) {
+                    setCurrentDate(nextMonth)
+                  }
+                }}
+                disabled={(() => {
+                  const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)
+                  const nextMonthStr = `${nextMonth.getFullYear()}-${(nextMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                  return !syncedMonths.includes(nextMonthStr)
+                })()}
+                className={`p-2 rounded-xl transition-all duration-200 ${
+                  (() => {
+                    const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)
+                    const nextMonthStr = `${nextMonth.getFullYear()}-${(nextMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                    return syncedMonths.includes(nextMonthStr) 
+                      ? 'hover:bg-white shadow-sm hover:shadow-md group cursor-pointer' 
+                      : 'opacity-30 cursor-not-allowed'
+                  })()
+                }`}
               >
                 <ChevronRight className="w-5 h-5 text-gray-600 group-hover:text-gray-900" />
               </button>
@@ -738,24 +891,29 @@ ${guidance}`,
             {/* 기존 page에서 복사한 완벽한 모달 */}
             {selectedDate && selectedDaySchedules.length > 0 && (
               <div 
-                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200]"
                 style={{ touchAction: 'none' }}
+                onClick={() => {
+                  setSelectedDate(null)
+                  setSelectedDaySchedules([])
+                }}
               >
                 <div 
                   className="fixed bottom-0 left-0 right-0 w-full bg-white rounded-t-3xl shadow-2xl transition-all duration-500 ease-out h-[80vh] flex flex-col overflow-hidden"
                   style={{
                     transform: (selectedDate && selectedDaySchedules.length > 0) ? 'translateY(0%)' : 'translateY(100%)',
-                    touchAction: 'pan-y',
+                    touchAction: 'auto', // 모달 내부는 자유롭게 스크롤 가능
                   }}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {/* 드래그 핸들 */}
-                  <div className="flex justify-center py-3">
-                    <div className="w-10 h-1 bg-gray-300 rounded-full"></div>
+                  <div className="flex justify-center py-3 bg-gray-50/80 rounded-t-3xl">
+                    <div className="w-12 h-1.5 bg-gray-300 rounded-full"></div>
                   </div>
                   
-                  <div className="flex-1 overflow-hidden">
-                  {/* 모달 헤더 - 데스크톱과 동일 */}
-                  <div className="relative bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 text-white px-6 py-8">
+                   <div className="flex-1 overflow-hidden">
+                   {/* 모달 헤더 - 데스크톱과 동일 */}
+                   <div className="relative bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 text-white px-6 py-8 rounded-t-3xl">
                     <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20"></div>
                     <div className="absolute top-4 right-4 w-16 h-16 bg-white rounded-full blur-xl opacity-20"></div>
                     <div className="absolute bottom-4 left-4 w-24 h-24 bg-white rounded-full blur-2xl"></div>
@@ -840,14 +998,16 @@ ${guidance}`,
                                   }}
                                   className={`w-full px-6 py-4 rounded-lg font-medium transition-colors ${
                                     getRecordingCurrentApplicants(selectedDate!, slot) < 8 && !userLanguageRestrictions.recording
-                                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white'
+                                      ? timeRestrictionsDisabled 
+                                        ? 'bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white'
+                                        : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white'
                                       : 'text-gray-400 bg-gray-200 cursor-not-allowed opacity-60'
                                   }`}
                                   disabled={getRecordingCurrentApplicants(selectedDate!, slot) >= 8 || userLanguageRestrictions.recording}
                                 >
                                   <div className="flex items-center justify-center gap-2">
                                     <Mic className="w-5 h-5" />
-                                    <span>녹음 신청하기</span>
+                                    <span>{timeRestrictionsDisabled ? '녹음 신청하기 (테스트모드)' : '녹음 신청하기'}</span>
                                   </div>
                                   {getRecordingCurrentApplicants(selectedDate!, slot) >= 8 && (
                                     <div className="text-xs text-gray-500 mt-1">
@@ -857,6 +1017,11 @@ ${guidance}`,
                                   {userLanguageRestrictions.recording && (
                                     <div className="text-xs text-gray-500 mt-1">
                                       이미 이번 달에 녹음 신청하셨습니다
+                                    </div>
+                                  )}
+                                  {timeRestrictionsDisabled && (
+                                    <div className="text-xs text-orange-200 mt-1">
+                                      시간 제한 비활성화됨
                                     </div>
                                   )}
                                 </button>
@@ -884,7 +1049,7 @@ ${guidance}`,
 
       {/* 언어 선택 모달 */}
       {showLanguageSelection && selectedRecordingSlot && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999] p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
             <h3 className="text-xl font-bold mb-4 text-center">평가 언어 선택</h3>
             <p className="text-gray-600 text-center mb-6">

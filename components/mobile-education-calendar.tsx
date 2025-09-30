@@ -81,6 +81,10 @@ export function MobileEducationCalendar({ isOpen, onClose, authenticatedUser, us
     education: false
   })
   const [myRequests, setMyRequests] = useState<any[]>([])
+  
+  // 활성화된 월 목록 관리 (데스크톱과 동일)
+  const [syncedMonths, setSyncedMonths] = useState<string[]>([])
+  const [syncedMonthsLoading, setSyncedMonthsLoading] = useState(false)
 
   // 필터 관련 상태
   const [filters, setFilters] = useState<FilterOptions>({
@@ -92,6 +96,68 @@ export function MobileEducationCalendar({ isOpen, onClose, authenticatedUser, us
 
   const educationDialogHook = useCustomDialog()
   const { isOpen: educationDialogOpen, config: educationDialogConfig, close: educationDialogClose, showAlert } = educationDialogHook
+
+  // 🚀 모바일 취소 후 캘린더 자동 리프레시 이벤트 리스너
+  useEffect(() => {
+    const handleCalendarRefresh = (event: CustomEvent) => {
+      console.log('🔄 [모바일 교육 캘린더] 리프레시 신호 수신:', event.detail)
+      
+      // 가용성 캐시 초기화
+      setAvailabilityCache({})
+      
+      // 현재 월 스케줄 다시 로드
+      const currentMonth = currentDate.toISOString().slice(0, 7)
+      loadSchedules(currentMonth)
+      
+      // 내 신청 내역 다시 로드
+      loadMyRequests()
+      
+      console.log('✅ [모바일 교육 캘린더] 리프레시 완료')
+    }
+
+    // 이벤트 리스너 등록
+    window.addEventListener('mobile-calendar-refresh', handleCalendarRefresh as EventListener)
+    
+    // 컴포넌트 언마운트 시 이벤트 리스너 제거
+    return () => {
+      window.removeEventListener('mobile-calendar-refresh', handleCalendarRefresh as EventListener)
+    }
+  }, [currentDate])
+
+  // 동기화된 월 목록 가져오기 (데스크톱과 동일)
+  const fetchSyncedMonths = async () => {
+    setSyncedMonthsLoading(true)
+    try {
+      const response = await fetch('/api/schedules/sync-from-sheets')
+      const result = await response.json()
+      
+      if (result.success && result.schedules) {
+        const months = result.schedules
+          .filter((s: any) => s.active === true) // 활성화된 스케줄만 필터링
+          .map((s: any) => s.month)
+          .sort()
+          .reverse() // 최신순
+        setSyncedMonths(months)
+        console.log('📅 [Mobile Education] 활성화된 월 목록:', months)
+        
+        // 현재 선택된 월이 동기화된 월 목록에 없으면 첫 번째 월로 변경
+        const currentMonthStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}`
+        if (months.length > 0 && !months.includes(currentMonthStr)) {
+          const [year, month] = months[0].split('-')
+          setCurrentDate(new Date(parseInt(year), parseInt(month) - 1, 1))
+          console.log('🔄 [Mobile Education] 현재 월이 비활성화됨, 첫 번째 활성 월로 변경:', months[0])
+        }
+      } else {
+        console.warn('⚠️ [Mobile Education] 동기화된 월 목록 로드 실패:', result)
+        setSyncedMonths([])
+      }
+    } catch (error) {
+      console.error('❌ [Mobile Education] 동기화된 월 목록 로드 오류:', error)
+      setSyncedMonths([])
+    } finally {
+      setSyncedMonthsLoading(false)
+    }
+  }
 
   // 모바일 최적화된 간결한 안내사항 생성 함수들
   const getEducationGuidance = (type: any): string => {
@@ -789,7 +855,7 @@ ${guidance}`,
         loadMyRequests()
         
         // 가용성 캐시 전체 클리어 및 전체 월 가용성 갱신 (데스크톱과 동일)
-        setAvailabilityCache({})
+        setAvailabilityCache(new Map())
         
         // 전체 월 가용성 갱신으로 모든 사용자 신청 반영
         setTimeout(async () => {
@@ -881,12 +947,35 @@ ${guidance}`,
     }
   }
 
+  // 컴포넌트 마운트 시 동기화된 월 목록을 가져옴 (데스크톱과 동일)
+  useEffect(() => {
+    fetchSyncedMonths()
+  }, [])
+
+  // 동기화된 월 목록이나 선택된 월이 변경될 때 데이터 로드 (데스크톱과 동일)
   useEffect(() => {
     if (isOpen && authenticatedUser?.email) {
+      // 동기화된 월이 없으면 데이터 로드하지 않음
+      if (syncedMonths.length === 0 && !syncedMonthsLoading) {
+        console.log('⚠️ [Mobile Education] 활성화된 월이 없어 스케줄 로드 중단')
+        setSchedules([])
+        setLoading(false)
+        return
+      }
+      
+      // 현재 월이 동기화된 월 목록에 있는지 확인
+      const currentMonthStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}`
+      if (syncedMonths.length > 0 && !syncedMonths.includes(currentMonthStr)) {
+        console.log('⚠️ [Mobile Education] 현재 월이 비활성화됨:', currentMonthStr, '활성 월:', syncedMonths)
+        setSchedules([])
+        setLoading(false)
+        return
+      }
+      
       console.log('🔄 [Mobile Education Calendar] 모달 열림, 스케줄 로드 시작')
       loadSchedules()
     }
-  }, [isOpen, currentDate, authenticatedUser?.email])
+  }, [isOpen, currentDate, authenticatedUser?.email, syncedMonths, syncedMonthsLoading])
 
   // 월이 변경될 때도 가용성 자동 로드 (데스크톱과 동일)
   useEffect(() => {
@@ -1043,17 +1132,60 @@ ${guidance}`,
           
           <div className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3">
             <button 
-              onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))}
-              className="p-2 hover:bg-white rounded-xl transition-all duration-200 shadow-sm hover:shadow-md group"
+              onClick={() => {
+                // 활성화된 월만 이동 가능 (데스크톱과 동일)
+                const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)
+                const prevMonthStr = `${prevMonth.getFullYear()}-${(prevMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                if (syncedMonths.includes(prevMonthStr)) {
+                  setCurrentDate(prevMonth)
+                }
+              }}
+              disabled={(() => {
+                const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)
+                const prevMonthStr = `${prevMonth.getFullYear()}-${(prevMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                return !syncedMonths.includes(prevMonthStr)
+              })()}
+              className={`p-2 rounded-xl transition-all duration-200 ${
+                (() => {
+                  const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)
+                  const prevMonthStr = `${prevMonth.getFullYear()}-${(prevMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                  return syncedMonths.includes(prevMonthStr) 
+                    ? 'hover:bg-white shadow-sm hover:shadow-md group cursor-pointer' 
+                    : 'opacity-30 cursor-not-allowed'
+                })()
+              }`}
             >
               <ChevronLeft className="w-5 h-5 text-gray-600 group-hover:text-gray-900" />
             </button>
             <h2 className="text-lg font-bold text-gray-900">
               {currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월
+              {syncedMonths.length > 0 && !syncedMonths.includes(`${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}`) && (
+                <span className="text-sm text-red-500 ml-2">(비활성)</span>
+              )}
             </h2>
             <button 
-              onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))}
-              className="p-2 hover:bg-white rounded-xl transition-all duration-200 shadow-sm hover:shadow-md group"
+              onClick={() => {
+                // 활성화된 월만 이동 가능 (데스크톱과 동일)
+                const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)
+                const nextMonthStr = `${nextMonth.getFullYear()}-${(nextMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                if (syncedMonths.includes(nextMonthStr)) {
+                  setCurrentDate(nextMonth)
+                }
+              }}
+              disabled={(() => {
+                const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)
+                const nextMonthStr = `${nextMonth.getFullYear()}-${(nextMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                return !syncedMonths.includes(nextMonthStr)
+              })()}
+              className={`p-2 rounded-xl transition-all duration-200 ${
+                (() => {
+                  const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)
+                  const nextMonthStr = `${nextMonth.getFullYear()}-${(nextMonth.getMonth() + 1).toString().padStart(2, '0')}`
+                  return syncedMonths.includes(nextMonthStr) 
+                    ? 'hover:bg-white shadow-sm hover:shadow-md group cursor-pointer' 
+                    : 'opacity-30 cursor-not-allowed'
+                })()
+              }`}
             >
               <ChevronRight className="w-5 h-5 text-gray-600 group-hover:text-gray-900" />
             </button>
@@ -1207,15 +1339,20 @@ ${guidance}`,
             {/* 기존 page에서 복사한 완벽한 교육 모달 */}
             {selectedDate && selectedDaySchedules.length > 0 && (
               <div 
-                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200]"
                 style={{ touchAction: 'none' }}
+                onClick={() => {
+                  setSelectedDate(null)
+                  setSelectedDaySchedules([])
+                }}
               >
                 <div 
                   className="fixed bottom-0 left-0 right-0 w-full bg-white rounded-t-3xl shadow-2xl transition-all duration-500 ease-out h-[80vh] flex flex-col overflow-hidden"
                   style={{
                     transform: (selectedDate && selectedDaySchedules.length > 0) ? 'translateY(0%)' : 'translateY(100%)',
-                    touchAction: 'pan-y',
+                    touchAction: 'auto', // 모달 내부는 자유롭게 스크롤 가능
                   }}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {/* 드래그 핸들 */}
                   <div className="flex justify-center py-3">
@@ -1345,11 +1482,11 @@ ${guidance}`,
                                             <span className="text-sm font-semibold text-amber-800">
                                               {(() => {
                                                 const eduClassroom = (edu as any).classroomInfo
-                                                const dayClassroom = selectedDaySchedules[0].classroomInfo
+                                                const dayClassroom = selectedDaySchedules[0]?.classroomInfo
                                                 const finalClassroom = eduClassroom || dayClassroom
                                                 console.log(`🏫 [캘린더 교실 표시] edu.classroomInfo: "${eduClassroom}", day.classroomInfo: "${dayClassroom}", 최종: "${finalClassroom}"`)
                                                 return finalClassroom
-                                              })()} 학과장
+                                              })()}
                                             </span>
                                           </div>
                                         )}
@@ -1393,7 +1530,7 @@ ${guidance}`,
                                           )}
                                           {edu.type.category === '재자격' && (
                                             <p className="font-semibold text-amber-800">
-                                              🔄 <strong>재자격:</strong> 자격 갱신 또는 상위 등급이 목표인 승무원 대상
+                                              🔄 <strong>재자격:</strong> 기내방송 자격이 있는 승무원 대상
                                             </p>
                                           )}
                                           {edu.type.category === '공통' && (
@@ -1463,7 +1600,11 @@ ${guidance}`,
                                             </div>
                                             {edu.type.mode === 'small' && (
                                               <div className="text-xs text-gray-600 mt-1">
-                                                {currentApplicants}/4명
+                                                {currentApplicants}/{(() => {
+                                                  // 카테고리별 정원 설정 (백엔드와 동일한 로직)
+                                                  const category = edu.type.category || '공통'
+                                                  return category === 'PUS' ? 3 : 4
+                                                })()}명
                                               </div>
                                             )}
                                             {edu.type.mode === '1:1' && !isAvailable && (

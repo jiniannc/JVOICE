@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
+import { pdfDatabaseService } from "@/lib/pdf-database-service"
 import { Maximize2, AlertCircle, RefreshCw } from "lucide-react"
 
 interface PDFViewerProps {
@@ -20,64 +21,25 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
 
   useEffect(() => {
     loadPDF()
-  }, [language, scriptNumber]) // currentLanguageMode 제거 - 한/영 언어에서 한국어/영어 전환 시 PDF 리로드 방지
+  }, [language, scriptNumber])
 
-    const loadPDF = async () => {
+  const loadPDF = async () => {
     setIsLoading(true)
     setError(null)
 
     try {
       console.log(`🔍 PDF 로드 시도: ${language} ${scriptNumber}번 (현재 모드: ${currentLanguageMode || 'N/A'})`)
       
-      // 파일명 생성 (한/영 언어는 동일한 PDF 파일 사용)
-      let fileName = ""
-      if (language === "korean-english") {
-        fileName = `한영_문안${scriptNumber}.pdf`
-      } else if (language === "japanese") {
-        fileName = `일본어_문안${scriptNumber}.pdf`
-      } else if (language === "chinese") {
-        fileName = `중국어_문안${scriptNumber}.pdf`
-      }
-
-      console.log(`🔍 찾는 파일명: ${fileName}`)
+      const pdfUrl = await pdfDatabaseService.getPDFUrl(language, scriptNumber)
       
-      // 파일 존재 확인을 건너뛰고 바로 공유 링크 생성 시도
-      const dropboxPath = `/scripts/${fileName}`
+      console.log(`✅ PDF URL 생성 성공: ${pdfUrl}`)
+      setPdfUrl(pdfUrl)
+      setIsLoading(false)
+      onLoadComplete?.()
       
-      try {
-        // 새로운 공유 링크 생성 API 사용
-        const shareResponse = await fetch('/api/dropbox-share', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            path: dropboxPath
-          })
-        })
-        
-        if (shareResponse.ok) {
-          const shareData = await shareResponse.json()
-          if (shareData.url) {
-            // Proxy API를 통해 PDF를 가져오도록 URL 설정
-            const proxyUrl = `/api/pdf-proxy?url=${encodeURIComponent(shareData.url)}`
-            setPdfUrl(proxyUrl)
-            console.log("✅ PDF Proxy URL 설정됨")
-          } else {
-            throw new Error('공유 링크를 생성할 수 없습니다.')
-          }
-        } else {
-          throw new Error(`공유 링크 생성 실패: ${shareResponse.status}`)
-        }
-      } catch (shareError) {
-        console.warn("⚠️ PDF 공유 링크 생성 실패:", shareError)
-        setError("PDF 공유 링크 생성 중 오류가 발생했습니다.")
-      }
-      
-      // 로딩 종료는 iframe onLoad에서 처리
-    } catch (err) {
-      console.error("❌ PDF 로드 오류:", err)
-      setError("PDF 로딩 중 오류가 발생했습니다.")
+    } catch (error) {
+      console.error("❌ PDF 로드 실패:", error)
+      setError(error instanceof Error ? error.message : "PDF 로드 중 오류가 발생했습니다")
       setIsLoading(false)
     }
   }
@@ -90,7 +52,6 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
 
   const openInNewTab = () => {
     if (pdfUrl) {
-      // Dropbox URL을 새 탭에서 열기
       window.open(pdfUrl, '_blank')
     }
   }
@@ -157,25 +118,30 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
             </div>
           )}
 
-          {/* iframe 또는 플레이스홀더 */}
-          {pdfUrl ? (
-            <iframe
-              src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1&statusbar=0&menubar=0&view=Fit`}
-              className={`w-full border-0 ${isFullscreen ? "h-screen" : "h-[760px] md:h-[860px] lg:h-[960px]"}`}
-              title={`PDF Viewer - ${language} ${scriptNumber}번`}
-              onLoad={() => {
-                console.log("✅ PDF iframe 로드 완료")
-                setIsLoading(false)
-                onLoadComplete?.() // 부모 컴포넌트에 로딩 완료 알림
-              }}
-              onError={handleIframeError}
-              style={{
-                ...(isFullscreen ? { transform: "scale(1.2)", transformOrigin: "center" } : {}),
-                backgroundColor: 'white'
-              }}
-            />
-          ) : (
-            <div className={`${isFullscreen ? "h-screen" : "h-[400px]"}`}></div>
+          {/* PDF iframe */}
+          {pdfUrl && (
+            <div className={`${isFullscreen ? "h-[calc(100vh-60px)]" : "h-[760px] md:h-[860px] lg:h-[960px]"}`}>
+              <iframe
+                src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1&statusbar=0&menubar=0&view=Fit`}
+                className="w-full h-full border-0"
+                title={`PDF Viewer - ${language} ${scriptNumber}번`}
+                onLoad={() => {
+                  console.log("✅ PDF iframe 로드 완료")
+                  setIsLoading(false)
+                }}
+                onError={handleIframeError}
+                style={{ backgroundColor: 'white' }}
+              />
+            </div>
+          )}
+
+          {/* 전체화면 버튼 */}
+          {pdfUrl && !isFullscreen && (
+            <div className="absolute top-4 right-4 z-20">
+              <Button size="sm" variant="outline" onClick={toggleFullscreen}>
+                <Maximize2 className="w-4 h-4" />
+              </Button>
+            </div>
           )}
         </div>
       </div>

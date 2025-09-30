@@ -7,9 +7,10 @@ import { Mic, Square, Play, Pause } from "lucide-react"
 interface AudioRecorderProps {
   onRecordingComplete: (blob: Blob) => void
   existingRecording?: Blob | null
+  hasExistingRecording?: boolean
 }
 
-export function AudioRecorder({ onRecordingComplete, existingRecording }: AudioRecorderProps) {
+export function AudioRecorder({ onRecordingComplete, existingRecording, hasExistingRecording }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
@@ -139,9 +140,24 @@ export function AudioRecorder({ onRecordingComplete, existingRecording }: AudioR
       {/* 녹음 컨트롤 */}
       <div className="flex gap-2">
         {!isRecording ? (
-          <Button onClick={startRecording} className="flex-1" disabled={isCheckingAllowed || isAllowed !== true}>
+          <Button 
+            onClick={startRecording} 
+            className={`flex-1 ${
+              hasExistingRecording || existingRecording 
+                ? "bg-yellow-500 hover:bg-yellow-600 text-white" 
+                : ""
+            }`}
+            disabled={isCheckingAllowed || isAllowed !== true}
+          >
             <Mic className="w-4 h-4 mr-2" />
-            {isCheckingAllowed ? "검증 중..." : isAllowed !== true ? "허용되지 않은 컴퓨터" : "녹음 시작"}
+            {isCheckingAllowed 
+              ? "검증 중..." 
+              : isAllowed !== true 
+                ? "허용되지 않은 컴퓨터" 
+                : (hasExistingRecording || existingRecording) 
+                  ? "다시 녹음" 
+                  : "녹음 시작"
+            }
           </Button>
         ) : (
           <Button onClick={stopRecording} variant="destructive" className="flex-1">

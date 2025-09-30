@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
       console.warn('⚠️ [Database] 직원 정보 조회 실패:', error)
     }
 
-    // 사용자 확인/생성
+    // 사용자 확인/생성 및 정보 업데이트
     let user = await prisma.user.findUnique({
       where: { employeeId }
     })
@@ -150,6 +150,17 @@ export async function POST(request: NextRequest) {
         }
       })
       console.log('👤 [Database] 새 사용자 생성:', user.employeeId)
+    } else if (employeeInfo) {
+      // 🔧 기존 사용자 정보를 구글 스프레드시트 정보로 업데이트
+      user = await prisma.user.update({
+        where: { employeeId },
+        data: {
+          name: employeeInfo.name, // 구글 스프레드시트의 이름으로 업데이트
+          department: employeeInfo.lineTeam || employeeInfo.department || user.department,
+          position: employeeInfo.position || user.position,
+        }
+      })
+      console.log('👤 [Database] 사용자 정보 업데이트:', user.employeeId, '→', employeeInfo.name)
     }
 
     // 관리자가 시간 제한을 비활성화했는지 확인
@@ -420,8 +431,6 @@ export async function POST(request: NextRequest) {
       { error: '서버 오류가 발생했습니다.' },
       { status: 500 }
     )
-  } finally {
-    await prisma.$disconnect()
   }
 }
 
@@ -514,8 +523,6 @@ export async function GET(request: NextRequest) {
       { error: '조회 중 오류가 발생했습니다.' },
       { status: 500 }
     )
-  } finally {
-    await prisma.$disconnect()
   }
 }
 
@@ -609,8 +616,6 @@ export async function DELETE(request: NextRequest) {
       { error: '취소 중 오류가 발생했습니다.' },
       { status: 500 }
     )
-  } finally {
-    await prisma.$disconnect()
   }
 }
 

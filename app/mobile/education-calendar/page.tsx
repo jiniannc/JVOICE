@@ -858,7 +858,7 @@ export default function MobileEducationCalendarPage() {
                                 {edu.type.mode === 'small' && selectedDaySchedules.length > 0 && selectedDaySchedules[0]?.classroomInfo && (
                                   <div className="flex items-center gap-1 text-sm text-amber-800 bg-amber-50 px-2 py-1 rounded-md border border-amber-200">
                                     <Building className="w-3 h-3" />
-                                    <span className="font-medium">{selectedDaySchedules[0].classroomInfo} 학과장</span>
+                                    <span className="font-medium">{selectedDaySchedules[0].classroomInfo}</span>
                                   </div>
                                 )}
                               </div>
@@ -868,7 +868,7 @@ export default function MobileEducationCalendarPage() {
                               {edu.type.lang === 'korean-english' && edu.type.mode === 'small' && (
                                 <div className="mt-2 text-sm text-gray-600">
                                   <p><strong>신규:</strong> 기내방송 자격이 없는 승무원 대상</p>
-                                  <p><strong>재자격:</strong> 자격 갱신 또는 상위 등급이 목표인 승무원 대상</p>
+                                  <p><strong>재자격:</strong> 기내방송 자격이 있는 승무원 대상</p>
                                   <p><strong>공통:</strong> 자격 무관</p>
                                 </div>
                               )}

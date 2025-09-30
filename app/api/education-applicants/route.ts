@@ -35,6 +35,7 @@ function getEducationSlotTime(slot: number, classType: string): string {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const requestedDate = searchParams.get('date');
+  const includeCheckins = searchParams.get('includeCheckins') === 'true';
 
   try {
     console.log(`📋 [education-applicants] 신청 기록 기반 세션 조회 시작`, { requestedDate });
@@ -66,7 +67,8 @@ export async function GET(request: NextRequest) {
         user: {
           select: {
             name: true,
-            employeeId: true
+            employeeId: true,
+            department: true
           }
         }
       },
@@ -81,6 +83,7 @@ export async function GET(request: NextRequest) {
 
     // 체크인 정보 조회 (테이블이 없으면 빈 맵 사용)
     let checkinMap = new Map();
+    let checkinTimeMap = new Map();
     try {
       const checkins = await prisma.educationCheckin.findMany({
         where: {
@@ -92,6 +95,9 @@ export async function GET(request: NextRequest) {
       
       checkins.forEach(checkin => {
         checkinMap.set(checkin.requestId, checkin.status === 'CHECKED_IN');
+        if (checkin.checkinTime) {
+          checkinTimeMap.set(checkin.requestId, checkin.checkinTime);
+        }
       });
     } catch (error) {
       console.warn('체크인 테이블을 찾을 수 없습니다. 모든 체크인 상태를 false로 설정합니다.');
@@ -138,16 +144,25 @@ export async function GET(request: NextRequest) {
       }
 
       const session = sessionMap.get(key);
-      session.applicants.push({
-        name: app.user.name || '이름없음',
-        employeeId: app.user.employeeId || '사번없음',
-        status: '신청완료',
-        applicationId: app.id, // 구글 미트 생성을 위한 applicationId 추가
-        isCheckedIn: checkinMap.get(app.id) || false, // 체크인 상태 추가
-        googleMeetLink: app.details?.googleMeetLink || null // details에서 구글 미트 링크 추가
-      });
-
-      console.log(`📋 [education-applicants] ${educationSlot}차수 신청자 추가: ${app.user.name} (${app.user.employeeId})`);
+      
+      // 중복 신청자 확인 (같은 employeeId가 이미 있는지 체크)
+      const existingApplicant = session.applicants.find(applicant => 
+        applicant.employeeId === (app.user.employeeId || '사번없음')
+      );
+      
+      if (!existingApplicant) {
+        session.applicants.push({
+          name: app.user.name || '이름없음',
+          employeeId: app.user.employeeId || '사번없음',
+          status: '신청완료',
+          applicationId: app.id, // 구글 미트 생성을 위한 applicationId 추가
+          isCheckedIn: checkinMap.get(app.id) || false, // 체크인 상태 추가
+          googleMeetLink: app.details?.googleMeetLink || null // details에서 구글 미트 링크 추가
+        });
+        console.log(`📋 [education-applicants] ${educationSlot}차수 신청자 추가: ${app.user.name} (${app.user.employeeId})`);
+      } else {
+        console.log(`📋 [education-applicants] 중복 신청자 제외: ${app.user.name} (${app.user.employeeId}) - 이미 ${educationSlot}차수에 등록됨`);
+      }
     });
 
     // Map에서 educationSessions로 변환
@@ -187,13 +202,72 @@ export async function GET(request: NextRequest) {
     const uniqueDates = [...new Set(availableDates.map(app => app.schedule.date))]
       .sort();
 
+    // 초기 날짜 선택 로직 개선
+    let selectedDate = requestedDate;
+    if (!selectedDate && uniqueDates.length > 0) {
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 형식
+      
+      // 1. 오늘 날짜에 신청자가 있는지 확인
+      if (uniqueDates.includes(today)) {
+        selectedDate = today;
+        console.log(`📋 [education-applicants] 오늘 날짜로 설정: ${selectedDate}`);
+      } else {
+        // 2. 오늘 이후의 가장 가까운 미래 날짜 찾기
+        const futureDates = uniqueDates.filter(date => date > today);
+        if (futureDates.length > 0) {
+          selectedDate = futureDates[0];
+          console.log(`📋 [education-applicants] 미래 가장 가까운 날짜로 설정: ${selectedDate}`);
+        } else {
+          // 3. 미래 날짜가 없으면 가장 최근 날짜
+          selectedDate = uniqueDates[uniqueDates.length - 1];
+          console.log(`📋 [education-applicants] 가장 최근 날짜로 설정: ${selectedDate}`);
+        }
+      }
+    }
+
     console.log(`📋 [education-applicants] 생성된 세션 수: ${educationSessions.length}`);
     console.log(`📋 [education-applicants] 사용 가능한 날짜 수: ${uniqueDates.length}`);
 
+    // 교육 관리 모달용 응답 형식 (includeCheckins=true인 경우)
+    if (includeCheckins) {
+      const applicants = applications.map(app => {
+        const schedule = app.schedule;
+        const language = app.details?.language || schedule.type;
+        const educationType = app.details?.educationType || (schedule.classType === 'small' ? 'small-group' : '1:1');
+        
+        return {
+          id: app.id,
+          name: app.user.name || '이름없음',
+          employeeId: app.user.employeeId || '사번없음',
+          department: app.user.department || '',
+          date: schedule.date,
+          slot: app.slot,
+          details: {
+            language: language,
+            mode: educationType,
+            category: app.details?.category
+          },
+          isCheckedIn: checkinMap.get(app.id) || false,
+          checkinTime: checkinTimeMap.get(app.id) || null,
+          googleMeetLink: app.details?.googleMeetLink || null,
+          classroomInfo: schedule.classroom || '',
+          location: schedule.classroom || ''
+        };
+      });
+
+      return NextResponse.json({
+        success: true,
+        applicants: applicants,
+        selectedDate: selectedDate,
+        source: 'database'
+      });
+    }
+
+    // 기존 응답 형식 (educationSessions)
     return NextResponse.json({
       educationSessions,
       dates: uniqueDates,
-      selectedDate: requestedDate,
+      selectedDate: selectedDate,
       source: 'database'
     });
 
@@ -205,9 +279,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ 
       error: "교육 신청 목록 로드 실패", 
       details: errorMessage,
-      requestedDate 
+      requestedDate: requestedDate 
     }, { status: 500 });
-  } finally {
-    await prisma.$disconnect();
   }
 }

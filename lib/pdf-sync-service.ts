@@ -18,6 +18,25 @@ export class PDFSyncService {
   constructor() {
     this.lastSyncTime = typeof window !== "undefined" ? localStorage.getItem("lastPDFSync") : null
     this.loadFromLocalStorage()
+    
+    // PDF 캐시 무효화 이벤트 리스너 등록 (브라우저 환경에서만)
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pdfCacheInvalidate', this.handleCacheInvalidate.bind(this))
+    }
+  }
+
+  // 캐시 무효화 이벤트 핸들러
+  private handleCacheInvalidate = (event: CustomEvent) => {
+    const { language, scriptNumber, action } = event.detail
+    console.log(`🗑️ PDF Sync 캐시 무효화 이벤트 수신: ${language} 문안 ${scriptNumber}번 (${action})`)
+    
+    // 해당 언어의 모든 캐시 초기화
+    const keysToRemove = Object.keys(this.scriptCache).filter(key => key.startsWith(language))
+    keysToRemove.forEach(key => {
+      delete this.scriptCache[key]
+    })
+    
+    console.log(`🗑️ PDF Sync ${keysToRemove.length}개의 ${language} 언어 캐시 항목 제거됨`)
   }
 
   private loadFromLocalStorage() {
@@ -175,27 +194,27 @@ export class PDFSyncService {
   }
 
   private selectScriptsWithRequiredNumbers(availableScripts: number[], count: number, language?: string): number[] {
-    // 2번과 10번이 사용 가능한지 확인
-    const hasScript2 = availableScripts.includes(2)
-    const hasScript10 = availableScripts.includes(10)
+    // 1번과 9번이 사용 가능한지 확인
+    const hasScript1 = availableScripts.includes(1)
+    const hasScript9 = availableScripts.includes(9)
     
-    console.log(`🔍 2번 문안 사용 가능: ${hasScript2}, 10번 문안 사용 가능: ${hasScript10}`)
+    console.log(`🔍 1번 문안 사용 가능: ${hasScript1}, 9번 문안 사용 가능: ${hasScript9}`)
     
-    // 2번과 10번 중 하나를 랜덤하게 선택 (둘 다 있으면 랜덤, 하나만 있으면 그걸 사용)
+    // 1번과 9번 중 하나를 랜덤하게 선택 (둘 다 있으면 랜덤, 하나만 있으면 그걸 사용)
     let requiredScript: number | null = null
-    if (hasScript2 && hasScript10) {
+    if (hasScript1 && hasScript9) {
       // 둘 다 있으면 랜덤하게 하나 선택
-      requiredScript = Math.random() > 0.5 ? 2 : 10
-    } else if (hasScript2) {
-      requiredScript = 2
-    } else if (hasScript10) {
-      requiredScript = 10
+      requiredScript = Math.random() > 0.5 ? 1 : 9
+    } else if (hasScript1) {
+      requiredScript = 1
+    } else if (hasScript9) {
+      requiredScript = 9
     }
     
     console.log(`🎯 필수 포함 문안: ${requiredScript}번`)
     
     // 필수 문안을 제외한 나머지 문안들
-    const remainingScripts = availableScripts.filter(script => script !== 2 && script !== 10)
+    const remainingScripts = availableScripts.filter(script => script !== 1 && script !== 9)
     
     // 나머지에서 랜덤하게 (count - 1)개 선택
     const shuffled = [...remainingScripts].sort(() => 0.5 - Math.random())
@@ -206,7 +225,7 @@ export class PDFSyncService {
     if (requiredScript !== null) {
       finalScripts = [requiredScript, ...selectedRemaining]
     } else {
-      // 2번과 10번이 모두 없는 경우 기존 로직 사용
+      // 1번과 9번이 모두 없는 경우 기존 로직 사용
       const shuffled = [...availableScripts].sort(() => 0.5 - Math.random())
       finalScripts = shuffled.slice(0, Math.min(count, shuffled.length))
     }

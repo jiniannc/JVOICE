@@ -7,12 +7,13 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const employeeId = searchParams.get("employeeId");
+    const includeRecordings = searchParams.get("includeRecordings") === "true"; // 🔥 새로운 파라미터
     
     if (!employeeId) {
       return NextResponse.json({ error: "employeeId 쿼리 파라미터가 필요합니다." }, { status: 400 });
     }
     
-    console.log(`📄 [load-my-recordings-database] 사용자 평가 결과 조회: ${employeeId}`);
+    console.log(`📄 [load-my-recordings-database] 사용자 평가 결과 조회: ${employeeId} (includeRecordings: ${includeRecordings})`);
 
     // 먼저 해당 사용자의 모든 평가 상태를 확인
     const allEvaluations = await prisma.evaluation.findMany({
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
       include: {
         user: true,
         scores: true,
-        recordings: true
+        recordings: includeRecordings // 🔥 조건부 녹음 데이터 로딩
       },
       orderBy: {
         submittedAt: 'desc'
@@ -116,14 +117,16 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      // 녹음 파일 정보 변환
+      // 녹음 파일 정보 변환 (조건부)
       const recordings: Record<string, string> = {};
-      evaluation.recordings.forEach(recording => {
-        const scriptKey = `${recording.scriptNumber}-${recording.language}`;
-        if (recording.url) {
-          recordings[scriptKey] = recording.url;
-        }
-      });
+      if (includeRecordings && evaluation.recordings) {
+        evaluation.recordings.forEach(recording => {
+          const scriptKey = `${recording.scriptNumber}-${recording.language}`;
+          if (recording.url) {
+            recordings[scriptKey] = recording.url;
+          }
+        });
+      }
 
       return {
         // 기본 정보
@@ -133,7 +136,7 @@ export async function GET(request: NextRequest) {
         language: evaluation.language,
         category: evaluation.category,
         submittedAt: evaluation.submittedAt.toISOString(),
-        recordingCount: evaluation.recordings.length,
+        recordingCount: includeRecordings && evaluation.recordings ? evaluation.recordings.length : evaluation.recordingCount || 0, // 🔥 조건부 녹음 파일 수
         scriptNumbers: evaluation.scriptNumbers,
         comment: evaluation.comment,
         duration: evaluation.duration,

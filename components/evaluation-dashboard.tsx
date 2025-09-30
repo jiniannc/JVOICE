@@ -71,7 +71,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   // 녹음 응시 목록 상태
   const [applicants, setApplicants] = useState<{ name: string; employeeId: string; language: string; batch: string }[]>([])
   const [applicantDates, setApplicantDates] = useState<string[]>([])
-  const [selectedApplicantDate, setSelectedApplicantDate] = useState<string | null>(null)
+  const [selectedApplicantDate, setSelectedApplicantDate] = useState<string>("")
   const [loadingApplicants, setLoadingApplicants] = useState<boolean>(false)
   const [attendanceByEmployeeId, setAttendanceByEmployeeId] = useState<Record<string, boolean>>({})
 
@@ -82,7 +82,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   // 교육 신청자 목록 상태
   const [educationSessions, setEducationSessions] = useState<any[]>([])
   const [educationDates, setEducationDates] = useState<string[]>([])
-  const [selectedEducationDate, setSelectedEducationDate] = useState<string | null>(null)
+  const [selectedEducationDate, setSelectedEducationDate] = useState<string>("")
   const [loadingEducationApplicants, setLoadingEducationApplicants] = useState(false)
   
   // Google Meet 생성 상태
@@ -189,7 +189,9 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       loadCandidates()
       const map = await loadAttendance(selectedApplicantDate || undefined)
       await loadApplicants(undefined, map)
-      await loadEducationApplicants()
+      
+      // 교육 신청자 목록 초기 로드 - 먼저 날짜 목록을 가져온 후 적절한 날짜로 필터링
+      await loadEducationApplicantsWithInitialDate()
     })()
   }, [refreshKey])
   const loadApplicants = async (date?: string, attendanceMap?: Record<string, boolean>) => {
@@ -213,7 +215,16 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       }))
       setApplicants(withAttendance)
       setApplicantDates(data.dates || [])
-      setSelectedApplicantDate(data.selectedDate || null)
+      
+      // 초기 날짜 설정 로직 개선 - 교육 신청자 목록과 동일
+      if (data.selectedDate) {
+        setSelectedApplicantDate(data.selectedDate)
+        console.log(`✅ [loadApplicants] 선택된 날짜 설정: ${data.selectedDate}`)
+      } else if (!selectedApplicantDate && data.dates && data.dates.length > 0) {
+        // API에서 selectedDate가 없으면 첫 번째 날짜로 설정
+        setSelectedApplicantDate(data.dates[0])
+        console.log(`✅ [loadApplicants] 첫 번째 날짜로 설정: ${data.dates[0]}`)
+      }
 
       // 하이라이트 대상 계산: 이전에는 미출석(false) → 이번에 출석(true)으로 바뀐 경우만
       try {
@@ -319,13 +330,82 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     }
   }
 
-  const loadEducationApplicants = async (date?: string) => {
-    console.log('[loadEducationApplicants] 시작:', { date })
+  // 초기 로드용 함수 - 날짜 목록을 먼저 가져온 후 적절한 날짜로 필터링
+  const loadEducationApplicantsWithInitialDate = async () => {
+    console.log('[loadEducationApplicantsWithInitialDate] 초기 로드 시작')
     setLoadingEducationApplicants(true)
+    
     try {
-      // 신청 기록이 있는 세션만 조회
-      const url = date ? `/api/education-applicants?date=${encodeURIComponent(date)}` : '/api/education-applicants'
-      console.log('📋 [loadEducationApplicants] API 시도:', url)
+      // 1단계: 먼저 날짜 목록만 가져오기 (필터링 없이)
+      const res = await fetch('/api/education-applicants', {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      })
+      
+      if (!res.ok) {
+        console.error('❌ [loadEducationApplicantsWithInitialDate] HTTP 오류:', res.status, res.statusText)
+        setEducationSessions([])
+        setEducationDates([])
+        return
+      }
+      
+      const data = await res.json()
+      console.log('✅ [loadEducationApplicantsWithInitialDate] 초기 API 응답:', data)
+      
+      if (data.error) {
+        console.log('❌ [loadEducationApplicantsWithInitialDate] API 오류:', data.error)
+        setEducationSessions([])
+        setEducationDates([])
+        return
+      }
+
+      // 2단계: 날짜 목록 설정
+      if (data.dates && Array.isArray(data.dates)) {
+        setEducationDates(data.dates)
+        console.log(`✅ [loadEducationApplicantsWithInitialDate] 날짜 목록 로드 완료: ${data.dates.length}개 날짜`)
+        
+        // 3단계: 적절한 초기 날짜 선택 및 해당 날짜로 필터링된 데이터 로드
+        let initialDate = data.selectedDate
+        if (!initialDate && data.dates.length > 0) {
+          initialDate = data.dates[0]
+        }
+        
+        if (initialDate) {
+          setSelectedEducationDate(initialDate)
+          console.log(`✅ [loadEducationApplicantsWithInitialDate] 초기 날짜 설정: ${initialDate}`)
+          
+          // 4단계: 선택된 날짜로 다시 필터링해서 세션 데이터 로드 (재귀 방지)
+          await loadEducationApplicantsFiltered(initialDate)
+        } else {
+          // 날짜가 없으면 빈 세션으로 설정
+          setEducationSessions([])
+        }
+      } else {
+        console.log('⚠️ [loadEducationApplicantsWithInitialDate] 날짜 목록 없음')
+        setEducationDates([])
+        setEducationSessions([])
+      }
+    } catch (error) {
+      console.error('❌ [loadEducationApplicantsWithInitialDate] 초기 로드 실패:', error)
+      setEducationSessions([])
+      setEducationDates([])
+    } finally {
+      setLoadingEducationApplicants(false)
+    }
+  }
+
+  // 날짜별 필터링 전용 함수 (재귀 호출 방지)
+  const loadEducationApplicantsFiltered = async (date: string) => {
+    console.log('[loadEducationApplicantsFiltered] 시작:', { date })
+    
+    try {
+      // 신청 기록이 있는 세션만 조회 (날짜 필터링 포함)
+      const url = `/api/education-applicants?date=${encodeURIComponent(date)}`
+      console.log('📋 [loadEducationApplicantsFiltered] API 시도:', url)
 
       const res = await fetch(url, {
         cache: 'no-store',
@@ -337,44 +417,45 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       })
       
       if (!res.ok) {
-        console.error('❌ [loadEducationApplicants] HTTP 오류:', res.status, res.statusText)
+        console.error('❌ [loadEducationApplicantsFiltered] HTTP 오류:', res.status, res.statusText)
         setEducationSessions([])
-        setEducationDates([])
         return
       }
       
       const data = await res.json()
-      console.log('✅ [loadEducationApplicants] API 응답:', data)
+      console.log('✅ [loadEducationApplicantsFiltered] API 응답:', data)
       
       if (data.error) {
-        console.log('❌ [loadEducationApplicants] API 오류:', data.error)
+        console.log('❌ [loadEducationApplicantsFiltered] API 오류:', data.error)
         setEducationSessions([])
-        setEducationDates([])
         return
       }
 
       if (data.educationSessions && Array.isArray(data.educationSessions)) {
         setEducationSessions(data.educationSessions)
-        console.log(`✅ [loadEducationApplicants] 교육 세션 목록 로드 완료: ${data.educationSessions.length}개 세션`)
+        console.log(`✅ [loadEducationApplicantsFiltered] 교육 세션 목록 로드 완료: ${data.educationSessions.length}개 세션`)
       } else {
-        console.log('⚠️ [loadEducationApplicants] 올바르지 않은 응답 형식')
+        console.log('⚠️ [loadEducationApplicantsFiltered] 올바르지 않은 응답 형식')
         setEducationSessions([])
       }
-
-      if (data.dates && Array.isArray(data.dates)) {
-        setEducationDates(data.dates)
-        console.log(`✅ [loadEducationApplicants] 날짜 목록 로드 완료: ${data.dates.length}개 날짜`)
-        if (!selectedEducationDate && data.selectedDate) {
-          setSelectedEducationDate(data.selectedDate)
-        }
-      } else {
-        console.log('⚠️ [loadEducationApplicants] 날짜 목록 없음')
-        setEducationDates([])
-      }
     } catch (error) {
-      console.error('❌ [loadEducationApplicants] 교육 세션 목록 로드 실패:', error)
+      console.error('❌ [loadEducationApplicantsFiltered] 교육 세션 목록 로드 실패:', error)
       setEducationSessions([])
-      setEducationDates([])
+    }
+  }
+
+  const loadEducationApplicants = async (date?: string) => {
+    console.log('[loadEducationApplicants] 시작:', { date })
+    
+    // 날짜가 없으면 초기 로드 함수 호출
+    if (!date) {
+      return await loadEducationApplicantsWithInitialDate()
+    }
+    
+    // 날짜가 있으면 필터링 함수 호출
+    setLoadingEducationApplicants(true)
+    try {
+      await loadEducationApplicantsFiltered(date)
     } finally {
       setLoadingEducationApplicants(false)
     }
@@ -502,7 +583,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       // 데이터베이스에서 제출된 녹음 데이터 읽기
       let submittedRecordings = []
       try {
-        const response = await fetch("/api/evaluations/load-database?limit=1000&page=1")
+        const response = await fetch("/api/evaluations/load-database?limit=1000&page=1&includeRecordings=false") // 🔥 녹음 데이터 제외
         console.log('📡 [loadCandidates] API 응답 상태:', response.status, response.statusText)
         
         if (response.ok) {
@@ -523,7 +604,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         submittedRecordings = []
       }
 
-      console.log("📋 [평가 대시보드] 로드된 평가 데이터:", submittedRecordings)
+      console.log("📋 [평가 대시보드] 로드된 평가 데이터 개수:", submittedRecordings.length)
       console.log("🔍 상태별 분류:")
       const statusCounts = submittedRecordings.reduce((acc: any, ev: any) => {
         const status = ev.status || 'pending'
@@ -532,10 +613,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       }, {})
       console.log("상태별 개수:", statusCounts)
 
-      // 디버깅: API에서 받아온 원본 데이터 전체 출력
-      submittedRecordings.forEach((evaluation: any, idx: number) => {
-        console.log(`[디버깅] evaluation[${idx}]:`, evaluation);
-      });
+      // 디버깅: API에서 받아온 원본 데이터 요약만 출력 (성능 개선)
+      console.log(`[디버깅] evaluation 개수: ${submittedRecordings.length}개`);
 
       const candidateList: EvaluationCandidate[] = submittedRecordings
         .map((evaluation: any, idx: number) => {
@@ -543,7 +622,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           const submission = evaluation.candidateInfo && Object.keys(evaluation.candidateInfo).length > 0
             ? evaluation.candidateInfo
             : evaluation;
-          console.log(`[디버깅] submission[${idx}]:`, submission);
+          // 성능 개선: 개별 submission 로그 제거
           return {
             id: evaluation.id || submission.id || `submission-${Date.now()}-${Math.random()}`,
             name: submission.name || "(이름없음)",
@@ -601,8 +680,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         const dateB = new Date(b.submittedAt).getTime();
         return dateB - dateA;
       });
-    // 디버깅: 실제로 렌더링될 후보자와 각 status를 콘솔에 출력
-    console.log("[디버깅] filteredCandidates 개수:", arr.length, arr.map(c => c.status));
+    // 성능 개선: 필터링된 후보자 개수만 출력
+    console.log("[디버깅] filteredCandidates 개수:", arr.length);
     return arr;
   }, [candidates, searchTerm, languageFilter, statusFilter]);
 
@@ -1788,66 +1867,46 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     return false
   }
 
-    // 녹음 파일 로드 함수 (데이터베이스에서 Base64 데이터 가져오기)
+    // 🔥 개선된 녹음 파일 로드 함수 (개별 API 사용으로 성능 최적화)
   const loadRecordingsFromDatabase = async (candidate: EvaluationCandidate) => {
     try {
-      setRecordingsLoading(prev => ({ ...prev, [candidate.id]: true }))
-      console.log(`[loadRecordingsFromDatabase] 진입:`, candidate.name, candidate.employeeId)
+      console.log(`🎵 [loadRecordingsFromDatabase] 녹음 데이터 로딩 시작:`, candidate.name, candidate.id)
       
-      // 데이터베이스에서 해당 평가의 녹음 파일 정보 가져오기
-      const response = await fetch(`/api/evaluations/load-database?limit=1000`)
+      // 🔥 새로운 개별 녹음 데이터 로딩 API 사용
+      const response = await fetch(`/api/evaluations/load-recordings?evaluationId=${candidate.id}`)
       
       if (!response.ok) {
-        console.warn(`[loadRecordingsFromDatabase] API 호출 실패:`, response.status)
-        return {}
+        console.warn(`❌ [loadRecordingsFromDatabase] API 호출 실패:`, response.status)
+        // 실패 시 사용자에게 알림
+        throw new Error(`녹음 파일 로딩 실패 (${response.status}): ${response.statusText}`)
       }
       
       const result = await response.json()
-      const evaluations = result.evaluations || []
       
-      // 해당 후보자의 평가 찾기 (고유 ID로 매칭)
-      const candidateEvaluation = evaluations.find((evaluation: any) => {
-        // 평가의 고유 ID로 정확히 매칭
-        return evaluation.id === candidate.id;
-      })
-      
-      if (!candidateEvaluation) {
-        console.warn(`⚠️ [loadRecordingsFromDatabase] 평가 데이터를 찾을 수 없음: ${candidate.id}`)
-        
-        // 매칭 실패 시 간단한 디버깅 정보 출력
-        console.log(`🔍 [loadRecordingsFromDatabase] 매칭 실패: candidate.id=${candidate.id}`)
-        console.log(`- available evaluation IDs:`, evaluations.map((e: any) => e.id))
-        
-        return {}
+      if (!result.success) {
+        console.warn(`❌ [loadRecordingsFromDatabase] API 응답 실패:`, result.error)
+        throw new Error(`녹음 파일 로딩 실패: ${result.error}`)
       }
       
-      console.log("📁 로드할 녹음 파일 정보:", candidateEvaluation.dropboxFiles)
+      const recordingBlobs = result.recordings || {}
+      const fileCount = Object.keys(recordingBlobs).length
       
-      // dropboxFiles에서 Base64 데이터 추출
-      const recordingBlobs: { [key: string]: string } = {}
+      console.log(`✅ [loadRecordingsFromDatabase] 녹음 데이터 로딩 완료: ${fileCount}개 파일`)
+      console.log(`📁 [loadRecordingsFromDatabase] 로딩된 파일 키:`, Object.keys(recordingBlobs))
       
-      if (candidateEvaluation.dropboxFiles && candidateEvaluation.dropboxFiles.length > 0) {
-        console.log(`📁 [loadRecordingsFromDatabase] ${candidateEvaluation.dropboxFiles.length}개의 녹음 파일 처리 중...`)
-        candidateEvaluation.dropboxFiles.forEach((fileInfo: any) => {
-          console.log(`📁 [loadRecordingsFromDatabase] 파일 정보:`, fileInfo.scriptKey, fileInfo.url ? 'Base64 있음' : 'Base64 없음')
-          if (fileInfo.url && fileInfo.url.startsWith('data:audio/')) {
-            // Base64 데이터가 url 필드에 저장되어 있음
-            recordingBlobs[fileInfo.scriptKey] = fileInfo.url
-            console.log(`✅ [loadRecordingsFromDatabase] 녹음 파일 추가: ${fileInfo.scriptKey}`)
-          }
-        })
-      } else {
-        console.warn(`⚠️ [loadRecordingsFromDatabase] 녹음 파일이 없음: ${candidate.id}`)
+      // 🔥 중요: 녹음 파일이 없으면 오류 발생
+      if (fileCount === 0) {
+        throw new Error("녹음 파일이 없습니다. 평가를 진행할 수 없습니다.")
       }
       
-      console.log("✅ 데이터베이스에서 녹음 파일 로드 완료:", Object.keys(recordingBlobs))
       return recordingBlobs
       
     } catch (error) {
-      console.error("데이터베이스에서 녹음 파일 로드 중 에러:", error)
-      return {}
-    } finally {
-      setRecordingsLoading(prev => ({ ...prev, [candidate.id]: false }))
+      console.error("❌ [loadRecordingsFromDatabase] 녹음 파일 로드 중 오류:", error)
+      // 🔥 중요: 녹음 파일 로딩 실패 시 사용자에게 명확한 알림
+      const errorMessage = error instanceof Error ? error.message : "알 수 없는 오류"
+      alert(`⚠️ 녹음 파일 로딩 실패\n\n${errorMessage}\n\n평가를 진행할 수 없습니다.`)
+      throw error // 상위로 오류 전파하여 평가 진입 중단
     }
   }
 
@@ -1861,8 +1920,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     });
     
     try {
-      // 데이터베이스에서 직접 평가 데이터 로드
-      const response = await fetch("/api/evaluations/load-database?limit=1000");
+      // 데이터베이스에서 직접 평가 데이터 로드 (검토 모드에서는 녹음 데이터 불필요 - 별도 로딩)
+      const response = await fetch("/api/evaluations/load-database?limit=1000&includeRecordings=false"); // 🔥 검토 모드에서도 메타데이터만
       if (!response.ok) {
         throw new Error(`API 요청 실패: ${response.status}`);
       }
@@ -2260,7 +2319,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   녹음 응시 목록
                 </CardTitle>
                 <div className="flex items-center gap-2">
-                  <Select value={selectedApplicantDate || undefined} onValueChange={async (v) => { setSelectedApplicantDate(v); const map = await loadAttendance(v); await loadApplicants(v, map); }}>
+                  <Select value={selectedApplicantDate} onValueChange={async (v) => { setSelectedApplicantDate(v); const map = await loadAttendance(v); await loadApplicants(v, map); }}>
                     <SelectTrigger className="w-48 h-9 px-2">
                       <SelectValue placeholder="날짜 선택">
                         {selectedApplicantDate ? formatDisplayDate(selectedApplicantDate) : "날짜 선택"}
@@ -2357,7 +2416,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   교육 신청자 목록
                 </CardTitle>
                 <div className="flex items-center gap-2">
-                  <Select value={selectedEducationDate || ""} onValueChange={async (v) => { setSelectedEducationDate(v); await loadEducationApplicants(v); }}>
+                  <Select value={selectedEducationDate} onValueChange={async (v) => { setSelectedEducationDate(v); await loadEducationApplicants(v); }}>
                     <SelectTrigger className="w-48 h-9 px-2">
                       <SelectValue placeholder={loadingEducationApplicants ? "로딩 중..." : "날짜 선택"}>
                         {selectedEducationDate ? formatDisplayDate(selectedEducationDate) : (loadingEducationApplicants ? "로딩 중..." : "날짜 선택")}
@@ -2424,7 +2483,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       {/* 신청자 목록 (간소화) */}
                       {session.applicants.length > 0 ? (
                         <div className="space-y-1">
-                          {session.applicants.slice(0, 3).map((applicant: any, appIndex: number) => (
+                          {session.applicants.slice(0, 4).map((applicant: any, appIndex: number) => (
                             <div key={`${applicant.employeeId}-${appIndex}`} className="bg-white rounded p-1">
                               <div className="flex items-center gap-1 text-xs">
                                 {/* 체크인 상태에 따른 체크 표시 */}
@@ -2440,6 +2499,9 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                                 <div className="truncate flex-1">
                                   <div className="font-medium text-gray-900 truncate">
                                     {applicant.name}
+                                  </div>
+                                  <div className="text-xs text-gray-500 truncate">
+                                    {applicant.employeeId}
                                   </div>
                                 </div>
                               </div>
@@ -2483,9 +2545,9 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                               )}
                             </div>
                           ))}
-                          {session.applicants.length > 3 && (
+                          {session.applicants.length > 4 && (
                             <div className="text-xs text-gray-500 text-center">
-                              +{session.applicants.length - 3}명 더
+                              +{session.applicants.length - 4}명 더
                             </div>
                           )}
                         </div>
@@ -3005,7 +3067,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           <CardContent className="pt-3">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <Select value={selectedApplicantDate || undefined} onValueChange={async (v) => { setSelectedApplicantDate(v); const map = await loadAttendance(v); await loadApplicants(v, map); }}>
+                <Select value={selectedApplicantDate || ""} onValueChange={async (v) => { setSelectedApplicantDate(v); const map = await loadAttendance(v); await loadApplicants(v, map); }}>
                   <SelectTrigger className="w-48 h-8">
                     <SelectValue placeholder="날짜 선택" />
                   </SelectTrigger>
@@ -3083,7 +3145,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           <CardContent className="pt-3">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <Select value={selectedEducationDate || undefined} onValueChange={async (v) => { setSelectedEducationDate(v); await loadEducationApplicants(v); }}>
+                <Select value={selectedEducationDate || ""} onValueChange={async (v) => { setSelectedEducationDate(v); await loadEducationApplicants(v); }}>
                   <SelectTrigger className="w-48 h-8">
                     <SelectValue placeholder="날짜 선택" />
                   </SelectTrigger>

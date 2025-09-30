@@ -45,8 +45,8 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "", hideHea
   useEffect(() => {
     if (!employeeId) return;
     setLoading(true);
-    // Database API 사용 (승인된 평가 결과만 조회)
-    fetch(`/api/evaluations/load-my-recordings-database?employeeId=${employeeId}`)
+    // Database API 사용 (승인된 평가 결과만 조회, 녹음 데이터 제외)
+    fetch(`/api/evaluations/load-my-recordings-database?employeeId=${employeeId}&includeRecordings=false`) // 🔥 녹음 데이터 제외
       .then(res => res.json())
       .then(data => {
         console.log("✅ [MyRecordingsTable] Database API에서 로드:", data.records?.length || 0, "개");
@@ -97,10 +97,38 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "", hideHea
     try {
       // 승인된 항목만 결과 확인 가능
       if (record.approved) {
-        // Database API에서 이미 모든 데이터가 로드되었으므로 record 자체를 사용
-        if (record.scores && record.categoryScores) {
-          console.log("✅ [handleResultCheck] Database 데이터 사용:", record.id);
-          setSelectedEval(record);
+        console.log("🎵 [handleResultCheck] 평가 결과 확인 시작:", record.id);
+        
+        // 🔥 개선: 녹음 데이터를 별도로 로딩
+        let recordWithRecordings = record;
+        
+        // 녹음 데이터가 없으면 별도 API로 로딩
+        if (!record.recordings || Object.keys(record.recordings).length === 0) {
+          console.log("🎵 [handleResultCheck] 녹음 데이터 별도 로딩 중...");
+          try {
+            const recordingsResponse = await fetch(`/api/evaluations/load-recordings?evaluationId=${record.id}`);
+            if (recordingsResponse.ok) {
+              const recordingsResult = await recordingsResponse.json();
+              if (recordingsResult.success) {
+                recordWithRecordings = {
+                  ...record,
+                  recordings: recordingsResult.recordings || {}
+                };
+                console.log("✅ [handleResultCheck] 녹음 데이터 로딩 완료:", Object.keys(recordingsResult.recordings || {}).length, "개");
+              } else {
+                console.warn("⚠️ [handleResultCheck] 녹음 데이터 로딩 실패:", recordingsResult.error);
+              }
+            }
+          } catch (recordingError) {
+            console.warn("⚠️ [handleResultCheck] 녹음 데이터 로딩 중 오류:", recordingError);
+            // 녹음 데이터 로딩 실패해도 평가 결과는 표시
+          }
+        }
+        
+        // 평가 결과 표시
+        if (recordWithRecordings.scores && recordWithRecordings.categoryScores) {
+          console.log("✅ [handleResultCheck] 평가 결과 표시:", recordWithRecordings.id);
+          setSelectedEval(recordWithRecordings);
         } else {
           // Fallback: Dropbox에서 로드
           console.log("🔄 [handleResultCheck] Dropbox에서 fallback 로드");
@@ -115,8 +143,8 @@ export default function MyRecordingsTable({ employeeId, searchTerm = "", hideHea
         }
       }
     } catch (error) {
-      console.error("Failed to load evaluation result:", error);
-      // 필요하다면 여기에 에러 알림(toast)을 추가할 수 있습니다.
+      console.error("❌ [handleResultCheck] 평가 결과 로딩 실패:", error);
+      alert("평가 결과를 불러오는 중 오류가 발생했습니다.");
     } finally {
       setResultLoading(prev => ({ ...prev, [key]: false }));
     }

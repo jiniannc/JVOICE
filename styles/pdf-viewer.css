@@ -1,0 +1,112 @@
+/* PDF 뷰어 다국어 폰트 지원 */
+.react-pdf__Page {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  margin-bottom: 20px;
+  background: white;
+}
+
+.react-pdf__Page__canvas {
+  max-width: 100%;
+  height: auto !important;
+}
+
+/* 주석 레이어 스타일링 - 다국어 지원 */
+.react-pdf__Page__annotations {
+  font-family: 'Arial', 'Noto Sans CJK KR', 'Malgun Gothic', 'Microsoft YaHei', 'Hiragino Sans', 'Yu Gothic', sans-serif !important;
+}
+
+.react-pdf__Page__annotations .annotationLayer {
+  font-family: inherit !important;
+}
+
+/* 스티키 노트 주석 스타일링 */
+.react-pdf__Page__annotations .popup {
+  font-family: 'Arial', 'Noto Sans CJK KR', 'Malgun Gothic', 'Microsoft YaHei', 'Hiragino Sans', 'Yu Gothic', sans-serif !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+  background: #fffacd !important;
+  border: 1px solid #ddd !important;
+  border-radius: 4px !important;
+  padding: 8px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+  max-width: 200px !important;
+  word-wrap: break-word !important;
+  white-space: pre-wrap !important;
+}
+
+/* 주석 아이콘 스타일링 */
+.react-pdf__Page__annotations .annotationLayer section {
+  font-family: inherit !important;
+}
+
+.react-pdf__Page__annotations .textAnnotation {
+  font-family: inherit !important;
+}
+
+/* 텍스트 레이어 다국어 지원 */
+.react-pdf__Page__textContent {
+  font-family: 'Arial', 'Noto Sans CJK KR', 'Malgun Gothic', 'Microsoft YaHei', 'Hiragino Sans', 'Yu Gothic', sans-serif !important;
+}
+
+.react-pdf__Page__textContent span {
+  font-family: inherit !important;
+}
+
+/* 한국어 폰트 최적화 */
+.korean-text {
+  font-family: 'Malgun Gothic', 'Noto Sans CJK KR', 'Apple SD Gothic Neo', sans-serif !important;
+  font-weight: 400 !important;
+}
+
+/* 중국어 폰트 최적화 */
+.chinese-text {
+  font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', 'PingFang SC', sans-serif !important;
+  font-weight: 400 !important;
+}
+
+/* 일본어 폰트 최적화 */
+.japanese-text {
+  font-family: 'Yu Gothic', 'Hiragino Sans', 'Noto Sans CJK JP', sans-serif !important;
+  font-weight: 400 !important;
+}
+
+/* 로딩 애니메이션 개선 */
+.react-pdf__Document {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.react-pdf__Document .react-pdf__message {
+  padding: 20px;
+  color: #666;
+  font-size: 14px;
+}
+
+/* 반응형 디자인 */
+@media (max-width: 768px) {
+  .react-pdf__Page {
+    margin: 10px;
+  }
+  
+  .react-pdf__Page__annotations .popup {
+    max-width: 150px !important;
+    font-size: 11px !important;
+  }
+}
+
+/* 고해상도 디스플레이 지원 */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .react-pdf__Page__canvas {
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+  }
+}
+
+/* 다크 모드 지원 (선택사항) */
+@media (prefers-color-scheme: dark) {
+  .react-pdf__Page {
+    box-shadow: 0 4px 6px -1px rgba(255, 255, 255, 0.1), 0 2px 4px -1px rgba(255, 255, 255, 0.06);
+  }
+}
+

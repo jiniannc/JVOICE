@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { BottomSheet } from "@/components/ui/bottom-sheet"
 import { CustomDialog } from "@/components/ui/custom-dialog"
 import { useCustomDialog } from "@/hooks/use-custom-dialog"
+import { checkTimeRestrictionsDisabled, getEducationCheckinStatus } from "@/lib/time-restrictions"
 import { 
   GraduationCap,
   Clock,
@@ -43,6 +44,12 @@ interface EducationRequest {
   slot: number
   category?: string
   isCheckedIn?: boolean
+  details?: {
+    language?: string
+    mode?: string
+    educationType?: string
+    category?: string
+  }
 }
 
 interface EducationCheckinModalProps {
@@ -58,6 +65,7 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
   const [checkinLoading, setCheckinLoading] = useState<string | null>(null)
   const [meetLinkLoading, setMeetLinkLoading] = useState<string | null>(null)
   const [checkedInEducations, setCheckedInEducations] = useState<Set<string>>(new Set())
+  const [timeRestrictionsDisabled, setTimeRestrictionsDisabled] = useState(false)
   // 드래그 관련 상태는 BottomSheet 컴포넌트에서 처리
   
   const educationDialogHook = useCustomDialog()
@@ -70,6 +78,11 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
       setLoading(true)
       setError(null)
       
+      // 시간 제한 상태 확인
+      const restrictionsDisabled = await checkTimeRestrictionsDisabled()
+      setTimeRestrictionsDisabled(restrictionsDisabled)
+      console.log('🎓 [Education Checkin] 시간 제한 상태:', restrictionsDisabled ? '비활성화' : '활성화')
+      
       // 데스크톱과 동일한 Database API 우선 사용 (스케줄 정보 포함)
       let response = await fetch(`/api/requests/database?employeeId=${userInfo.employeeId}&type=education&includeSchedule=true`)
       let allRequests: any[] = []
@@ -79,8 +92,139 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
         console.log('🎓 [Database] 교육 신청 내역 응답:', data)
         
         if (data.success && data.items) {
-          // Database API 응답을 기존 형식으로 변환 (스케줄 정보 포함)
-          allRequests = data.items.map((item: any) => ({
+          // 교실 정보 로드를 위한 스케줄 데이터 수집
+          const uniqueDates = new Set<string>()
+          data.items.forEach((item: any) => {
+            if (item.type === 'education') {
+              uniqueDates.add(item.date)
+            }
+          })
+          
+          // 교실 정보 맵 생성
+          const educationClassroomMap = new Map<string, string>()
+          
+          if (uniqueDates.size > 0) {
+            const months = Array.from(uniqueDates).map(date => date.slice(0, 7))
+            const uniqueMonths = [...new Set(months)]
+            
+            for (const month of uniqueMonths) {
+              try {
+                console.log(`🔍 [Education Checkin] ${month} 월 스케줄 로드 중...`)
+                const scheduleRes = await fetch(`/api/schedules?month=${month}`)
+                if (scheduleRes.ok) {
+                  const scheduleData = await scheduleRes.json()
+                  console.log(`📅 [Education Checkin] ${month} 스케줄 응답:`, scheduleData)
+                  
+                  if (scheduleData.data?.days) {
+                    scheduleData.data.days.forEach((day: any) => {
+                      console.log(`🔍 [Education Checkin] 날짜 ${day.date} 교육 데이터:`, day.education)
+                      if (day.education && Array.isArray(day.education)) {
+                        day.education.forEach((edu: any) => {
+                          console.log(`🔍 [Education Checkin] 교육 객체:`, edu)
+                          if (edu.classroomInfo && edu.type && edu.slots) {
+                            edu.slots.forEach((slot: number) => {
+                              // 카테고리가 있는 경우와 없는 경우 모두 처리 (모바일과 완전히 동일)
+                              if (edu.type.category) {
+                                // 카테고리별 키 (한/영 소규모)
+                                const categoryKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category}`
+                                educationClassroomMap.set(categoryKey, edu.classroomInfo)
+                                console.log(`✅ [Education Checkin] 카테고리별 교실 정보: ${categoryKey} → ${edu.classroomInfo}`)
+                              } else {
+                                // 기본 키 (카테고리 없는 교육: 일본어/중국어, 1:1)
+                                const baseKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`
+                                educationClassroomMap.set(baseKey, edu.classroomInfo)
+                                console.log(`✅ [Education Checkin] 기본 교실 정보: ${baseKey} → ${edu.classroomInfo}`)
+                              }
+                            })
+                          }
+                        })
+                      }
+                    })
+                  }
+                }
+              } catch (error) {
+                console.warn(`교육 체크인 클래스룸 정보 로드 실패 (${month}):`, error)
+              }
+            }
+          }
+          
+          console.log('🏫 [Education Checkin] 교실 정보 맵:', Object.fromEntries(educationClassroomMap))
+          
+          // 교육 항목에 클래스룸 정보 추가 (모바일 MyPage와 완전히 동일한 로직)
+          const enrichedItems = data.items.map((item: any) => {
+            const language = item.details?.language || 'korean-english';
+            const mode = item.details?.mode || item.details?.educationType || '1:1';
+            const category = item.details?.category;
+            const normalizedMode = mode === 'small-group' ? 'small' : mode;
+            
+            console.log(`🔍 [Education Checkin] 원본 신청 데이터:`, {
+              date: item.date,
+              slot: item.slot,
+              details: item.details,
+              schedule: item.schedule,
+              language,
+              mode,
+              category,
+              normalizedMode,
+              expectedCategoryKey: `${item.date}_${item.slot}_${language}_${normalizedMode}_${category}`,
+              expectedBaseKey: `${item.date}_${item.slot}_${language}_${normalizedMode}`
+            });
+            
+            // 클래스룸 정보 매칭 (스케줄 API 우선)
+            let classroomInfo = null;
+            
+            // 1. Database API에서 제공하는 클래스룸 정보 확인
+            if (item.schedule?.classroom) {
+              console.log(`🚨 [Education Checkin] Database API 클래스룸 발견: ${item.schedule.classroom} (카테고리: ${category})`);
+              // 카테고리별 매칭을 우선 시도하고, 실패하면 Database API 사용
+            }
+            
+            // 2. 스케줄 API 매칭 우선 시도
+            {
+              // 소규모 교육의 경우 차수를 녹음 슬롯으로 변환
+              let actualSlots = [item.slot];
+              if (normalizedMode === 'small') {
+                // 소규모 교육: 차수 → 녹음 슬롯 변환
+                const slotMapping = {
+                  1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]
+                };
+                actualSlots = slotMapping[item.slot as keyof typeof slotMapping] || [item.slot];
+                console.log(`🔄 [Education Checkin] 소규모 차수 변환: ${item.slot}차 → 녹음슬롯 [${actualSlots}]`);
+              }
+              
+              // 각 녹음 슬롯에 대해 카테고리별 키 시도
+              if (category && language === 'korean-english' && normalizedMode === 'small') {
+                for (const slot of actualSlots) {
+                  const categoryKey = `${item.date}_${slot}_${language}_${normalizedMode}_${category}`;
+                  classroomInfo = educationClassroomMap.get(categoryKey);
+                  console.log(`🔍 [Education Checkin] 카테고리 키 시도: ${categoryKey} → ${classroomInfo}`);
+                  if (classroomInfo) break;
+                }
+              }
+              
+              // 기본 키 시도 (카테고리 없는 교육이거나 카테고리별 매칭 실패)
+              if (!classroomInfo) {
+                for (const slot of actualSlots) {
+                  const baseKey = `${item.date}_${slot}_${language}_${normalizedMode}`;
+                  classroomInfo = educationClassroomMap.get(baseKey);
+                  console.log(`🔍 [Education Checkin] 기본 키 시도: ${baseKey} → ${classroomInfo}`);
+                  if (classroomInfo) break;
+                }
+              }
+              
+              // 스케줄 API 매칭 실패 시 Database API 폴백
+              if (!classroomInfo && item.schedule?.classroom) {
+                classroomInfo = item.schedule.classroom;
+                console.log(`🔄 [Education Checkin] Database API 폴백: ${classroomInfo}`);
+              }
+            }
+            
+            // 클래스룸 정보 포맷팅
+            const formattedClassroom = classroomInfo || '';
+            console.log(`✅ [Education Checkin] 최종 교실 정보: ${item.date}_${item.slot} → ${classroomInfo} → ${formattedClassroom}`);
+            classroomInfo = formattedClassroom;
+            
+            return {
             id: item.id,
             type: item.type,
             date: item.date,
@@ -89,8 +233,14 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
             applicationTime: item.appliedAt,
             requestedAt: item.appliedAt,
             status: item.status,
-            schedule: item.schedule // 스케줄 정보 추가
-          }))
+              schedule: item.schedule, // 스케줄 정보 추가
+              classroomInfo: classroomInfo // 클래스룸 정보 추가
+            }
+          })
+          
+          allRequests = enrichedItems
+          
+          console.log('📊 [Education Checkin] 교육 신청 내역 (클래스룸 정보 포함):', allRequests)
         }
       } else {
         // Database API 실패시 Dropbox API로 fallback
@@ -132,7 +282,9 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
           if (educationType === '1:1') {
             const timeMap: Record<number, string> = {
               1: '08:30-08:55', 2: '09:00-09:25', 3: '09:30-09:55', 4: '10:00-10:25',
-              5: '10:30-10:55', 6: '11:00-11:25', 7: '11:30-11:55', 8: '12:00-12:25', 9: '13:00-13:25'
+              5: '10:30-10:55', 6: '11:00-11:25', 7: '11:30-11:55', 8: '12:00-12:25',
+              9: '13:35-14:00', 10: '14:05-14:30', 11: '14:35-15:00', 12: '15:05-15:30',
+              13: '15:35-16:00', 14: '16:05-16:30', 15: '16:35-17:00', 16: '17:05-17:30'
             }
             return timeMap[slot] || '시간미정'
           } else if (educationType === 'small-group') {
@@ -172,12 +324,7 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
             // 2순위: fallback으로 스케줄 정보에서 교실 정보 사용
             const scheduleClassroom = req.schedule?.classroom?.trim()
             if (scheduleClassroom) {
-              // 이미 "학과장"이 포함되어 있으면 그대로 사용, 없으면 추가
-              if (scheduleClassroom.includes('학과장')) {
-                classroom = scheduleClassroom
-              } else {
-                classroom = `${scheduleClassroom} 학과장`
-              }
+              classroom = scheduleClassroom
               console.log('🔄 [Education Checkin] 스케줄 fallback 사용:', classroom)
               return classroom
             }
@@ -248,6 +395,18 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
   const handleCheckin = async (educationId: string) => {
     setCheckinLoading(educationId)
     try {
+      // 체크인하려는 교육의 정보 찾기
+      const education = educationRequests.find(req => req.id === educationId)
+      const isKoreanEnglishSmall = education?.details?.language === 'korean-english' && 
+                                   (education?.details?.mode === 'small' || education?.details?.mode === 'small-group')
+      
+      console.log('🔍 [Education Checkin] 체크인 교육 정보:', {
+        educationId,
+        language: education?.details?.language,
+        mode: education?.details?.mode,
+        isKoreanEnglishSmall
+      })
+
       const response = await fetch('/api/education/checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -255,16 +414,41 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
           educationId,
           employeeId: userInfo.employeeId,
           name: userInfo.name,
-          checkinTime: new Date().toISOString()
+          checkinTime: new Date().toISOString(),
+          isKoreanEnglishSmall // 한영 소규모 여부 전달
         })
       })
 
       if (response.ok) {
+        // 한영 소규모 교육 체크인 시 특별한 메시지와 함께 상세 평가 권한 부여
+        if (isKoreanEnglishSmall) {
+          showAlert({
+            title: '체크인 완료 🎉',
+            message: '한영 소규모 교육 체크인이 완료되었습니다!\n이제 Review 모드에서 상세 평가 결과를 확인할 수 있습니다.',
+            type: 'success'
+          })
+          
+          // 로컬 스토리지에 한영 소규모 체크인 기록 저장
+          const checkinRecord = {
+            employeeId: userInfo.employeeId,
+            educationId,
+            checkinTime: new Date().toISOString(),
+            hasDetailedReviewAccess: true
+          }
+          
+          const existingRecords = JSON.parse(localStorage.getItem('koreanEnglishSmallCheckins') || '[]')
+          existingRecords.push(checkinRecord)
+          localStorage.setItem('koreanEnglishSmallCheckins', JSON.stringify(existingRecords))
+          
+          console.log('✅ [Education Checkin] 한영 소규모 체크인 기록 저장:', checkinRecord)
+        } else {
         showAlert({
           title: '체크인 완료',
           message: '교육 체크인이 완료되었습니다!',
           type: 'success'
         })
+        }
+        
         // 체크인 완료된 교육 ID를 상태에 추가
         setCheckedInEducations(prev => new Set(prev).add(educationId))
         // 체크인 후 목록 새로고침
@@ -296,7 +480,14 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
 
   const getTimeStatus = (dateStr: string, startTime: string, endTime: string) => {
     if (!dateStr || !startTime) return 'early'
-    // 브라우저 로컬 시간 기준으로 비교
+    
+    // 시간 제한이 비활성화된 경우 항상 체크인 가능
+    if (timeRestrictionsDisabled) {
+      console.log('🎓 [Education Checkin] 시간 제한 비활성화로 체크인 가능')
+      return 'available'
+    }
+    
+    // 기존 로직: 브라우저 로컬 시간 기준으로 비교
     const start = new Date(`${dateStr}T${startTime}:00`)
     const end = endTime ? new Date(`${dateStr}T${endTime}:00`) : null
     const now = new Date()
@@ -312,7 +503,11 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
       case 'early':
         return <Badge variant="secondary">체크인 준비중</Badge>
       case 'available':
-        return <Badge className="bg-green-600 text-white">체크인 가능</Badge>
+        return (
+          <Badge className={`${timeRestrictionsDisabled ? 'bg-orange-600' : 'bg-green-600'} text-white`}>
+            {timeRestrictionsDisabled ? '체크인 가능 (테스트모드)' : '체크인 가능'}
+          </Badge>
+        )
       case 'late':
         return <Badge variant="destructive">체크인 마감</Badge>
       default:
@@ -357,10 +552,7 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="text-sm text-gray-600 text-center">
-                📅 신청한 교육 목록
-              </div>
+            <div className="space-y-4 pt-4">
               
               {educationRequests.map((education) => {
                 const timeStatus = getTimeStatus(education.date, education.startTime, education.endTime)

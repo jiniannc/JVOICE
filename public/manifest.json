@@ -1,6 +1,6 @@
 {
-  "name": "JINAIR 기내 방송 평가 시스템",
-  "short_name": "JINAIR 평가",
+  "name": "JVOICE",
+  "short_name": "JVOICE",
   "description": "JINAIR In-Flight Announcement Evaluation System",
   "start_url": "/",
   "display": "standalone",

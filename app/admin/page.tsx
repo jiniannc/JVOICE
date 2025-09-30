@@ -7,10 +7,14 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { PDFSyncManager } from "@/components/pdf-sync-manager"
+import { PDFUploadManager } from "@/components/pdf-upload-manager"
 import { ScheduleSyncAdmin } from "@/components/schedule-sync-admin"
 import { EvaluationSummary } from "@/components/evaluation-summary"
 import { FileUploadEvaluation } from "@/components/file-upload-evaluation"
+import { AdminRequestManagerModal } from "@/components/admin-request-manager-modal"
+import { AdminEducationJournalModal } from "@/components/admin-education-journal-modal"
+import { InstructorStatsModal } from "@/components/instructor-stats-modal"
+import { RecordingManagementModal } from "@/components/recording-management-modal"
 import {
   CheckCircle,
   Download,
@@ -75,7 +79,7 @@ function isFullyEvaluated(submission: Submission): submission is Submission & {
   comments: { korean: string; english: string } | string;
 } {
   return (
-    submission.status === "submitted" &&
+    (submission.status === "submitted" || submission.status === "completed" || submission.approved === true) &&
     typeof submission.grade === "string" &&
     typeof submission.totalScore === "number" &&
     typeof submission.evaluatedAt === "string" &&
@@ -144,6 +148,10 @@ export default function AdminDashboard() {
   // 시간 제한 토글 상태
   const [timeRestrictionsDisabled, setTimeRestrictionsDisabled] = useState(false)
   const [timeRestrictionsLoading, setTimeRestrictionsLoading] = useState(false)
+  const [showRequestManager, setShowRequestManager] = useState(false)
+  const [showEducationJournalManager, setShowEducationJournalManager] = useState(false)
+  const [showInstructorStats, setShowInstructorStats] = useState(false)
+  const [showRecordingManager, setShowRecordingManager] = useState(false)
   const [searchMode, setSearchMode] = useState<"all" | "monthly">("monthly")
   const [languageFilter, setLanguageFilter] = useState<string>("all")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
@@ -172,15 +180,11 @@ export default function AdminDashboard() {
   const [registering, setRegistering] = useState(false)
   const [deviceLabel, setDeviceLabel] = useState("")
   const [currentIp, setCurrentIp] = useState<string>("")
-  // Request 노출 토글 관리 (월별)
-  const [requestMonth, setRequestMonth] = useState<string>(new Date().toISOString().slice(0,7))
-  const [requestVisible, setRequestVisible] = useState<boolean | null>(null)
 
   useEffect(() => {
     loadData(1, itemsPerPage, "replace");
     setLastUpdate(new Date().toLocaleTimeString());
     loadLoginLogs(); // 로그인 기록 자동 로드 추가
-    loadRequestVisibility().catch(()=>{})
     // 자동 새로고침 제거, 수동 업데이트만 허용
   }, []);
 
@@ -350,57 +354,6 @@ export default function AdminDashboard() {
     }
   }
 
-  // 월별 Request 공개 여부 로딩
-  const loadRequestVisibility = async () => {
-    try {
-      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY as string
-      const sheetId = process.env.NEXT_PUBLIC_SCHEDULE_SHEET_ID as string
-      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent('Config')}!A1:B100?key=${apiKey}`, { cache: 'no-store' })
-      if (!res.ok) { setRequestVisible(null); return }
-      const json = await res.json()
-      const rows: string[][] = json?.values || []
-      let vis: boolean | null = null
-      for (let i=1;i<rows.length;i++){
-        const ym = (rows[i]?.[0]||'').trim()
-        const v = (rows[i]?.[1]||'').trim().toUpperCase()
-        if (ym === requestMonth){
-          vis = (v==='ON'||v==='TRUE'||v==='1'||v==='OPEN') ? true : (v==='OFF'||v==='FALSE'||v==='0'||v==='CLOSE'? false : null)
-          break
-        }
-      }
-      setRequestVisible(vis)
-    } catch {
-      setRequestVisible(null)
-    }
-  }
-
-  const saveRequestVisibility = async (visible: boolean) => {
-    try {
-      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY as string
-      const sheetId = process.env.NEXT_PUBLIC_SCHEDULE_SHEET_ID as string
-      // Config 시트에 (월, ON/OFF) upsert
-      // 간단히 전체 읽고, 클라이언트에서 재작성 (동시성 낮음 가정)
-      const getRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent('Config')}!A1:B100?key=${apiKey}`, { cache: 'no-store' })
-      const getJson = await getRes.json()
-      const rows: string[][] = getJson?.values || []
-      const header = rows[0] && rows[0].length>=2 ? rows[0] : ['월','공개']
-      const map: Record<string,string> = {}
-      for (let i=1;i<rows.length;i++){
-        const ym = (rows[i]?.[0]||'').trim(); const v = (rows[i]?.[1]||'').trim()
-        if (ym) map[ym]=v
-      }
-      map[requestMonth] = visible ? 'ON' : 'OFF'
-      const all = Object.entries(map).sort(([a],[b])=>a.localeCompare(b))
-      const values = [header, ...all.map(([ym,v])=>[ym,v])]
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent('Config')}!A1:B100?valueInputOption=RAW&key=${apiKey}`,{
-        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ values })
-      })
-      setRequestVisible(visible)
-      alert('Request 공개 설정이 저장되었습니다.')
-    } catch (e:any) {
-      alert(`저장 실패: ${e?.message||e}`)
-    }
-  }
 
   const getLanguageDisplay = (language: string) => {
     const displays: { [key: string]: string } = {
@@ -480,13 +433,7 @@ export default function AdminDashboard() {
       return;
     }
 
-    // 1. 평가 완료된 데이터는 삭제 불가
-    if (submission.status === 'submitted') {
-      alert('평가가 완료된 데이터는 삭제할 수 없습니다.');
-      return;
-    }
-
-    // 2. 관리자 확인
+    // 관리자 확인
     const confirmed = window.confirm(
       `정말로 "${submission.name} (${submission.employeeId})"의 녹음 제출을 삭제하시겠습니까?\n\n삭제된 데이터는 복구할 수 없습니다.`
     );
@@ -609,9 +556,9 @@ export default function AdminDashboard() {
           sub.submittedAt.startsWith(selectedMonth)
       );
 
-      // 해당 월의 평가 완료된 데이터
+      // 해당 월의 평가 완료된 데이터 (submitted, completed, approved 상태)
       const monthEvaluationResults = monthSubmissions.filter(
-        (sub) => sub.status === 'submitted'
+        (sub) => sub.status === 'submitted' || sub.status === 'completed' || sub.approved
       );
 
       result.byLanguage[lang] = {
@@ -620,6 +567,7 @@ export default function AdminDashboard() {
         pending: monthSubmissions.length - monthEvaluationResults.length,
       };
 
+      // 모든 언어에 대한 등급 통계 생성
       if (lang === "korean-english") {
         const gradeStats = { S등급: 0, A등급: 0, B등급: 0, FAIL: 0 };
         for (const evaluationResult of monthEvaluationResults) {
@@ -627,7 +575,16 @@ export default function AdminDashboard() {
           if (grade === "S등급") gradeStats.S등급++;
           else if (grade === "A등급") gradeStats.A등급++;
           else if (grade === "B등급") gradeStats.B등급++;
-          else if (grade === "FAIL") gradeStats.FAIL++;
+          else if (grade === "FAIL" || grade === "F") gradeStats.FAIL++;
+        }
+        result.byGrade[lang] = gradeStats;
+      } else if (lang === "japanese" || lang === "chinese") {
+        const gradeStats = { A: 0, B: 0, F: 0 };
+        for (const evaluationResult of monthEvaluationResults) {
+          const grade = evaluationResult.grade;
+          if (grade === "A") gradeStats.A++;
+          else if (grade === "B") gradeStats.B++;
+          else if (grade === "F" || grade === "FAIL") gradeStats.F++;
         }
         result.byGrade[lang] = gradeStats;
       }
@@ -1282,45 +1239,123 @@ export default function AdminDashboard() {
                 </>
               )}
             </Button>
+          </div>
+        </div>
+
+        {/* 관리자 도구 모음 */}
+        <div className="bg-gray-50 rounded-lg p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             
-            <Button 
-              onClick={async () => { 
-                // 캐시 무효화 후 데이터 다시 로드
-                try {
-                  // Database API는 캐시가 없으므로 단순히 데이터만 새로고침
-                  console.log("✅ Database 데이터 새로고침");
-                } catch (error) {
-                  console.warn("⚠️ 데이터 새로고침 실패:", error);
-                }
-                await loadData(); 
-                setLastUpdate(new Date().toLocaleTimeString()); 
-              }} 
-              className="ml-2 bg-green-600 hover:bg-green-700 text-white font-semibold" 
-              size="sm"
-            >
-              <RefreshCw className="w-4 h-4 mr-1" />
-              즉시 새로고침
-            </Button>
-            <Button onClick={() => { loadData(); setLastUpdate(new Date().toLocaleTimeString()); }} className="ml-2" variant="outline" size="sm">
-              일반 업데이트
-            </Button>
-            {/* Request 공개 토글 */}
-            <Select value={requestMonth} onValueChange={(v)=>{ setRequestMonth(v); setTimeout(()=>loadRequestVisibility(),0) }}>
-              <SelectTrigger className="w-32 h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from(new Set([new Date().toISOString().slice(0,7), ...loadedMonths])).sort().map(ym=>{
-                  const d = new Date(ym+'-01')
-                  return (
-                    <SelectItem key={`req-${ym}`} value={ym}>{d.toLocaleDateString('ko-KR',{year:'numeric',month:'long'})}</SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
-            <Button size="sm" variant={requestVisible? 'default':'outline'} onClick={()=> saveRequestVisibility(!(requestVisible===true))}>
-              {requestVisible ? 'Request 공개: ON → OFF' : (requestVisible===false ? 'Request 공개: OFF → ON' : 'Request 공개 설정')}
-            </Button>
+            {/* 시스템 관리 */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-700 mb-2">시스템 관리</h3>
+              <div className="flex flex-col gap-2">
+                <Button 
+                  onClick={async () => { 
+                    try {
+                      console.log("✅ Database 데이터 새로고침");
+                    } catch (error) {
+                      console.warn("⚠️ 데이터 새로고침 실패:", error);
+                    }
+                    await loadData(); 
+                    setLastUpdate(new Date().toLocaleTimeString()); 
+                  }} 
+                  variant="outline"
+                  size="sm"
+                  className="justify-start text-xs"
+                >
+                  <RefreshCw className="w-3 h-3 mr-2" />
+                  즉시 새로고침
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (confirm('모든 사용자 정보를 구글 스프레드시트 정보로 동기화하시겠습니까?')) {
+                      try {
+                        const response = await fetch('/api/admin/sync-user-info', { method: 'POST' });
+                        const result = await response.json();
+                        if (result.success) {
+                          alert(`동기화 완료: ${result.stats.updatedCount}명 업데이트됨`);
+                          await loadData();
+                        } else {
+                          alert(`동기화 실패: ${result.error}`);
+                        }
+                      } catch (error) {
+                        alert('동기화 중 오류가 발생했습니다.');
+                      }
+                    }
+                  }}
+                  variant="outline"
+                  size="sm"
+                  className="justify-start text-xs"
+                >
+                  <RotateCcw className="w-3 h-3 mr-2" />
+                  사용자 정보 동기화
+                </Button>
+              </div>
+            </div>
+
+            {/* 데이터 관리 */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-700 mb-2">데이터 관리</h3>
+              <div className="flex flex-col gap-2">
+                <Button
+                  onClick={() => setShowRequestManager(true)}
+                  variant="outline"
+                  size="sm"
+                  className="justify-start text-xs"
+                >
+                  <Users className="w-3 h-3 mr-2" />
+                  신청 내역 관리
+                </Button>
+                <Button
+                  onClick={() => setShowEducationJournalManager(true)}
+                  variant="outline"
+                  size="sm"
+                  className="justify-start text-xs"
+                >
+                  <FileSpreadsheet className="w-3 h-3 mr-2" />
+                  교육 기록 관리
+                </Button>
+                <Button
+                  onClick={() => setShowRecordingManager(true)}
+                  variant="outline"
+                  size="sm"
+                  className="justify-start text-xs"
+                >
+                  <FileAudio className="w-3 h-3 mr-2" />
+                  녹음 파일 관리
+                </Button>
+              </div>
+            </div>
+
+            {/* 분석 및 외부 링크 */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-700 mb-2">분석 및 외부 링크</h3>
+              <div className="flex flex-col gap-2">
+                <Button 
+                  onClick={() => setShowInstructorStats(true)}
+                  variant="outline"
+                  size="sm"
+                  className="justify-start text-xs"
+                >
+                  <Activity className="w-3 h-3 mr-2" />
+                  교관 관리
+                </Button>
+                <Button 
+                  onClick={() => {
+                    const employeeSpreadsheetId = "1F1xWL9dv0vAFvMfZaf05nO_vZKpuz82WIJLLBHWgaes";
+                    const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${employeeSpreadsheetId}/edit`;
+                    window.open(spreadsheetUrl, '_blank');
+                  }}
+                  variant="outline"
+                  size="sm"
+                  className="justify-start text-xs"
+                >
+                  <Globe className="w-3 h-3 mr-2" />
+                  사용자 계정 정보
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1618,7 +1653,7 @@ export default function AdminDashboard() {
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {(sub.status === 'submitted' || sub.status === 'completed') ? (
+                          {(sub.status === 'submitted' || sub.status === 'completed' || sub.approved) ? (
                             (<>{(() => {
                               const gradeInfo = getGradeInfo(
                                 typeof sub.totalScore === 'number' ? sub.totalScore : 0,
@@ -1649,7 +1684,7 @@ export default function AdminDashboard() {
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {(sub.status === 'submitted' || sub.status === 'completed') ? (
+                          {(sub.status === 'submitted' || sub.status === 'completed' || sub.approved) ? (
                             <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => viewEvaluationResult(sub.id)}>
                               <Eye className="w-4 h-4 mr-1" />
                               결과 확인
@@ -1659,18 +1694,14 @@ export default function AdminDashboard() {
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {(sub.status === 'submitted' || sub.status === 'completed') ? (
-                            <span className="text-xs text-gray-400">삭제 불가</span>
-                          ) : (
-                            <Button 
-                              variant="outline" 
-                              size="sm"
-                              className="h-7 px-2 text-red-600 border-red-300 hover:bg-red-50"
-                              onClick={() => handleDelete(sub.id)}>
-                              <Trash2 className="w-4 h-4 mr-1" />
-                              삭제
-                            </Button>
-                          )}
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            className="h-7 px-2 text-red-600 border-red-300 hover:bg-red-50"
+                            onClick={() => handleDelete(sub.id)}>
+                            <Trash2 className="w-4 h-4 mr-1" />
+                            삭제
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1719,7 +1750,7 @@ export default function AdminDashboard() {
         </Card>
 
         {/* v85 PDF 동기화 */}
-        <PDFSyncManager />
+        <PDFUploadManager />
 
         {/* 스케줄 동기화 */}
         <ScheduleSyncAdmin />
@@ -1953,6 +1984,30 @@ export default function AdminDashboard() {
             </div>
           </div>
         )}
+
+        {/* 신청 내역 관리 모달 */}
+        <AdminRequestManagerModal
+          isOpen={showRequestManager}
+          onClose={() => setShowRequestManager(false)}
+        />
+
+        {/* 교육 일지 관리 모달 */}
+        <AdminEducationJournalModal
+          isOpen={showEducationJournalManager}
+          onClose={() => setShowEducationJournalManager(false)}
+        />
+
+        {/* 교관 통계 모달 */}
+        <InstructorStatsModal
+          isOpen={showInstructorStats}
+          onClose={() => setShowInstructorStats(false)}
+        />
+
+        {/* 녹음 파일 관리 모달 */}
+        <RecordingManagementModal
+          isOpen={showRecordingManager}
+          onClose={() => setShowRecordingManager(false)}
+        />
       </div>
     </div>
   )

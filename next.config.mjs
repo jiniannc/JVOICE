@@ -25,6 +25,8 @@ const nextConfig = {
               connect-src 'self' https://www.googleapis.com https://accounts.google.com https://sheets.googleapis.com;
               frame-src 'self' https://drive.google.com https://docs.google.com https://dl.dropboxusercontent.com https://www.dropbox.com;
               media-src 'self' blob: data:;
+              worker-src 'self' blob:;
+              font-src 'self' data: https://fonts.gstatic.com;
             `.replace(/\s{2,}/g, " ").trim(),
           },
         ],

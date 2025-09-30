@@ -133,14 +133,40 @@ async function loadFromDatabase(requestedDate?: string) {
         const timeA = koreanDateToISO(a);
         const timeB = koreanDateToISO(b);
         if (!timeA || !timeB) return 0;
-        return new Date(timeB).getTime() - new Date(timeA).getTime(); // 내림차순 (최신 먼저)
+        return new Date(timeA).getTime() - new Date(timeB).getTime(); // 오름차순 (과거부터 미래 순)
       });
 
-    // 기본 선택 날짜 결정
+    // 기본 선택 날짜 결정 - 교육 신청자 목록과 동일한 로직
     const today = formatTodayKR();
-    const selectedDate = requestedDate && koreanDates.includes(requestedDate)
-      ? requestedDate
-      : (koreanDates.includes(today) ? today : (koreanDates[0] || ""));
+    let selectedDate = requestedDate && koreanDates.includes(requestedDate) ? requestedDate : null;
+    
+    if (!selectedDate) {
+      // 1. 오늘 날짜에 신청자가 있는지 확인
+      if (koreanDates.includes(today)) {
+        selectedDate = today;
+        console.log(`📋 [recording-applicants] 오늘 날짜로 설정: ${selectedDate}`);
+      } else {
+        // 2. 오늘 이후의 가장 가까운 미래 날짜 찾기
+        const todayISO = koreanDateToISO(today);
+        if (todayISO) {
+          const futureDates = koreanDates.filter(date => {
+            const dateISO = koreanDateToISO(date);
+            return dateISO && dateISO > todayISO;
+          });
+          if (futureDates.length > 0) {
+            selectedDate = futureDates[0];
+            console.log(`📋 [recording-applicants] 미래 가장 가까운 날짜로 설정: ${selectedDate}`);
+          } else {
+            // 3. 미래 날짜가 없으면 가장 최근 날짜
+            selectedDate = koreanDates[koreanDates.length - 1] || "";
+            console.log(`📋 [recording-applicants] 가장 최근 날짜로 설정: ${selectedDate}`);
+          }
+        } else {
+          selectedDate = koreanDates[0] || "";
+          console.log(`📋 [recording-applicants] 첫 번째 날짜로 설정: ${selectedDate}`);
+        }
+      }
+    }
 
     if (!selectedDate) {
       console.log('📋 [recording-applicants] 선택된 날짜 없음');

@@ -388,7 +388,7 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">녹음 파일 최종 확인</h2>
           <p className="text-gray-600">
-            녹음된 파일들을 확인하고 최종 제출해주세요.
+            녹음된 파일들을 확인하고 최종 제출해주세요. (재녹음 불가)
           </p>
         </div>
 

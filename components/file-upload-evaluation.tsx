@@ -367,11 +367,8 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
         // 파일을 Base64로 변환
         const base64Data = await fileToBase64(uploadedFile.file)
         
-        // 1개 파일을 5개 스크립트로 복제 (기존 시스템 호환성)
-        for (let i = 1; i <= 5; i++) {
-          const scriptKey = `${i}-${uploadedFile.language}`
-          recordings[scriptKey] = base64Data
-        }
+        // 🔥 수정: 중복 생성 방지 - 하나의 파일당 하나의 키만 생성
+        recordings[uploadedFile.key] = base64Data
         
         // 디버깅: 파일 크기 및 DataURL 길이 확인
         console.log(`파일 크기: ${uploadedFile.file.name} - ${(uploadedFile.file.size / 1024 / 1024).toFixed(2)}MB`)
@@ -381,6 +378,14 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
         originalFiles[uploadedFile.key] = uploadedFile.file.name
       }
 
+      // 원본 파일 확장자 정보 추출
+      const fileExtensions: { [key: string]: string } = {}
+      for (const uploadedFile of uploadedFiles) {
+        const fileName = uploadedFile.file.name.toLowerCase()
+        const extension = fileName.split('.').pop() || 'webm'
+        fileExtensions[uploadedFile.key] = extension
+      }
+
       // 평가 데이터 생성 (필수 정보만 포함)
       const evaluationData = {
         name: userInfo.name,
@@ -388,9 +393,10 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
         language: userInfo.language,
         category: userInfo.category,
         submittedAt: new Date().toISOString(),
-        recordingCount: 5,
-        scriptNumbers: [1, 2, 3, 4, 5],
+        recordingCount: uploadedFiles.length,
+        scriptNumbers: uploadedFiles.map((_, index) => index + 1),
         recordings: recordings,
+        fileExtensions: fileExtensions, // 원본 파일 확장자 정보 추가
         status: "pending",
         comment: "",
         isFileUpload: true,
@@ -403,8 +409,8 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
         language: userInfo.language,
         category: userInfo.category,
         submittedAt: new Date().toISOString(),
-        recordingCount: 5,
-        scriptNumbers: [1, 2, 3, 4, 5],
+        recordingCount: uploadedFiles.length,
+        scriptNumbers: uploadedFiles.map((_, index) => index + 1),
         recordings: recordings,
         comment: "",
       }

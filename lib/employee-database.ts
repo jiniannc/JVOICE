@@ -194,6 +194,21 @@ export class EmployeeDatabase {
     return found || null
   }
 
+  async findEmployeeByEmployeeId(employeeId: string): Promise<Employee | null> {
+    const employees = await this.fetchEmployees()
+    const normalizedEmployeeId = employeeId.trim()
+
+    const found = employees.find((emp) => emp.employeeId === normalizedEmployeeId)
+
+    if (found) {
+      console.log("✅ 승무원 정보 찾음 (사번):", found.name, found.employeeId, "역할:", found.roles)
+    } else {
+      console.warn("❌ 등록되지 않은 사번:", employeeId)
+    }
+
+    return found || null
+  }
+
   async getAllEmployees(): Promise<Employee[]> {
     return await this.fetchEmployees()
   }

@@ -36,15 +36,17 @@ export function BottomSheet({
     }
   }, [isOpen])
 
-  // 터치 이벤트 핸들러
-  const handleTouchStart = (e: React.TouchEvent) => {
+  // 핸들 영역에서만 작동하는 터치 이벤트 핸들러
+  const handleHandleTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation() // 이벤트 버블링 방지
     setIsDragging(true)
     setStartY(e.touches[0].clientY)
     setCurrentY(0)
   }
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  const handleHandleTouchMove = (e: React.TouchEvent) => {
     if (!isDragging) return
+    e.stopPropagation() // 이벤트 버블링 방지
     
     const deltaY = e.touches[0].clientY - startY
     if (deltaY > 0) {
@@ -52,8 +54,9 @@ export function BottomSheet({
     }
   }
 
-  const handleTouchEnd = () => {
+  const handleHandleTouchEnd = (e: React.TouchEvent) => {
     if (!isDragging) return
+    e.stopPropagation() // 이벤트 버블링 방지
     
     setIsDragging(false)
     
@@ -87,7 +90,7 @@ export function BottomSheet({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 transition-opacity duration-300 ease-out"
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] transition-opacity duration-300 ease-out"
       style={{ 
         touchAction: 'none',
         opacity: isOpen ? 1 : 0
@@ -104,15 +107,18 @@ export function BottomSheet({
         style={{
           height,
           transform: `translateY(${isDragging ? currentY : (isOpen ? '0%' : '100%')}px)`,
-          touchAction: 'pan-y',
+          touchAction: 'auto', // 컨텐츠 영역은 자유롭게 스크롤 가능
         }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 드래그 핸들 */}
-        <div className="flex justify-center py-3 bg-gray-50/80 rounded-t-3xl">
+        {/* 드래그 핸들 - 터치 이벤트는 이 영역에서만 작동 */}
+        <div 
+          className="flex justify-center py-3 bg-gray-50/80 rounded-t-3xl cursor-grab active:cursor-grabbing"
+          style={{ touchAction: 'pan-y' }}
+          onTouchStart={handleHandleTouchStart}
+          onTouchMove={handleHandleTouchMove}
+          onTouchEnd={handleHandleTouchEnd}
+        >
           <div className="w-12 h-1.5 bg-gray-300 rounded-full"></div>
         </div>
 

@@ -60,13 +60,13 @@ export async function GET(request: NextRequest) {
     // 3. 날짜별로 그룹화하여 가용성 계산
     const availabilityData: Record<string, any> = {}
 
-    // 날짜 목록 추출 (중복 제거)
+    // 날짜 목록 추출 (중복 제거, undefined 필터링)
     const allDates = [...new Set([
       ...educationApplications.map(app => app.date),
       ...recordingApplications.map(app => app.date)
-    ])].sort()
+    ])].filter(date => date !== undefined && date !== null).sort()
 
-    console.log(`📅 [Bulk Availability] 처리할 날짜: ${allDates.length}개`)
+    console.log(`📅 [Bulk Availability] 처리할 날짜: ${allDates.length}개`, allDates)
 
     // 각 날짜별로 가용성 계산
     for (const date of allDates) {

@@ -277,4 +277,51 @@ model RecordingCheckin {
   @@map("recording_checkins")
 }
 
+// PDF 문안 파일 테이블
+model PdfScript {
+  id           String   @id @default(cuid())
+  language     String   // 'korean-english', 'japanese', 'chinese'
+  scriptNumber Int      // 문안 번호 (1, 2, 3, ...)
+  fileName     String   // 원본 파일명 (예: "한영_문안1.pdf")
+  fileData     Bytes    // PDF 파일 바이너리 데이터
+  fileSize     Int      // 파일 크기 (bytes)
+  mimeType     String   @default("application/pdf")
+  uploadedAt   DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  // 메타데이터
+  checksum     String?  // 파일 무결성 검증용 해시
+  version      Int      @default(1) // 파일 버전 (덮어쓰기 시 증가)
+  
+  @@unique([language, scriptNumber]) // 언어별 문안 번호는 유일해야 함
+  @@index([language])
+  @@index([scriptNumber])
+  @@map("pdf_scripts")
+}
+
+// 교육 일지 테이블
+model EducationJournal {
+  id                    String   @id @default(cuid())
+  educationSessionId    String?  // 교육 세션 ID (선택적)
+  traineeEmployeeId     String   // 교육생 사번
+  traineeName           String   // 교육생 이름
+  instructorEmployeeId  String   // 교관 사번
+  instructorName        String   // 교관 이름
+  educationDate         DateTime // 교육 날짜
+  educationType         String   // '1:1', 'small-group'
+  educationLanguage     String   // 'korean-english', 'japanese', 'chinese'
+  educationSlot         Int      // 교육 차수
+  contentCategories     String[] // 교육 내용 카테고리 배열
+  detailedContent       String   // 세부 교육 내용
+  feedback              String?  // 피드백
+  rating                Int?     // 1-5 평점
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([traineeEmployeeId])
+  @@index([instructorEmployeeId])
+  @@index([educationDate])
+  @@map("education_journals")
+}
+
 

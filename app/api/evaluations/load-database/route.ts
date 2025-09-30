@@ -11,9 +11,10 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const month = searchParams.get("month"); // 'YYYY-MM'
     const status = searchParams.get("status") || "all"; // pending, review_requested, completed, approved, all
+    const includeRecordings = searchParams.get("includeRecordings") === "true"; // 🔥 새로운 파라미터
     const offset = (page - 1) * limit;
 
-    console.log(`📊 [API] Database 평가 결과 로드 시작 (Page: ${page}, Limit: ${limit}, Status: ${status})`);
+    console.log(`📊 [API] Database 평가 결과 로드 시작 (Page: ${page}, Limit: ${limit}, Status: ${status}, IncludeRecordings: ${includeRecordings})`);
 
     // 1. 기본 쿼리 구성
     let whereClause: any = {};
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
       include: {
         user: true,
         scores: true,
-        recordings: true
+        recordings: includeRecordings // 🔥 조건부 녹음 데이터 로딩
       },
       orderBy: [
         { status: 'asc' }, // pending -> review_requested -> completed -> approved 순
@@ -173,17 +174,19 @@ export async function GET(request: NextRequest) {
         categoryScoresCount: Object.keys(categoryScores).length
       });
 
-      // 녹음 파일 정보 변환
-      const dropboxFiles = evaluation.recordings.map(recording => ({
-        scriptKey: `${recording.scriptNumber}-${recording.language}`,
-        success: recording.success,
-        fileId: recording.dropboxFileId || '',
-        fileName: recording.fileName,
-        url: recording.url,
-        path: recording.filePath,
-        originalFileName: recording.originalFileName,
-        dropboxPath: recording.dropboxPath
-      }));
+      // 녹음 파일 정보 변환 (조건부)
+      const dropboxFiles = includeRecordings && evaluation.recordings 
+        ? evaluation.recordings.map(recording => ({
+            scriptKey: `${recording.scriptNumber}-${recording.language}`,
+            success: recording.success,
+            fileId: recording.dropboxFileId || '',
+            fileName: recording.fileName,
+            url: recording.url,
+            path: recording.filePath,
+            originalFileName: recording.originalFileName,
+            dropboxPath: recording.dropboxPath
+          }))
+        : []; // 🔥 녹음 데이터 미포함 시 빈 배열
 
       return {
         id: evaluation.id,
@@ -194,7 +197,7 @@ export async function GET(request: NextRequest) {
           language: evaluation.language,
           category: evaluation.category,
           submittedAt: evaluation.submittedAt.toISOString(),
-          recordingCount: evaluation.recordings.length, // 실제 녹음 파일 수 사용
+          recordingCount: includeRecordings && evaluation.recordings ? evaluation.recordings.length : evaluation.recordingCount || 0, // 🔥 조건부 녹음 파일 수
           scriptNumbers: evaluation.scriptNumbers,
           comment: evaluation.comment,
           duration: evaluation.duration

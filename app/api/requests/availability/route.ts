@@ -88,7 +88,8 @@ export async function GET(request: NextRequest) {
     dateApplications.forEach(app => {
       const language = app.schedule.type
       const educationType = app.schedule.classType
-      const category = app.schedule.category || '공통' // 기존 데이터 호환성
+      // 1:1 교육은 카테고리 없음, 한/영 소규모만 카테고리 있음
+      const category = (educationType === '1:1') ? null : (app.schedule.category || '공통')
       const key = `${language}-${educationType}-${category}`
       if (!requestsByLanguageTypeCategory.has(key)) {
         requestsByLanguageTypeCategory.set(key, [])
@@ -100,7 +101,8 @@ export async function GET(request: NextRequest) {
     for (const schedule of existingSchedules) {
       const language = schedule.type
       const educationType = schedule.classType
-      const category = schedule.category || '공통'
+      // 1:1 교육은 카테고리 없음, 한/영 소규모만 카테고리 있음
+      const category = (educationType === '1:1') ? null : (schedule.category || '공통')
       const availableSlots = Array.isArray(schedule.slots) ? schedule.slots : []
       
       // 카테고리별 정원 설정
@@ -117,14 +119,19 @@ export async function GET(request: NextRequest) {
 
       let categoryRequests: any[] = []
 
-      // 언어별 카테고리 처리 방식 분기
-      if (language === 'korean-english') {
-        // 한/영: 카테고리별 독립 계산
+      // 교육 타입별 카테고리 처리 방식 분기
+      if (educationType === '1:1') {
+        // 1:1 교육: 카테고리 없음 (null)
+        const key = `${language}-${educationType}-${null}`
+        categoryRequests = requestsByLanguageTypeCategory.get(key) || []
+        console.log(`🔍 [가용성] ${language}-${educationType}: ${categoryRequests.length}건 신청, 정원: ${maxCount}`)
+      } else if (language === 'korean-english') {
+        // 한/영 소규모: 카테고리별 독립 계산
         const key = `${language}-${educationType}-${category}`
         categoryRequests = requestsByLanguageTypeCategory.get(key) || []
         console.log(`🔍 [가용성] ${language}-${educationType}-${category}: ${categoryRequests.length}건 신청, 정원: ${maxCount}`)
       } else {
-        // 일본어/중국어: 모든 카테고리 통합 계산
+        // 일본어/중국어 소규모: 모든 카테고리 통합 계산
         const categories = ['공통', 'PUS', '신규', '재자격']
         categories.forEach(cat => {
           const key = `${language}-${educationType}-${cat}`

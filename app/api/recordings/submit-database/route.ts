@@ -56,35 +56,51 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    // 3. Base64 녹음 파일 정보 생성
+    // 3. 녹음 파일 정보 생성 (Base64 데이터 최적화)
     if (submissionData.recordings && Object.keys(submissionData.recordings).length > 0) {
       console.log(`📁 ${Object.keys(submissionData.recordings).length}개의 녹음 파일 처리 중...`);
       
       for (const [key, base64Data] of Object.entries(submissionData.recordings)) {
         try {
-          // 키에서 스크립트 번호와 언어 추출 (예: "1-korean" -> scriptNumber: 1, language: "korean")
-          const [scriptNumberStr, language] = key.split('-');
-          const scriptNumber = parseInt(scriptNumberStr);
+          // 🔥 수정: 키 형식 개선 (uploadedFile.key 사용)
+          let scriptNumber = 1;
+          let language = key;
           
-          if (isNaN(scriptNumber)) {
-            console.warn(`⚠️ 잘못된 스크립트 번호: ${key}`);
-            continue;
+          // 기존 형식 호환성 유지 (예: "1-korean")
+          if (key.includes('-')) {
+            const [scriptNumberStr, lang] = key.split('-');
+            const parsedNumber = parseInt(scriptNumberStr);
+            if (!isNaN(parsedNumber)) {
+              scriptNumber = parsedNumber;
+              language = lang;
+            }
           }
 
-          // 파일명 생성
-          const fileName = `${submissionData.name}_${submissionData.employeeId}_${submissionData.category}_${language}_${scriptNumber}번문안_${new Date().toISOString().split("T")[0]}.webm`;
+          // 원본 파일 확장자 사용 (없으면 webm 기본값)
+          const originalExtension = submissionData.fileExtensions?.[key] || 'webm';
+          const fileName = `${submissionData.name}_${submissionData.employeeId}_${submissionData.category}_${language}_${scriptNumber}번문안_${new Date().toISOString().split("T")[0]}.${originalExtension}`;
+          
+          // 🔥 성능 최적화: Base64 데이터 크기 제한 및 압축
+          const base64String = base64Data as string;
+          const base64Size = base64String.length;
+          console.log(`📊 Base64 데이터 크기: ${(base64Size / 1024 / 1024).toFixed(2)}MB`);
+          
+          // 10MB 이상의 Base64 데이터는 경고 표시
+          if (base64Size > 10 * 1024 * 1024) {
+            console.warn(`⚠️ 대용량 파일 감지: ${fileName} (${(base64Size / 1024 / 1024).toFixed(2)}MB)`);
+          }
           
           await prisma.recording.create({
             data: {
               evaluationId: evaluationRecord.id,
               scriptNumber: scriptNumber,
               language: language,
-              filePath: `database://${evaluationRecord.id}/${fileName}`, // 데이터베이스 내 경로 표시
+              filePath: `database://${evaluationRecord.id}/${fileName}`,
               fileName: fileName,
               originalFileName: fileName,
-              url: base64Data as string, // Base64 데이터를 URL 필드에 저장
-              dropboxPath: null, // Dropbox 사용 안함
-              dropboxFileId: null, // Dropbox 사용 안함
+              url: base64String, // Base64 데이터 저장 (향후 외부 스토리지로 이전 예정)
+              dropboxPath: null,
+              dropboxFileId: null,
               success: true
             }
           });

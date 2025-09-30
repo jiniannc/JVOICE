@@ -1,7 +1,7 @@
-# JINAIR 기내 방송 평가 시스템 - PWA 배포 가이드
+# JVOICE - PWA 배포 가이드
 
 ## 개요
-이 가이드는 FLYOI를 통해 배포된 JINAIR 기내 방송 평가 시스템을 모바일에서 바로가기 아이콘으로 설치하는 방법을 설명합니다.
+이 가이드는 Railway를 통해 배포된 JVOICE를 모바일에서 바로가기 아이콘으로 설치하는 방법을 설명합니다.
 
 ## PWA 기능
 - ✅ 홈 화면 바로가기 아이콘
@@ -11,24 +11,24 @@
 
 ## 배포 단계
 
-### 1. FLYOI 배포
+### 1. Railway 배포
 ```bash
 # 프로젝트 빌드
 npm run build
 
-# FLYOI 배포
-fly deploy
+# Railway 배포
+npx @railway/cli up
 ```
 
 ### 2. PWA 설정 확인
 배포 후 다음 URL에서 PWA 설정을 확인하세요:
-- `https://your-app-name.fly.dev/manifest.json`
+- `https://your-app-name.railway.app/manifest.json`
 
 ## 승무원 배포 가이드
 
 ### Android 사용자
 1. **Chrome 브라우저**에서 웹사이트 접속
-2. **주소창 옆 메뉴** (⋮) 클릭
+2. **주소창 옆 공유 버튼** 클릭
 3. **"홈 화면에 추가"** 선택
 4. **"추가"** 버튼 클릭
 5. 홈 화면에 앱 아이콘이 생성됩니다
@@ -44,7 +44,7 @@ fly deploy
 
 #### Chrome 브라우저 사용 시:
 1. **Chrome 브라우저**에서 웹사이트 접속
-2. **주소창 옆 메뉴** (⋮) 클릭
+2. **주소창 옆 공유 버튼** 클릭
 3. **"홈 화면에 추가"** 선택
 4. **"추가"** 버튼 클릭
 5. 홈 화면에 앱 아이콘이 생성됩니다

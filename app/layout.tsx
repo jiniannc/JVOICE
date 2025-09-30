@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'JINAIR 평가'
+    title: 'JVOICE'
   },
   formatDetection: {
     telephone: false

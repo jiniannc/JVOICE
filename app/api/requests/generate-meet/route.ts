@@ -173,7 +173,8 @@ export async function POST(request: NextRequest) {
 - 차수: ${application.slot}차
 
 ⚠️ 중요사항:
-- 교육 시작 10분 전까지 접속해주세요
+- 교육 시작 5분 전까지 JVOICE (모바일) 접속 > 교육 체크인 버튼을 누르고 입장해주세요
+  📱 JVOICE 모바일: https://virtuous-peace-production-c728.up.railway.app/mobile
 - 카메라와 마이크를 미리 확인해주세요
 - 교육 자료는 사전에 준비해주세요
       `.trim(),

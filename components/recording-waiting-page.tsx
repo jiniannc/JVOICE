@@ -143,7 +143,7 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
               <Mic className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">기내 방송 녹음 대기</h1>
+              <h1 className="text-xl font-bold text-gray-900">기내 방송 녹음 안내</h1>
               <p className="text-gray-600 text-sm">
                 {userInfo?.name || '이름 없음'} ({userInfo?.employeeId || '사번 없음'}) - {getLanguageDisplay(userInfo?.language || '')} {userInfo?.category || ''}
               </p>
