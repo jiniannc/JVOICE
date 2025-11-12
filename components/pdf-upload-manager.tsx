@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { Upload, FileText, CheckCircle, AlertCircle, Trash2, Database, FolderOpen } from "lucide-react"
+import { Upload, FileText, CheckCircle, AlertCircle, Trash2, Database, FolderOpen, RefreshCw } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface UploadedFile {
@@ -33,9 +33,18 @@ export function PDFUploadManager() {
 
   const loadUploadedFiles = async () => {
     try {
-      const response = await fetch('/api/pdf-scripts')
+      // 캐시 방지를 위해 타임스탬프 추가
+      const timestamp = new Date().getTime()
+      const response = await fetch(`/api/pdf-scripts?t=${timestamp}`, {
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
       if (response.ok) {
         const data = await response.json()
+        console.log('📋 PDF 파일 목록 새로고침:', data.files?.length || 0, '개 파일')
         setUploadedFiles(data.files || [])
       }
     } catch (error) {
@@ -163,8 +172,10 @@ export function PDFUploadManager() {
       }
       alert(message)
 
-      // 파일 목록 새로고침
-      await loadUploadedFiles()
+      // 파일 목록 새로고침 (약간의 지연 후)
+      setTimeout(async () => {
+        await loadUploadedFiles()
+      }, 500)
       
       // 선택된 파일 초기화
       setSelectedFiles([])
@@ -206,7 +217,10 @@ export function PDFUploadManager() {
           }))
         }
         
-        await loadUploadedFiles()
+        // 파일 목록 새로고침 (약간의 지연 후)
+        setTimeout(async () => {
+          await loadUploadedFiles()
+        }, 500)
       } else {
         const errorData = await response.json()
         alert(`삭제 실패: ${errorData.error || '알 수 없는 오류'}`)
@@ -353,7 +367,18 @@ export function PDFUploadManager() {
 
         {/* 업로드된 파일 목록 */}
         <div className="p-4 bg-gray-50/80 rounded-lg border">
-          <h4 className="font-semibold text-gray-800 mb-2">업로드된 PDF 파일 목록</h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-semibold text-gray-800">업로드된 PDF 파일 목록</h4>
+            <Button
+              onClick={loadUploadedFiles}
+              variant="outline"
+              size="sm"
+              className="h-7 px-2"
+            >
+              <RefreshCw className="w-4 h-4 mr-1" />
+              새로고침
+            </Button>
+          </div>
           <ScrollArea className="h-64 rounded-md border bg-white p-2">
             {uploadedFiles.length === 0 ? (
               <div className="text-sm text-gray-500 text-center py-8">

@@ -20,7 +20,10 @@ import {
   HardDrive,
   Filter,
   RefreshCw,
-  X
+  X,
+  Play,
+  Pause,
+  Volume2
 } from "lucide-react"
 
 interface RecordingFile {
@@ -53,6 +56,11 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [monthOptions, setMonthOptions] = useState<{ value: string; label: string }[]>([])
   const [isDownloading, setIsDownloading] = useState<string | null>(null)
+  const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null)
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | HTMLVideoElement | null>(null)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [audioDuration, setAudioDuration] = useState(0)
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false)
 
   // 월 옵션 생성
   useEffect(() => {
@@ -148,6 +156,13 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
+  // 시간 포맷팅 (초를 mm:ss 형식으로)
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
   // 개별 파일 다운로드
   const downloadFile = async (recording: RecordingFile) => {
     setIsDownloading(recording.id)
@@ -201,6 +216,124 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
       setIsDownloading(null)
     }
   }
+
+  // 오디오 재생/일시정지
+  const togglePlayPause = async (recording: RecordingFile) => {
+    try {
+      // 현재 재생 중인 파일을 일시정지
+      if (playingRecordingId === recording.id) {
+        if (audioElement) {
+          audioElement.pause()
+          setPlayingRecordingId(null)
+        }
+        return
+      }
+
+      // 기존 오디오 정지
+      if (audioElement) {
+        audioElement.pause()
+        audioElement.src = ''
+      }
+
+      setIsLoadingAudio(true)
+      setPlayingRecordingId(recording.id)
+
+      // 새로운 오디오 로드 및 재생
+      const response = await fetch(`/api/admin/recordings/download/${recording.id}`)
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        
+        // 파일 확장자 확인
+        const fileExtension = recording.fileName.split('.').pop()?.toLowerCase()
+        const isWebm = fileExtension === 'webm'
+        
+        console.log(`🎵 [재생] 파일: ${recording.fileName}, 확장자: ${fileExtension}, WebM: ${isWebm}`)
+        
+        // WebM 파일은 video 엘리먼트 사용, 나머지는 audio 엘리먼트 사용
+        let mediaElement: HTMLAudioElement | HTMLVideoElement
+        
+        if (isWebm) {
+          mediaElement = document.createElement('video')
+          mediaElement.src = url
+          // WebM의 경우 명시적으로 타입 지정
+          const source = document.createElement('source')
+          source.src = url
+          source.type = 'audio/webm'
+          mediaElement.appendChild(source)
+        } else {
+          mediaElement = new Audio(url)
+        }
+        
+        mediaElement.addEventListener('loadedmetadata', () => {
+          console.log(`✅ [재생] 메타데이터 로드 완료, 길이: ${mediaElement.duration}초`)
+          setAudioDuration(mediaElement.duration)
+          setIsLoadingAudio(false)
+        })
+
+        mediaElement.addEventListener('timeupdate', () => {
+          setCurrentTime(mediaElement.currentTime)
+        })
+
+        mediaElement.addEventListener('ended', () => {
+          console.log('✅ [재생] 재생 완료')
+          setPlayingRecordingId(null)
+          setCurrentTime(0)
+          window.URL.revokeObjectURL(url)
+        })
+
+        mediaElement.addEventListener('error', (e) => {
+          console.error('❌ [재생] 오류:', e)
+          if (mediaElement.error) {
+            console.error('❌ [재생] 에러 코드:', mediaElement.error.code)
+            console.error('❌ [재생] 에러 메시지:', mediaElement.error.message)
+          }
+          alert(`오디오 파일을 재생할 수 없습니다.\n파일 형식: ${fileExtension}\n브라우저가 이 형식을 지원하지 않을 수 있습니다.`)
+          setPlayingRecordingId(null)
+          setIsLoadingAudio(false)
+          window.URL.revokeObjectURL(url)
+        })
+
+        mediaElement.addEventListener('canplay', () => {
+          console.log('✅ [재생] 재생 가능 상태')
+        })
+
+        console.log(`▶️ [재생] 재생 시작 시도: ${recording.fileName}`)
+        await mediaElement.play()
+        setAudioElement(mediaElement)
+        console.log(`✅ [재생] 재생 시작 성공`)
+      } else {
+        alert('오디오 파일을 불러올 수 없습니다.')
+        setPlayingRecordingId(null)
+        setIsLoadingAudio(false)
+      }
+    } catch (error) {
+      console.error('❌ [재생] 오류:', error)
+      alert(`오디오 재생 중 오류가 발생했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류'}`)
+      setPlayingRecordingId(null)
+      setIsLoadingAudio(false)
+    }
+  }
+
+  // 오디오 정리
+  useEffect(() => {
+    return () => {
+      if (audioElement) {
+        audioElement.pause()
+        audioElement.src = ''
+      }
+    }
+  }, [audioElement])
+
+  // 모달이 닫힐 때 오디오 정지
+  useEffect(() => {
+    if (!isOpen && audioElement) {
+      audioElement.pause()
+      audioElement.src = ''
+      setPlayingRecordingId(null)
+      setAudioElement(null)
+    }
+  }, [isOpen])
 
   // 언어 표시명
   const getLanguageDisplay = (language: string) => {
@@ -407,6 +540,7 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
                     <TableHead className="text-xs">파일명</TableHead>
                     <TableHead className="text-xs">크기</TableHead>
                     <TableHead className="text-xs">상태</TableHead>
+                    <TableHead className="text-xs">재생</TableHead>
                     <TableHead className="text-xs">다운로드</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -443,6 +577,32 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
                         </TableCell>
                         <TableCell className="text-xs">
                           <Button
+                            onClick={() => togglePlayPause(recording)}
+                            variant={playingRecordingId === recording.id ? "default" : "outline"}
+                            size="sm"
+                            className="text-xs h-7 px-2"
+                            disabled={isLoadingAudio && playingRecordingId === recording.id}
+                          >
+                            {playingRecordingId === recording.id && isLoadingAudio ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                                로딩중
+                              </>
+                            ) : playingRecordingId === recording.id ? (
+                              <>
+                                <Pause className="w-3 h-3 mr-1" />
+                                일시정지
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-3 h-3 mr-1" />
+                                재생
+                              </>
+                            )}
+                          </Button>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          <Button
                             onClick={() => downloadFile(recording)}
                             disabled={isDownloading === recording.id}
                             variant="outline"
@@ -460,6 +620,59 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
               </Table>
             )}
           </div>
+
+          {/* 오디오 플레이어 바 */}
+          {playingRecordingId && !isLoadingAudio && (
+            <div className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 border-t border-blue-200 rounded-b-lg p-3">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-blue-600" />
+                  <span className="text-xs font-medium text-blue-900">재생 중</span>
+                </div>
+                
+                <div className="flex-1">
+                  <div className="flex items-center justify-between text-xs text-blue-700 mb-1">
+                    <span className="font-medium">
+                      {filteredRecordings.find(r => r.id === playingRecordingId)?.fileName}
+                    </span>
+                    <span>
+                      {formatTime(currentTime)} / {formatTime(audioDuration)}
+                    </span>
+                  </div>
+                  <div className="w-full bg-blue-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-200"
+                      style={{ width: `${audioDuration > 0 ? (currentTime / audioDuration) * 100 : 0}%` }}
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => {
+                    if (audioElement) {
+                      audioElement.pause()
+                      setPlayingRecordingId(null)
+                    }
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs h-7 text-blue-700 hover:text-blue-900"
+                >
+                  <X className="w-3 h-3 mr-1" />
+                  닫기
+                </Button>
+              </div>
+            </div>
+          )}
+          {/* 로딩 중 표시 */}
+          {playingRecordingId && isLoadingAudio && (
+            <div className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 border-t border-blue-200 rounded-b-lg p-3">
+              <div className="flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4 text-blue-600 animate-spin" />
+                <span className="text-xs font-medium text-blue-900">오디오 로딩 중...</span>
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -204,7 +204,6 @@ export function AdminEducationJournalModal({ isOpen, onClose }: AdminEducationJo
       link.click()
       document.body.removeChild(link)
       window.URL.revokeObjectURL(url)
-
       console.log('📊 Excel 파일 다운로드 완료:', fileName)
     } catch (error) {
       console.error('Excel 내보내기 오류:', error)
@@ -333,10 +332,11 @@ export function AdminEducationJournalModal({ isOpen, onClose }: AdminEducationJo
   // 필터링된 일지 목록
   const filteredJournals = useMemo(() => {
     return journals.filter(journal => {
-      // 이름 또는 사번 검색
+      // 이름, 사번, 교관 이름 검색
       if (searchTerm && 
           !journal.traineeName.toLowerCase().includes(searchTerm.toLowerCase()) &&
-          !journal.traineeEmployeeId.toLowerCase().includes(searchTerm.toLowerCase())) {
+          !journal.traineeEmployeeId.toLowerCase().includes(searchTerm.toLowerCase()) &&
+          !journal.instructorName.toLowerCase().includes(searchTerm.toLowerCase())) {
         return false
       }
 
@@ -458,7 +458,7 @@ export function AdminEducationJournalModal({ isOpen, onClose }: AdminEducationJo
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
               <Input
-                placeholder={activeTab === 'records' ? "이름, 사번, 부서로 검색..." : "교육생 이름 또는 사번으로 검색..."}
+                placeholder={activeTab === 'records' ? "이름, 사번, 부서로 검색..." : "교육생 이름, 사번 또는 교관 이름으로 검색..."}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"

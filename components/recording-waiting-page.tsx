@@ -39,7 +39,6 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
   const [countdown, setCountdown] = useState<number | null>(null)
   const [isStarting, setIsStarting] = useState(false)
   const [countdownInterval, setCountdownInterval] = useState<NodeJS.Timeout | null>(null)
-  const [shouldStartRecording, setShouldStartRecording] = useState(false)
 
   // 컴포넌트 언마운트 시 interval 정리
   useEffect(() => {
@@ -49,20 +48,6 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
       }
     }
   }, [countdownInterval])
-
-  // 녹음 시작 처리
-  useEffect(() => {
-    if (shouldStartRecording) {
-      try {
-        onStart()
-      } catch (error) {
-        console.error("녹음 시작 중 오류 발생:", error)
-        setIsStarting(false)
-        setCountdown(null)
-      }
-      setShouldStartRecording(false)
-    }
-  }, [shouldStartRecording, onStart])
 
   const getLanguageDisplay = (language: string) => {
     const displays: { [key: string]: string } = {
@@ -88,7 +73,13 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
         if (prev === null || prev <= 1) {
           clearInterval(interval)
           setCountdownInterval(null)
-          setShouldStartRecording(true)
+          try {
+            onStart()
+          } catch (error) {
+            console.error("녹음 시작 중 오류 발생:", error)
+            setIsStarting(false)
+            setCountdown(null)
+          }
           return null
         }
         return prev - 1
@@ -101,35 +92,67 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
   const instructions = [
     {
       icon: Timer,
-      title: "시험 시간 및 구성",
-      content: "녹음 시험은 총 <strong>50분</strong>으로 제한됩니다. 시간이 초과되면 자동으로 제출 페이지로 이동됩니다. 총 <strong>10개</strong>의 취득 문안 중 <strong>5개</strong>가 무작위로 선택되어 표시됩니다.",
+      title: "시험 시간",
+      content: "녹음 시험은 총 50분으로 제한됩니다. 시간이 초과되면 자동으로 제출 페이지로 이동됩니다.",
       color: "text-red-600",
       bgColor: "bg-red-50",
       borderColor: "border-red-200"
     },
     {
-      icon: Volume2,
-      title: "방송 내용 및 평가",
-      content: "방송문의 빈칸(<strong>편명, 도시명, 공항명, 비행시간, 지연 사유</strong> 등)은 자유롭게 설정하여 녹음하시면 됩니다. 방송문 내 <strong>필수 내용이 누락</strong>되거나, <strong>문안을 임의로 수정</strong>하거나, <strong>최신 문안이 아닌 경우</strong> 평가에서 제외될 수 있습니다.",
+      icon: FileText,
+      title: "문안 구성",
+      content: "총 10개의 취득 문안 중 5개가 무작위로 선택되어 표시됩니다.",
       color: "text-blue-600",
       bgColor: "bg-blue-50",
       borderColor: "border-blue-200"
     },
     {
-      icon: RotateCcw,
-      title: "녹음 진행 시 주의사항",
-      content: "각 문안을 완료하고 다음으로 넘어가면 <strong>이전 문안으로 돌아갈 수 없습니다</strong>. <strong>'다음' 버튼</strong>을 누르기 전에 녹음 결과가 만족스러운지 꼭 확인해주세요. 녹음은 시간 내에서 원하는 만큼 반복할 수 있습니다. 시작 후 <strong>첫 번째 문안</strong>으로 음향 상태를 미리 확인해보시기 바랍니다.",
+      icon: Volume2,
+      title: "방송 내용",
+      content: "방송문의 빈칸(편명, 도시명, 공항명, 비행시간, 지연 사유 등)은 자유롭게 설정하여 녹음하시면 됩니다.",
       color: "text-green-600",
       bgColor: "bg-green-50",
       borderColor: "border-green-200"
     },
     {
+      icon: AlertTriangle,
+      title: "평가 기준",
+      content: "방송문 내 필수 내용이 누락되거나, 문안을 임의로 수정하거나, 최신 문안이 아닌 경우 평가에서 제외될 수 있습니다.",
+      color: "text-orange-600",
+      bgColor: "bg-orange-50",
+      borderColor: "border-orange-200"
+    },
+    {
       icon: Shield,
-      title: "기술적 주의사항",
-      content: "<strong>브라우저를 닫거나, 뒤로가기 버튼을 누르거나, 새로고침</strong>을 하면 녹음 데이터가 <strong>모두 사라집니다</strong>. 주의해 주세요. 궁금한 점이나 문제가 발생하면 언제든지 <strong>방송교관</strong>에게 문의해 주세요.",
+      title: "브라우저 주의",
+      content: "브라우저를 닫거나, 뒤로가기 버튼을 누르거나, 새로고침을 하면 녹음 데이터가 모두 사라집니다. 주의해 주세요.",
       color: "text-purple-600",
       bgColor: "bg-purple-50",
       borderColor: "border-purple-200"
+    },
+    {
+      icon: Users,
+      title: "문의 안내",
+      content: "궁금한 점이나 문제가 발생하면 언제든지 방송교관에게 문의해 주세요.",
+      color: "text-indigo-600",
+      bgColor: "bg-indigo-50",
+      borderColor: "border-indigo-200"
+    },
+    {
+      icon: RotateCcw,
+      title: "녹음 진행",
+      content: "각 문안별로 녹음을 완료한 후 넘어간 후에는 다시 돌아올 수 없습니다. 다음 문안으로 넘어가기 전에 원하는 결과물이 나왔는지 꼭 확인한 후에 '다음' 버튼을 눌러주세요. 녹음은 몇 번이고 할 수 있지만 시험 시간 안에만 끝내면 됩니다.",
+      color: "text-teal-600",
+      bgColor: "bg-teal-50",
+      borderColor: "border-teal-200"
+    },
+    {
+      icon: Mic,
+      title: "음향 확인",
+      content: "시작하면 첫 번째 문안을 녹음하고 재생하여 음향 상태가 좋은지 확인해주세요.",
+      color: "text-pink-600",
+      bgColor: "bg-pink-50",
+      borderColor: "border-pink-200"
     }
   ]
 
@@ -143,7 +166,7 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
               <Mic className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">기내 방송 녹음 안내</h1>
+              <h1 className="text-xl font-bold text-gray-900">기내 방송 녹음 대기</h1>
               <p className="text-gray-600 text-sm">
                 {userInfo?.name || '이름 없음'} ({userInfo?.employeeId || '사번 없음'}) - {getLanguageDisplay(userInfo?.language || '')} {userInfo?.category || ''}
               </p>
@@ -158,11 +181,16 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
 
       <div className="max-w-6xl mx-auto px-4 py-8">
                 {/* 메인 알림 카드 */}
-        <Card className="mb-8 shadow-2xl border-0 relative overflow-hidden bg-gradient-to-r from-red-500 via-orange-500 to-red-500 bg-[length:400%_400%] animate-gradient-x">
+        <Card className="mb-8 shadow-2xl border-0 relative overflow-hidden bg-gradient-to-r from-red-500 via-orange-500 to-red-500 animate-pulse">
           <CardContent className="p-8 relative z-10">
-            <div className="text-center">
-              <h2 className="text-3xl font-bold mb-2 text-white drop-shadow-lg">📢 주의사항 안내</h2>
-              <p className="text-xl text-white drop-shadow-md">아래 내용을 꼼꼼히 읽고, 방송교관의 시작 신호를 기다려 주세요</p>
+            <div className="flex items-center justify-center gap-4 mb-4">
+              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
+                <AlertTriangle className="w-8 h-8 text-white" />
+              </div>
+              <div className="text-center">
+                <h2 className="text-3xl font-bold mb-2 animate-pulse text-white drop-shadow-lg">📢 주의사항 안내</h2>
+                <p className="text-xl text-white drop-shadow-md">아래 내용을 꼼꼼히 읽고, 방송교관의 시작 신호를 기다려 주세요</p>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -183,10 +211,7 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p 
-                  className="text-gray-700 leading-relaxed"
-                  dangerouslySetInnerHTML={{ __html: instruction.content }}
-                />
+                <p className="text-gray-700 leading-relaxed">{instruction.content}</p>
               </CardContent>
             </Card>
           ))}
@@ -217,6 +242,7 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
               <div className="text-6xl font-bold text-orange-600 animate-pulse">
                 {countdown}
               </div>
+                             <p className="text-xl text-gray-600">곧 녹음 시험이 시작됩니다...</p>
             </div>
                            ) : (
                    <Button

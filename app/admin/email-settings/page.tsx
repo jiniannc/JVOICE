@@ -23,7 +23,7 @@ export default function EmailSettingsPage() {
   const [settings, setSettings] = useState<EmailSettings>({
     serviceType: 'company',
     fromEmail: '',
-    fromName: '객실기내방송팀',
+    fromName: '객실기내방송',
     smtpHost: 'mail.jinair.com',
     smtpPort: '587',
     smtpUser: '',

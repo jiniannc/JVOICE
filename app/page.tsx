@@ -30,9 +30,6 @@ import {
   Menu,
   Calendar,
   GraduationCap,
-  Clock,
-  AlertCircle,
-  Users,
 } from "lucide-react"
 import { PDFViewer } from "@/components/pdf-viewer"
 import { AudioRecorder } from "@/components/audio-recorder"
@@ -1376,42 +1373,56 @@ function RequestMode({
     }
   }, [selectedDate, authenticatedUser])
 
-  // tab이 변경될 때마다 가용성을 강제로 새로고침 (녹음 신청 탭 전환 시)
-  useEffect(() => {
-    if (authenticatedUser && data?.days) {
-      // 🚀 모든 날짜의 가용성을 개별적으로 강제 로드
-      const loadAllAvailability = async () => {
-        const uniqueDates = [...new Set(data.days.map((item: any) => item.date).filter(Boolean))]
-        
-        for (const date of uniqueDates) {
-          await checkAvailability(date, true) // forceRefresh = true
-        }
-      }
-      
-      loadAllAvailability()
-    }
-  }, [tab, authenticatedUser, data])
-
   // 해당 월의 모든 날짜 가용성 미리 로드 (Bulk API 사용)
   const preloadMonthAvailability = async (scheduleData: any[]) => {
+    console.log('🔥 [DEBUG] preloadMonthAvailability 함수 실행됨!!!', {
+      timestamp: new Date().toISOString(),
+      authenticatedUser: !!authenticatedUser,
+      scheduleData: scheduleData,
+      scheduleDataLength: scheduleData?.length,
+      userInfo: userInfo
+    })
+
     if (!authenticatedUser) {
+      console.log('❌ [DEBUG] 인증되지 않은 사용자 - 함수 종료')
       return
     }
+
+    console.log('🚀 [데스크톱] 월 가용성 미리 로드 시작 (Bulk API)', {
+      scheduleDataLength: scheduleData.length,
+      authenticatedUser: !!authenticatedUser,
+      userInfo: userInfo
+    })
 
 
     // 스케줄 데이터 유효성 검사
     if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
+      console.warn('⚠️ [데스크톱] 스케줄 데이터가 유효하지 않음:', scheduleData)
       return
     }
 
     try {
       // Bulk API로 모든 가용성 데이터 한 번에 조회
       const employeeId = userInfo?.employeeId || 'TEMP001'
+      console.log('📡 [데스크톱] Bulk API 호출 준비:', { employeeId, scheduleDataLength: scheduleData.length })
+
       const bulkApiUrl = `/api/requests/bulk-availability?employeeId=${employeeId}`
+      console.log('🔗 [DEBUG] Bulk API URL:', bulkApiUrl)
+
+      console.log('📡 [데스크톱] Bulk API 호출 시작...')
       const response = await fetch(bulkApiUrl)
+      console.log('📡 [데스크톱] Bulk API 응답 상태:', response.status, response.statusText)
+
       const bulkData = await response.json()
+      console.log('📡 [데스크톱] Bulk API 응답 데이터:', {
+        success: bulkData.success,
+        dataKeys: bulkData.data ? Object.keys(bulkData.data) : 'no data',
+        error: bulkData.error
+      })
 
       if (bulkData.success && bulkData.data) {
+        console.log(`✅ [데스크톱] Bulk API 성공! ${Object.keys(bulkData.data).length}개 날짜 데이터`)
+
         // Bulk 데이터를 기존 캐시 형식으로 변환
         const transformedData: Record<string, any> = {}
 
@@ -1431,22 +1442,29 @@ function RequestMode({
           }
         })
 
+        console.log('🔄 [데스크톱] Bulk 데이터 변환 완료:', Object.keys(transformedData))
+
         // 변환된 데이터를 캐시에 저장
         setAvailabilityCache(prev => ({
           ...prev,
           ...transformedData
         }))
 
+        console.log('💾 [데스크톱] Bulk 데이터 캐시 저장 완료 - 이제 개별 API 호출 없음!')
         return // 성공했으므로 여기서 종료
       } else {
+        console.warn('⚠️ [데스크톱] Bulk API 실패, 기존 방식으로 폴백:', bulkData.error)
         // 기존 방식으로 폴백
         await loadAvailabilityFallback(scheduleData)
       }
     } catch (error) {
+      console.error('❌ [데스크톱] Bulk API 에러 상세:', error)
+      console.warn('⚠️ [데스크톱] Bulk API 에러로 기존 방식으로 폴백')
       // 기존 방식으로 폴백
       await loadAvailabilityFallback(scheduleData)
     }
 
+    console.log('✅ [데스크톱] 월 가용성 미리 로드 완료')
   }
 
   // 폴백: 기존 방식으로 가용성 로드
@@ -1733,18 +1751,15 @@ function RequestMode({
                       if (edu.classroomInfo && edu.type && edu.slots) {
                         // 모든 slots에 대해 매핑 (카테고리별)
                         edu.slots.forEach((slot: number) => {
-                          // 카테고리가 있는 경우와 없는 경우 모두 처리
-                          if (edu.type.category) {
-                            // 카테고리별 키 (한/영 소규모)
-                            const categoryKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category}`
-                            educationClassroomMap.set(categoryKey, edu.classroomInfo)
-                            console.log(`✅ [Request mode] 교육별 교실 정보 추가 (카테고리): ${categoryKey} → ${edu.classroomInfo}`)
-                          }
+                          const key = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category || 'default'}`
+                          educationClassroomMap.set(key, edu.classroomInfo)
+                          console.log(`✅ [Request mode] 교육별 교실 정보 추가: ${key} → ${edu.classroomInfo}`)
                           
-                          // 기본 키 (모든 교육)
-                          const baseKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`
-                          educationClassroomMap.set(baseKey, edu.classroomInfo)
-                          console.log(`✅ [Request mode] 교육별 교실 정보 추가 (기본): ${baseKey} → ${edu.classroomInfo}`)
+                          // 호환성을 위한 기존 키도 유지 (카테고리 없는 키)
+                          const legacyKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`
+                          if (!educationClassroomMap.has(legacyKey)) {
+                            educationClassroomMap.set(legacyKey, edu.classroomInfo)
+                          }
                         })
                       }
                     })
@@ -1760,99 +1775,6 @@ function RequestMode({
           
           setClassroomInfoMap(educationClassroomMap)
           console.log('🏫 [Request mode] 교육별 교실 정보:', Object.fromEntries(educationClassroomMap))
-          
-          // 교육 항목에 클래스룸 정보 추가 (모바일 MyPage와 완전히 동일한 로직)
-          const enrichedItems = convertedRequests.map((item: any) => {
-            const language = item.details?.language || 'korean-english';
-            const mode = item.details?.mode || item.details?.educationType || '1:1';
-            const category = item.details?.category;
-            const normalizedMode = mode === 'small-group' ? 'small' : mode;
-            
-            console.log(`🔍 [Request mode] 원본 신청 데이터:`, {
-              date: item.date,
-              slot: item.slot,
-              details: item.details,
-              schedule: item.schedule,
-              language,
-              mode,
-              category,
-              normalizedMode,
-              expectedCategoryKey: `${item.date}_${item.slot}_${language}_${normalizedMode}_${category}`,
-              expectedBaseKey: `${item.date}_${item.slot}_${language}_${normalizedMode}`
-            });
-            
-            // 클래스룸 정보 매칭 (스케줄 API 우선)
-            let classroomInfo = null;
-            
-            // 1. Database API에서 제공하는 클래스룸 정보 확인
-            if (item.schedule?.classroom) {
-              console.log(`🚨 [Request mode] Database API 클래스룸 발견: ${item.schedule.classroom} (카테고리: ${category})`);
-              // 카테고리별 매칭을 우선 시도하고, 실패하면 Database API 사용
-            }
-            
-            // 2. 스케줄 API 매칭 우선 시도
-            {
-              // 소규모 교육의 경우 차수를 녹음 슬롯으로 변환
-              let actualSlots = [item.slot];
-              if (normalizedMode === 'small') {
-                // 소규모 교육: 차수 → 녹음 슬롯 변환
-                const slotMapping = {
-                  1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]
-                };
-                actualSlots = slotMapping[item.slot as keyof typeof slotMapping] || [item.slot];
-                console.log(`🔄 [Request mode] 소규모 차수 변환: ${item.slot}차 → 녹음슬롯 [${actualSlots}]`);
-              }
-              
-              // 각 녹음 슬롯에 대해 카테고리별 키 시도
-              if (category && language === 'korean-english' && normalizedMode === 'small') {
-                for (const slot of actualSlots) {
-                  const categoryKey = `${item.date}_${slot}_${language}_${normalizedMode}_${category}`;
-                  classroomInfo = educationClassroomMap.get(categoryKey);
-                  console.log(`🔍 [Request mode] 카테고리 키 시도: ${categoryKey} → ${classroomInfo}`);
-                  if (classroomInfo) break;
-                }
-              }
-              
-              // 기본 키 시도 (카테고리 없는 교육이거나 카테고리별 매칭 실패)
-              if (!classroomInfo) {
-                for (const slot of actualSlots) {
-                  const baseKey = `${item.date}_${slot}_${language}_${normalizedMode}`;
-                  classroomInfo = educationClassroomMap.get(baseKey);
-                  console.log(`🔍 [Request mode] 기본 키 시도: ${baseKey} → ${classroomInfo}`);
-                  if (classroomInfo) break;
-                }
-              }
-              
-              // 스케줄 API 매칭 실패 시 Database API 폴백
-              if (!classroomInfo && item.schedule?.classroom) {
-                classroomInfo = item.schedule.classroom;
-                console.log(`🔄 [Request mode] Database API 폴백: ${classroomInfo}`);
-              }
-            }
-            
-            // 클래스룸 정보 포맷팅
-            const formattedClassroom = classroomInfo || '';
-            console.log(`🔍 [Request mode] 교실 매칭: ${item.date}_${item.slot}_${language}_${normalizedMode} (카테고리: ${category || 'none'}) → ${classroomInfo} → ${formattedClassroom}`);
-            
-            return {
-            id: item.id,
-            employeeId: item.employeeId,
-            name: item.name,
-            department: item.department,
-            type: item.type,
-            date: item.date,
-            slot: item.slot,
-            details: item.details,
-            applicationTime: item.applicationTime,
-              status: item.status,
-              classroomInfo: formattedClassroom
-            };
-          })
-          
-          console.log('📊 [Request mode] 교육 신청 내역 (클래스룸 정보 포함):', enrichedItems)
-          setMyRequests(enrichedItems)
-        } else {
-          setMyRequests(convertedRequests)
         }
         console.log('✅ [Database] 신청 내역 로드 완료:', convertedRequests.length, '개')
       } else {
@@ -2087,7 +2009,7 @@ function RequestMode({
       const matchingSlots = availabilityData.slotAvailability.filter((s: any) => 
         s.slot === slot && s.language === language && (s.educationType === normalizedType || s.educationType === educationType)
       )
-
+      
       if (matchingSlots.length > 0) {
         // 하나라도 가용하면 신청 가능
         const hasAvailable = matchingSlots.some((s: any) => s.available)
@@ -2119,11 +2041,11 @@ function RequestMode({
         headers: { 'Content-Type': 'application/json' }
       })
       
-      let cancelData = await res.json()
+      let data = await res.json()
       
       // Database에서 실패하면 Dropbox fallback
-      if (!res.ok || !cancelData.success) {
-        console.log('🔄 [취소] Database 실패, Dropbox로 fallback:', cancelData.error)
+      if (!res.ok || !data.success) {
+        console.log('🔄 [취소] Database 실패, Dropbox로 fallback:', data.error)
         
         res = await fetch('/api/requests/cancel-dropbox', {
           method: 'POST',
@@ -2134,24 +2056,17 @@ function RequestMode({
             email: authenticatedUser?.email
           })
         })
-        cancelData = await res.json()
+        data = await res.json()
       }
       
-      if (cancelData.success) {
+      if (data.success) {
         alert('신청이 취소되었습니다.')
         // 신청 내역 새로고침하여 UI 업데이트
         loadMyRequests()
         
-        // 🚀 전체 캘린더 가용성 새로고침 (취소 후 즉시 반영)
-        console.log('🔄 [취소 완료] 전체 캘린더 가용성 새로고침 시작')
-        if (data?.days) {
-          // 현재 로딩된 스케줄 데이터 사용 (컴포넌트 상태의 data)
-          await preloadMonthAvailability(data.days)
-        }
-        
         // 현재 표시된 날짜의 가용성 즉시 재확인
         if (selectedDate) {
-          const availabilityData = await checkAvailability(selectedDate, true) // forceRefresh = true
+          const availabilityData = await checkAvailability(selectedDate)
           if (availabilityData) {
             // 언어별 제한 업데이트
             const restrictions: Record<string, boolean> = {}
@@ -2161,13 +2076,11 @@ function RequestMode({
             setUserLanguageRestrictions(restrictions)
           }
         }
-        
-        console.log('✅ [취소 완료] 캘린더 가용성 새로고침 완료')
       } else {
         // 취소 기간 만료 시 안내 팝업 표시
-        if (cancelData.error === '기간만료' || cancelData.contactRequired) {
-          const scheduleDate = new Date(cancelData.scheduleDate || '').toLocaleDateString('ko-KR')
-          const deadline = new Date(cancelData.deadline || '').toLocaleDateString('ko-KR', {
+        if (data.error === '기간만료' || data.contactRequired) {
+          const scheduleDate = new Date(data.scheduleDate || '').toLocaleDateString('ko-KR')
+          const deadline = new Date(data.deadline || '').toLocaleDateString('ko-KR', {
             year: 'numeric',
             month: 'long', 
             day: 'numeric',
@@ -2184,7 +2097,7 @@ function RequestMode({
 
 ⚠️ 합당하지 않은 사유로 취소할 경우, 다음 달의 녹음/교육 신청이 제한될 수 있습니다.`)
         } else {
-          alert(`취소 실패: ${cancelData.error}`)
+          alert(`취소 실패: ${data.error}`)
         }
       }
     } catch (error) {
@@ -2437,18 +2350,6 @@ ${guidance}`)
 ⏰ 신청 가능 기한: ${deadline}까지
 
 신청은 녹음일 기준 2일 전 오후 2시까지만 가능합니다.`)
-      } else if (json.error?.includes('이미 해당 차수에 신청하셨습니다')) {
-        alert(`차수 중복 신청
-
-해당 차수에 신청 내역이 있습니다. 같은 차수에는 하나의 언어만 신청 가능합니다.`)
-      } else if (json.error?.includes('이미 신청하셨습니다') || json.error?.includes('이미 이번 달에 신청하셨습니다') || json.error?.includes('언어별로 한 달에 한 번만 신청 가능')) {
-        alert(`중복 신청
-
-이미 신청하셨습니다. 언어별로 한 달에 한 번만 신청 가능합니다.`)
-      } else if (json.error?.includes('정원 마감')) {
-        alert(`정원 마감
-
-정원이 마감되었습니다.`)
       } else {
         alert(`신청 실패: ${json.error}`)
       }
@@ -2472,6 +2373,58 @@ ${guidance}`)
       "chinese": "bg-red-600 hover:bg-red-700"
     }
     return colorMap[language] || "bg-gray-600 hover:bg-gray-700"
+  }
+
+  function getSlotTimeInfo(type: string, slot: number, educationMode?: string): string {
+    if (type === 'recording') {
+      // 녹음용 시간표 - 데스크톱 녹음 캘린더와 완전히 동일
+      const times: Record<number, string> = {
+        1: "08:30-09:20",
+        2: "09:30-10:20", 
+        3: "10:30-11:20",
+        4: "11:30-12:20",
+        5: "13:40-14:30",
+        6: "14:40-15:30",
+        7: "15:40-16:30",
+        8: "16:40-17:30"
+      }
+      return times[slot] || ""
+    } else if (type === 'education') {
+      if (educationMode === '1:1') {
+        // 1:1 교육용 시간표 (25분 단위, 총 16차수)
+        const times: Record<number, string> = {
+          // 오전 세션 (1-8차수)
+          1: "08:30-08:55",
+          2: "09:00-09:25",
+          3: "09:30-09:55",
+          4: "10:00-10:25",
+          5: "10:30-10:55",
+          6: "11:00-11:25",
+          7: "11:30-11:55",
+          8: "12:00-12:25",
+          // 오후 세션 (9-16차수, 13:35부터 시작)
+          9: "13:35-14:00",
+          10: "14:05-14:30",
+          11: "14:35-15:00",
+          12: "15:05-15:30",
+          13: "15:35-16:00",
+          14: "16:05-16:30",
+          15: "16:35-17:00",
+          16: "17:05-17:30"
+        }
+        return times[slot] || ""
+      } else {
+        // 소규모 교육용 시간표 (2시간 단위)
+        const times: Record<number, string> = {
+          1: "08:30-10:20",
+          2: "10:30-12:20", 
+          3: "13:40-15:30",
+          4: "15:40-17:30"
+        }
+        return times[slot] || ""
+      }
+    }
+    return ""
   }
 
   return (
@@ -2505,8 +2458,8 @@ ${guidance}`)
             </button>
 
             <button
-              disabled
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-400 cursor-not-allowed opacity-50"
+              onClick={() => onNavigate("recording")}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
             >
               <Mic className="w-4 h-4" />
               Record
@@ -2648,8 +2601,8 @@ ${guidance}`)
                   variant={tab==='recording'?"default":"outline"} 
                   onClick={()=>setTab('recording')}
                   className={tab==='recording' 
-                    ? "bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
-                    : "hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200"
+                    ? "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                    : "hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200"
                   }
                 >
                   녹음 신청
@@ -2804,65 +2757,30 @@ ${guidance}`)
                   <p className="text-gray-600">교육이나 녹음을 신청해보세요.</p>
                 </div>
               ) : (
-                <div className="space-y-6">
-                  {/* 필터 버튼 */}
-                  <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={() => setMyRequestsFilter('all')}
-                      className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-                        myRequestsFilter === 'all' 
-                          ? 'bg-white text-gray-900 shadow-sm' 
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
                     >
                       전체
                     </button>
                     <button
-                      onClick={() => setMyRequestsFilter('education')}
-                      className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1.5 ${
-                        myRequestsFilter === 'education' 
-                          ? 'bg-white text-gray-900 shadow-sm' 
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
+                      onClick={() => setMyRequestsFilter('recording')}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'recording' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
                     >
-                      <GraduationCap className="w-4 h-4" />
-                      교육
+                      녹음
                     </button>
                     <button
-                      onClick={() => setMyRequestsFilter('recording')}
-                      className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1.5 ${
-                        myRequestsFilter === 'recording' 
-                          ? 'bg-white text-gray-900 shadow-sm' 
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
+                      onClick={() => setMyRequestsFilter('education')}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'education' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
                     >
-                      <Mic className="w-4 h-4" />
-                      녹음
+                      교육
                     </button>
                   </div>
 
                   {filteredMyRequests.length === 0 ? (
-                    <div className="text-center py-16">
-                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        {myRequestsFilter === 'education' ? (
-                          <GraduationCap className="w-8 h-8 text-gray-400" />
-                        ) : myRequestsFilter === 'recording' ? (
-                          <Mic className="w-8 h-8 text-gray-400" />
-                        ) : (
-                          <User className="w-8 h-8 text-gray-400" />
-                        )}
-                      </div>
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                        {myRequestsFilter === 'education' ? '교육 신청 내역이 없습니다' : 
-                         myRequestsFilter === 'recording' ? '녹음 신청 내역이 없습니다' : 
-                         '해당 필터의 신청 내역이 없습니다'}
-                      </h3>
-                      <p className="text-gray-600">
-                        {myRequestsFilter === 'education' ? '교육을 신청해보세요.' : 
-                         myRequestsFilter === 'recording' ? '녹음을 신청해보세요.' : 
-                         '교육이나 녹음을 신청해보세요.'}
-                      </p>
-                    </div>
+                    <div className="text-center py-12 text-gray-500">해당 필터의 신청 내역이 없습니다.</div>
                   ) : filteredMyRequests.map((request) => {
                     const canCancel = () => {
                       if (request.status !== 'ACTIVE') return false
@@ -2879,98 +2797,70 @@ ${guidance}`)
                     }
 
                     return (
-                      <div key={request.id} className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md hover:border-gray-300 transition-all duration-200">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            {/* 헤더 - 타입과 상태 배지 */}
-                            <div className="flex items-center gap-2 mb-3">
-                              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                      <div key={request.id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Badge className={`${
                                 request.type === 'education' 
-                                  ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' 
-                                  : 'bg-blue-100 text-blue-700 border border-blue-200'
+                                  ? 'bg-indigo-100 text-indigo-800' 
+                                  : 'bg-blue-100 text-blue-800'
                               }`}>
-                                {request.type === 'education' ? (
-                                  <>
-                                    <GraduationCap className="w-3 h-3" />
-                                    교육
-                                  </>
-                                ) : (
-                                  <>
-                                    <Mic className="w-3 h-3" />
-                                    녹음
-                                  </>
-                                )}
-                              </div>
-                              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                                {request.type === 'education' ? '교육' : '녹음'}
+                              </Badge>
+                              <Badge className={`${
                                 request.status === 'ACTIVE' 
-                                  ? 'bg-green-100 text-green-700 border border-green-200' 
-                                  : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                  ? 'bg-green-100 text-green-800' 
+                                  : 'bg-gray-100 text-gray-800'
                               }`}>
-                                <div className={`w-1.5 h-1.5 rounded-full ${
-                                  request.status === 'ACTIVE' ? 'bg-green-500' : 'bg-gray-400'
-                                }`}></div>
                                 {request.status === 'ACTIVE' ? '활성' : '취소됨'}
-                              </div>
+                              </Badge>
                             </div>
                             
-                            {/* 메인 정보 */}
-                            <div className="mb-3">
-                              <h3 className="font-semibold text-gray-900 text-lg mb-1 flex items-center gap-2">
-                                <Calendar className="w-4 h-4 text-gray-500" />
-                                {request.date} · {request.slot}차수
-                              </h3>
-                              <div className="flex items-center gap-2 text-sm text-gray-600">
-                                <Clock className="w-4 h-4" />
-                                {getSlotTimeInfo(request.type, request.slot, request.details?.mode)}
-                              </div>
+                            <h3 className="font-semibold text-gray-900 mb-2">
+                              {request.date} - {request.slot}차수 ({getSlotTimeInfo(request.type, request.slot, request.details?.mode)})
+                            </h3>
+                            
+                            <div className="text-gray-600 mb-2">
+                              {getRequestDetailLabel(request, classroomInfoMap)}
                             </div>
                             
-                            {/* 상세 정보 */}
-                            <div className="space-y-2 mb-3">
-                              <div className="text-sm text-gray-700 font-medium">
-                                {getRequestDetailLabel(request, classroomInfoMap)}
-                              </div>
-                              
-                              <div className="flex flex-wrap gap-3 text-sm text-gray-600">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-gray-500">언어:</span>
-                                  <span className="font-medium">{
-                                    langLabel(request.type === 'education' ? request.details.language : request.details.recordingLanguage)
-                                  }</span>
-                                </div>
-                                
-                                {request.type === 'education' && (
-                                  <>
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-gray-500">유형:</span>
-                                      <span className="font-medium">{request.details.mode === '1:1' ? '1:1' : '소규모'}</span>
-                                    </div>
-                                    {request.details.category && (
-                                      <div className="flex items-center gap-1">
-                                        <span className="text-gray-500">분류:</span>
-                                        <span className="font-medium">{request.details.category}</span>
-                                      </div>
-                                    )}
-                                  </>
+                            {request.type === 'education' && (
+                              <div className="text-sm text-gray-600 space-y-1">
+                                <p>언어: {
+                                  request.details.language === 'korean-english' ? '한/영' :
+                                  request.details.language === 'japanese' ? '일본어' :
+                                  request.details.language === 'chinese' ? '중국어' : request.details.language
+                                }</p>
+                                <p>유형: {request.details.mode === '1:1' ? '1:1' : '소규모'}</p>
+                                {request.details.category && (
+                                  <p>분류: {request.details.category}</p>
                                 )}
                               </div>
-                            </div>
+                            )}
                             
-                            {/* 신청일 */}
-                            <div className="text-xs text-gray-500 flex items-center gap-1">
-                              <span>신청일:</span>
-                              <span>{new Date(request.applicationTime).toLocaleDateString('ko-KR')} {new Date(request.applicationTime).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
+                            {request.type === 'recording' && (
+                              <div className="text-sm text-gray-600">
+                                <p>언어: {
+                                  request.details.recordingLanguage === 'korean-english' ? '한/영' :
+                                  request.details.recordingLanguage === 'japanese' ? '일본어' :
+                                  request.details.recordingLanguage === 'chinese' ? '중국어' : request.details.recordingLanguage
+                                }</p>
+                              </div>
+                            )}
+                            
+                            <p className="text-xs text-gray-500 mt-2">
+                              신청일: {new Date(request.applicationTime).toLocaleDateString('ko-KR')} {new Date(request.applicationTime).toLocaleTimeString('ko-KR')}
+                            </p>
                             
                             {request.notes && (
-                              <div className="mt-2 text-xs text-gray-500 bg-gray-50 rounded-lg p-2">
+                              <p className="text-xs text-gray-500 mt-1">
                                 {request.notes}
-                              </div>
+                              </p>
                             )}
                           </div>
                           
-                          {/* 액션 버튼 영역 */}
-                          <div className="flex flex-col items-end gap-2 min-w-0">
+                          <div className="ml-4 flex flex-col items-end gap-1">
                             {/* Google Meet 링크 버튼 (1:1 교육, 24시간 전부터 표시) */}
                             {request.type === 'education' && 
                              request.details?.mode === '1:1' && 
@@ -2994,16 +2884,16 @@ ${guidance}`)
                                return true // 임시로 항상 표시
                                // return hoursDiff <= 24 && hoursDiff >= -1 // 원래 조건
                              })() && (
-                              <button
+                              <Button
                                 onClick={() => window.open(request.details.googleMeetLink, '_blank')}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors shadow-sm"
+                                className="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 h-7 mb-1"
                               >
-                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 24 24">
                                   <path d="M15 12h2c0-1.1.9-2 2-2V8c0-1.1-.9-2-2-2h-2v6zM9 12V6H7c-1.1 0-2 .9-2 2v2c1.1 0 2 .9 2 2z"/>
                                   <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
                                 </svg>
-                                Meet 참가
-                              </button>
+                                Google Meet 참가
+                              </Button>
                             )}
                             
                             {(() => {
@@ -3017,53 +2907,39 @@ ${guidance}`)
                               
                               if (isExpired) {
                                 return (
-                                  <div className="text-center">
-                                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg">
-                                      <Clock className="w-3 h-3" />
-                                      종료됨
-                                    </div>
+                                  <div className="text-xs text-gray-500 text-right">
+                                    <div>교육/녹음 종료</div>
                                   </div>
                                 )
                               }
                               
                               if (canCancel()) {
                                 return (
-                                  <div className="text-center space-y-1">
-                                    <div className="text-xs text-green-600 font-medium">
-                                      {(() => {
-                                        const totalHours = Math.floor(hoursDiff);
-                                        const days = Math.floor(totalHours / 24);
-                                        const hours = totalHours % 24;
-                                        if (days > 0) {
-                                          return hours > 0 ? `${days}일 ${hours}시간 남음` : `${days}일 남음`;
-                                        } else {
-                                          return `${hours}시간 남음`;
-                                        }
-                                      })()}
+                                  <>
+                                    <div className="text-xs text-green-600 text-right">
+                                      취소 가능 ({Math.floor(hoursDiff)}시간 남음)
                                     </div>
                                     <button
                                       onClick={() => handleCancelRequest(request.id)}
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-medium rounded-lg transition-colors border border-red-200"
+                                      className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
                                     >
-                                      <X className="w-3 h-3" />
                                       취소
                                     </button>
-                                  </div>
+                                  </>
                                 )
                               } else {
                                 return (
-                                  <div className="text-center space-y-1">
-                                    <div className="text-xs text-red-600 font-medium">
-                                      취소 불가
+                                  <>
+                                    <div className="text-xs text-red-600 text-right">
+                                      취소 불가 (2일 전 14:00 이후)
                                     </div>
                                     <button
                                       onClick={() => alert('교육/녹음일 기준 2일 전 오후 2시까지만 취소할 수 있습니다.\n취소가 필요한 경우 담당자에게 연락해주세요.')}
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-500 text-xs font-medium rounded-lg cursor-not-allowed"
+                                      className="px-3 py-1 text-sm bg-gray-100 text-gray-500 rounded cursor-not-allowed"
                                     >
-                                      <AlertCircle className="w-3 h-3" />
                                       취소 불가
                                     </button>
-                                  </div>
+                                  </>
                                 )
                               }
                             })()}
@@ -3081,7 +2957,7 @@ ${guidance}`)
 
       {/* 언어 선택 팝업 */}
       {showLanguageSelection && selectedRecordingSlot && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999] p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
             <h3 className="text-xl font-bold text-gray-900 mb-4 text-center">
               녹음 언어 선택
@@ -3227,14 +3103,14 @@ function RequestCalendar(props: {
   // 녹음용 차수별 시간 정보 (1시간 단위)
   const getRecordingSlotTime = (slot: number) => {
     const times = {
-      1: "08:30 - 09:20",
-      2: "09:30 - 10:20", 
-      3: "10:30 - 11:20",
-      4: "11:30 - 12:20",
-      5: "13:40 - 14:30",
-      6: "14:40 - 15:30",
-      7: "15:40 - 16:30",
-      8: "16:40 - 17:30"
+      1: "08:30-09:20",
+      2: "09:30-10:20", 
+      3: "10:30-11:20",
+      4: "11:30-12:20",
+      5: "13:40-14:30",
+      6: "14:40-15:30",
+      7: "15:40-16:30",
+      8: "16:40-17:30"
     }
     return times[slot as keyof typeof times] || ""
   }
@@ -3478,82 +3354,41 @@ function RequestCalendar(props: {
                   <div className="px-3 md:px-4 pb-3 md:pb-4 space-y-2">
                     {tab === 'recording' && dayData.recording?.slots?.length > 0 && (
                       <div className="space-y-2">
-                         {/* 간결한 녹음 시간표 - 컴팩트한 디자인 */}
-                         <div className="space-y-1.5">
+                         {/* 간결한 녹음 시간표 - 통일된 블루 테마 */}
+                         <div className="space-y-1">
                            {dayData.recording.slots.map((slot: number) => {
                              const currentApplicants = getRecordingCurrentApplicants(formatDateKey(date), slot)
                              const slotTime = getRecordingSlotTime(slot)
-                             const isAvailable = isRecordingSlotAvailable(formatDateKey(date), slot, 'korean')
-                             const isFull = !isAvailable
-                             
-                             // 🎨 인원수에 따른 색상 구분
-                             const getColorScheme = (count: number) => {
-                               if (count >= 8) {
-                                 return {
-                                   bg: 'bg-red-100 border-red-300',
-                                   hover: 'hover:bg-red-200 hover:border-red-400',
-                                   text: 'text-red-800',
-                                   count: 'text-red-700 bg-red-200',
-                                   icon: 'text-red-600'
-                                 }
-                               } else if (count >= 6) {
-                                 return {
-                                   bg: 'bg-orange-100 border-orange-300',
-                                   hover: 'hover:bg-orange-200 hover:border-orange-400',
-                                   text: 'text-orange-800',
-                                   count: 'text-orange-700 bg-orange-200',
-                                   icon: 'text-orange-600'
-                                 }
-                               } else if (count >= 3) {
-                                 return {
-                                   bg: 'bg-yellow-100 border-yellow-300',
-                                   hover: 'hover:bg-yellow-200 hover:border-yellow-400',
-                                   text: 'text-yellow-800',
-                                   count: 'text-yellow-700 bg-yellow-200',
-                                   icon: 'text-yellow-600'
-                                 }
-                               } else {
-                                 return {
-                                   bg: 'bg-green-100 border-green-300',
-                                   hover: 'hover:bg-green-200 hover:border-green-400',
-                                   text: 'text-green-800',
-                                   count: 'text-green-700 bg-green-200',
-                                   icon: 'text-green-600'
-                                 }
-                               }
-                             }
-                             
-                             const colorScheme = getColorScheme(currentApplicants)
+                             const isFull = currentApplicants >= 8
                              
                              return (
                                <button
                                  key={`rec-${formatDateKey(date)}-${slot}`}
                                  onClick={() => handleRecordingApplication(formatDateKey(date), slot)}
                                  disabled={isFull}
-                                 className={`w-full px-3 py-2 rounded-lg border transition-all duration-300 hover:shadow-md transform hover:scale-[1.01] ${
+                                 className={`w-full p-2 rounded-lg border transition-all duration-200 hover:shadow-sm ${
                                    isFull 
-                                     ? 'cursor-not-allowed opacity-75' 
-                                     : colorScheme.hover
-                                 } ${colorScheme.bg}`}
+                                     ? 'bg-gray-100 border-gray-200 cursor-not-allowed' 
+                                     : 'bg-blue-50 border-blue-200 hover:bg-blue-100 hover:border-blue-300'
+                                 }`}
                                >
                                  <div className="flex items-center justify-between">
-                                   {/* 왼쪽: 차수와 시간 (세로 배치) */}
-                                   <div className="flex flex-col items-start">
-                                     <div className="flex items-center gap-2">
-                                       <span className={`text-sm font-bold ${colorScheme.text}`}>
+                                   <div className="flex items-center gap-3">
+                                     <span className={`text-sm font-bold ${isFull ? 'text-gray-500' : 'text-blue-700'}`}>
                                        {slot}차수
                                      </span>
-                                       <div className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${colorScheme.count}`}>
-                                         {isFull ? '마감' : `${currentApplicants}/8`}
-                                       </div>
-                                     </div>
-                                     <span className={`text-sm ${colorScheme.text} opacity-75 mt-0.5`}>
+                                     <span className={`text-xs ${isFull ? 'text-gray-400' : 'text-gray-600'}`}>
                                        {slotTime}
                                      </span>
                                    </div>
-                                   
-                                   {/* 오른쪽: 아이콘 */}
-                                   <Mic className={`w-4 h-4 ${colorScheme.icon}`} />
+                                   <div className="flex items-center gap-2">
+                                     <span className={`text-xs font-medium ${
+                                       isFull ? 'text-red-600' : 'text-blue-600'
+                                     }`}>
+                                       {isFull ? '마감' : `${currentApplicants}/8`}
+                                     </span>
+                                     <Mic className={`w-3 h-3 ${isFull ? 'text-gray-400' : 'text-blue-500'}`} />
+                                   </div>
                                  </div>
                                </button>
                              )
@@ -3683,7 +3518,19 @@ function RequestCalendar(props: {
               <div className="w-1.5 h-6 bg-gradient-to-b from-indigo-500 to-purple-600 rounded-full"></div>
               <h4 className="text-base font-bold text-gray-800">범례</h4>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
+                <div className="w-4 h-4 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full shadow-sm"></div>
+                <span className="text-sm font-medium text-blue-900">한/영</span>
+            </div>
+              <div className="flex items-center gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
+                <div className="w-4 h-4 bg-gradient-to-br from-green-400 to-emerald-600 rounded-full shadow-sm"></div>
+                <span className="text-sm font-medium text-green-900">일본어</span>
+            </div>
+              <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl border border-purple-100">
+                <div className="w-4 h-4 bg-gradient-to-br from-purple-400 to-violet-600 rounded-full shadow-sm"></div>
+                <span className="text-sm font-medium text-purple-900">중국어</span>
+            </div>
               {tab === 'recording' && (
                 <div className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
                   <div className="w-4 h-4 bg-gradient-to-r from-amber-400 to-orange-500 rounded-full shadow-sm animate-pulse"></div>
@@ -3714,11 +3561,7 @@ function RequestCalendar(props: {
             onClick={(e) => e.stopPropagation()}
           >
             {/* 헤더 - 더 매력적인 그라데이션 */}
-            <div className={`${
-              tab === 'education' 
-                ? 'bg-gradient-to-br from-indigo-600 via-purple-600 to-blue-700' 
-                : 'bg-gradient-to-br from-orange-500 via-red-500 to-pink-600'
-            } text-white p-6 md:p-8 relative overflow-hidden`}>
+            <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-blue-700 text-white p-6 md:p-8 relative overflow-hidden">
               {/* 배경 패턴 */}
               <div className="absolute inset-0 opacity-10">
                 <div className="absolute top-4 right-4 w-32 h-32 bg-white rounded-full blur-3xl"></div>
@@ -3765,74 +3608,39 @@ function RequestCalendar(props: {
               {tab === 'recording' && selectedDayData.recording?.slots?.length > 0 && (
                 <div className="mb-6">
                   <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Mic className="w-5 h-5 text-orange-600" />
+                    <Mic className="w-5 h-5 text-blue-600" />
                     녹음 가능 차수
                   </h4>
-                   {/* 간결한 모달 녹음 시간표 - 컴팩트한 디자인 */}
+                   {/* 간결한 모달 녹음 시간표 - 통일된 블루 테마 */}
                    <div className="space-y-3">
                      {selectedDayData.recording.slots.map((slot: number) => {
                        const currentApplicants = getRecordingCurrentApplicants(selectedDate!, slot)
                        const slotTime = getRecordingSlotTime(slot)
-                       const isAvailable = isRecordingSlotAvailable(selectedDate!, slot, 'korean')
-                       const isFull = !isAvailable
-                       const canApply = isAvailable && !userLanguageRestrictions.recording
-                       
-                       // 🎨 인원수에 따른 색상 구분 (모달용)
-                       const getModalColorScheme = (count: number) => {
-                         if (count >= 8) {
-                           return {
-                             bg: 'bg-red-50 border-red-200',
-                             text: 'text-red-800',
-                             count: 'text-red-700 bg-red-100',
-                             icon: 'text-red-600'
-                           }
-                         } else if (count >= 6) {
-                           return {
-                             bg: 'bg-orange-50 border-orange-200',
-                             text: 'text-orange-800',
-                             count: 'text-orange-700 bg-orange-100',
-                             icon: 'text-orange-600'
-                           }
-                         } else if (count >= 3) {
-                           return {
-                             bg: 'bg-yellow-50 border-yellow-200',
-                             text: 'text-yellow-800',
-                             count: 'text-yellow-700 bg-yellow-100',
-                             icon: 'text-yellow-600'
-                           }
-                         } else {
-                           return {
-                             bg: 'bg-green-50 border-green-200',
-                             text: 'text-green-800',
-                             count: 'text-green-700 bg-green-100',
-                             icon: 'text-green-600'
-                           }
-                         }
-                       }
-                       
-                       const colorScheme = getModalColorScheme(currentApplicants)
+                       const isFull = currentApplicants >= 8
+                       const canApply = !isFull && !userLanguageRestrictions.recording
                        
                        return (
-                         <div key={`modal-rec-${slot}`} className={`p-3 rounded-lg border transition-all duration-200 ${colorScheme.bg}`}>
-                           <div className="flex items-center justify-between">
+                         <div key={`modal-rec-${slot}`} className={`p-4 rounded-lg border transition-all duration-200 ${
+                           isFull ? 'bg-gray-50 border-gray-200' : 'bg-blue-50 border-blue-200'
+                         }`}>
+                           <div className="flex items-center justify-between mb-3">
                              <div className="flex items-center gap-4">
-                               {/* 차수 정보 */}
-                               <div className="flex flex-col">
-                                 <span className={`text-xl font-bold ${colorScheme.text} leading-none`}>
+                               <span className={`text-lg font-bold ${isFull ? 'text-gray-500' : 'text-blue-700'}`}>
                                  {slot}차수
                                </span>
-                                 <span className={`text-sm ${colorScheme.text} opacity-70 mt-0.5`}>
+                               <span className={`text-sm ${isFull ? 'text-gray-400' : 'text-gray-600'}`}>
                                  {slotTime}
                                </span>
                              </div>
-                               
-                               {/* 신청 현황 */}
-                               <div className={`px-3 py-1.5 rounded-full text-base font-bold ${colorScheme.count}`}>
+                             <span className={`text-sm font-medium px-3 py-1 rounded-full ${
+                               isFull 
+                                 ? 'bg-red-100 text-red-700' 
+                                 : 'bg-blue-100 text-blue-700'
+                             }`}>
                                {isFull ? '마감' : `${currentApplicants}/8명`}
-                               </div>
+                             </span>
                            </div>
                            
-                             {/* 신청 버튼 */}
                            <button
                              onClick={() => {
                                if (canApply) {
@@ -3840,20 +3648,21 @@ function RequestCalendar(props: {
                                }
                              }}
                              disabled={!canApply}
-                               className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
+                             className={`w-full px-4 py-3 rounded-lg font-medium transition-all duration-200 ${
                                canApply
-                                   ? 'bg-green-600 hover:bg-green-700 text-white shadow-sm hover:shadow-md'
+                                 ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md'
                                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                              }`}
                            >
+                             <div className="flex items-center justify-center gap-2">
                                <Mic className="w-4 h-4" />
-                               <span className="text-sm">
-                                 {isFull ? '마감' : 
-                                  userLanguageRestrictions.recording ? '제한' : 
-                                  '신청'}
+                               <span>
+                                 {isFull ? '신청 마감' : 
+                                  userLanguageRestrictions.recording ? '신청 제한' : 
+                                  '녹음 신청하기'}
                                </span>
+                             </div>
                            </button>
-                           </div>
                            
                            {userLanguageRestrictions.recording && (
                              <div className="mt-2 text-center py-2 bg-yellow-50 rounded-lg border border-yellow-200">
@@ -3936,7 +3745,7 @@ function RequestCalendar(props: {
                                   <div className="flex items-center gap-1 bg-amber-100 px-2 py-1 rounded-full border border-amber-300">
                                     <Building className="w-3 h-3 text-amber-700" />
                                     <span className="text-sm font-semibold text-amber-800">
-                                      {(edu as any).classroomInfo || selectedDayData.classroomInfo}
+                                      {(edu as any).classroomInfo || selectedDayData.classroomInfo} 학과장
                                     </span>
                                   </div>
                                 )}
@@ -3980,7 +3789,7 @@ function RequestCalendar(props: {
                                   )}
                                   {edu.type.category === '재자격' && (
                                     <p className="font-semibold text-amber-800">
-                                      🔄 <strong>재자격:</strong> 기내방송 자격이 있는 승무원 대상
+                                      🔄 <strong>재자격:</strong> 자격 갱신 또는 상위 등급이 목표인 승무원 대상
                                     </p>
                                   )}
                                   {edu.type.category === '공통' && (
@@ -4034,11 +3843,7 @@ function RequestCalendar(props: {
                                   </div>
                                   {edu.type.mode === 'small' && (
                                     <div className="text-xs text-gray-600 mt-1">
-                                      {currentApplicants}/{(() => {
-                                        // 카테고리별 정원 설정 (백엔드와 동일한 로직)
-                                        const category = edu.type.category || '공통'
-                                        return category === 'PUS' ? 3 : 4
-                                      })()}명
+                                      {currentApplicants}/4명
                                     </div>
                                   )}
                                   {!isAvailable && (
@@ -4289,7 +4094,6 @@ function MyPageModal({
   const [loading, setLoading] = useState(false)
   const [requests, setRequests] = useState<any[]>([])
   const [loadingReq, setLoadingReq] = useState(false)
-  const [classroomInfoMap, setClassroomInfoMap] = useState<Map<string, string>>(new Map())
 
   // 직원 자격 정보 불러오기
   useEffect(() => {
@@ -4326,7 +4130,7 @@ function MyPageModal({
         if (json.success && json.items) {
           // 캘린더 스케줄 API에서 교실 정보 가져오기 (교육별로 세분화)
           const uniqueMonths = [...new Set(json.items.map((item: any) => item.date.slice(0, 7)))]
-          const tempClassroomInfoMap = new Map()
+          const classroomInfoMap = new Map()
           
           for (const month of uniqueMonths) {
             try {
@@ -4344,13 +4148,13 @@ function MyPageModal({
                             if (edu.type.category) {
                               // 카테고리별 키 (한/영 소규모)
                               const categoryKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}_${edu.type.category}`
-                              tempClassroomInfoMap.set(categoryKey, edu.classroomInfo)
+                              classroomInfoMap.set(categoryKey, edu.classroomInfo)
                               console.log(`✅ [MyPage] 교육별 교실 정보 추가 (카테고리): ${categoryKey} → ${edu.classroomInfo}`)
                             }
                             
                             // 기본 키 (모든 교육)
                             const baseKey = `${day.date}_${slot}_${edu.type.lang}_${edu.type.mode}`
-                            tempClassroomInfoMap.set(baseKey, edu.classroomInfo)
+                            classroomInfoMap.set(baseKey, edu.classroomInfo)
                             console.log(`✅ [MyPage] 교육별 교실 정보 추가 (기본): ${baseKey} → ${edu.classroomInfo}`)
                           })
                         }
@@ -4358,9 +4162,8 @@ function MyPageModal({
                     }
                     
                     // 호환성을 위한 날짜별 전체 교실 정보도 유지
-
                     if (day.classroomInfo) {
-                      tempClassroomInfoMap.set(day.date, day.classroomInfo)
+                      classroomInfoMap.set(day.date, day.classroomInfo)
                     }
                   })
                 }
@@ -4370,20 +4173,14 @@ function MyPageModal({
             }
           }
           
-          console.log('🏫 [MyPage] 캘린더에서 가져온 교실 정보:', Object.fromEntries(tempClassroomInfoMap))
-          
-          // 상태에 교실 정보 맵 저장
-          setClassroomInfoMap(tempClassroomInfoMap)
+          console.log('🏫 [MyPage] 캘린더에서 가져온 교실 정보:', Object.fromEntries(classroomInfoMap))
           
           // Request mode와 동일한 로직 사용 (작동하는 것으로 확인됨)
           const convertedItems = json.items.map((item: any) => ({
             type: item.type,
             date: item.date,
             slot: item.slot,
-            details: item.details, // details 객체를 그대로 전달
-            classroomInfo: item.classroomInfo, // 교실 정보도 전달
-            createdAt: item.createdAt || item.applicationTime, // 신청일 정보
-            detail: getDetailFromItem(item) // 기존 호환성을 위해 유지
+            detail: getDetailFromItem(item) // Request mode와 동일한 detail 생성 로직
           }))
           
           function getDetailFromItem(item: any) {
@@ -4391,7 +4188,7 @@ function MyPageModal({
               return item.details?.recordingLanguage || 'recording'
             }
             
-            // 교육 타입의 경우 details에서 정보 추출 (모바일 MyPage와 완전히 동일)
+            // 교육 타입의 경우 details에서 정보 추출
             const language = item.details?.language || 'korean-english'
             const languageLabel = language === 'korean-english' ? '한/영' : 
                                 language === 'japanese' ? '일본어' : 
@@ -4400,75 +4197,15 @@ function MyPageModal({
             const mode = item.details?.mode || item.details?.educationType || '1:1'
             const modeLabel = (mode === 'small' || mode === 'small-group') ? '소규모' : '1:1'
             
-            const category = item.details?.category
-            const normalizedMode = mode === 'small-group' ? 'small' : mode;
+            const category = item.details?.category || ''
             
-            console.log(`🔍 [MyPage] 원본 신청 데이터:`, {
-              date: item.date,
-              slot: item.slot,
-              details: item.details,
-              schedule: item.schedule,
-              language,
-              mode,
-              category,
-              normalizedMode,
-              expectedCategoryKey: `${item.date}_${item.slot}_${language}_${normalizedMode}_${category}`,
-              expectedBaseKey: `${item.date}_${item.slot}_${language}_${normalizedMode}`
-            });
-            
-            // 클래스룸 정보 매칭 (스케줄 API 우선)
-            let classroomInfo = null;
-            
-            // 1. Database API에서 제공하는 클래스룸 정보 확인
-            if (item.schedule?.classroom) {
-              console.log(`🚨 [MyPage] Database API 클래스룸 발견: ${item.schedule.classroom} (카테고리: ${category})`);
-              // 카테고리별 매칭을 우선 시도하고, 실패하면 Database API 사용
-            }
-            
-            // 2. 스케줄 API 매칭 우선 시도
-            {
-              // 소규모 교육의 경우 차수를 녹음 슬롯으로 변환
-              let actualSlots = [item.slot];
-              if (normalizedMode === 'small') {
-                // 소규모 교육: 차수 → 녹음 슬롯 변환
-                const slotMapping = {
-                  1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]
-                };
-                actualSlots = slotMapping[item.slot as keyof typeof slotMapping] || [item.slot];
-                console.log(`🔄 [MyPage] 소규모 차수 변환: ${item.slot}차 → 녹음슬롯 [${actualSlots}]`);
-              }
-              
-              // 각 녹음 슬롯에 대해 카테고리별 키 시도
-              if (category && language === 'korean-english' && normalizedMode === 'small') {
-                for (const slot of actualSlots) {
-                  const categoryKey = `${item.date}_${slot}_${language}_${normalizedMode}_${category}`;
-                  classroomInfo = classroomInfoMap.get(categoryKey);
-                  console.log(`🔍 [MyPage] 카테고리 키 시도: ${categoryKey} → ${classroomInfo}`);
-                  if (classroomInfo) break;
-                }
-              }
-              
-              // 기본 키 시도 (카테고리 없는 교육이거나 카테고리별 매칭 실패)
-              if (!classroomInfo) {
-                for (const slot of actualSlots) {
-                  const baseKey = `${item.date}_${slot}_${language}_${normalizedMode}`;
-                  classroomInfo = classroomInfoMap.get(baseKey);
-                  console.log(`🔍 [MyPage] 기본 키 시도: ${baseKey} → ${classroomInfo}`);
-                  if (classroomInfo) break;
-                }
-              }
-              
-              // 스케줄 API 매칭 실패 시 Database API 폴백
-              if (!classroomInfo && item.schedule?.classroom) {
-                classroomInfo = item.schedule.classroom;
-                console.log(`🔄 [MyPage] Database API 폴백: ${classroomInfo}`);
-              }
-            }
-            
-            // 클래스룸 정보 포맷팅
-            const classroom = classroomInfo || '';
-            console.log(`🔍 [MyPage] 교실 매칭: ${item.date}_${item.slot}_${language}_${normalizedMode} (카테고리: ${category || 'none'}) → ${classroomInfo} → ${classroom}`);
+            // 캘린더에서 교실 정보 가져오기 (카테고리별 우선, 없으면 날짜별)
+            const educationKey = `${item.date}_${item.slot}_${language}_${mode}_${category || 'default'}`
+            const educationClassroom = classroomInfoMap.get(educationKey) || classroomInfoMap.get(item.date) || ''
+            const classroom = educationClassroom ? (educationClassroom.includes('학과장') ? educationClassroom : `${educationClassroom} 학과장`) : ''
             const locationPart = (mode === 'small' || mode === 'small-group') && classroom ? ` · ${classroom}` : ''
+            
+            console.log(`🔍 [MyPage] 교실 매칭: ${educationKey} → ${classroomInfoMap.get(educationKey)} (날짜별: ${classroomInfoMap.get(item.date)}) → ${classroom}`)
             
             return `${languageLabel} ${modeLabel}${locationPart} ${category}`.trim()
           }
@@ -4730,112 +4467,33 @@ function MyPageModal({
             {activeTab === "requests" && (
               <div className="max-w-3xl w-full mx-auto">
                 <div className="text-center mb-6">
-                  <h3 className="text-2xl font-bold text-gray-900">{userInfo.name}({userInfo.employeeId}) 신청 내역</h3>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">신청 내역</h3>
+                  <p className="text-gray-600">교육/녹음 신청을 확인하고 당일 기준 2일 전 오후 2시까지 취소할 수 있습니다.</p>
                 </div>
-                
+                {/* 목록 */}
+                {/* 본문에서 상태 관리됨: requests, loadingReq */}
+                {/* @ts-ignore-next-line */}
                 {loadingReq ? (
-                  <div className="text-center py-12">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3"></div>
-                    <p className="text-gray-600">신청 내역을 불러오는 중입니다...</p>
-                  </div>
+                  <div className="text-center py-12">불러오는 중...</div>
                 ) : requests.length === 0 ? (
-                  <div className="text-center py-12">
-                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Calendar className="w-8 h-8 text-gray-400" />
-                    </div>
-                    <p className="text-gray-500 text-lg">신청 내역이 없습니다.</p>
-                    <p className="text-gray-400 text-sm mt-2">교육이나 녹음을 신청하면 여기에 표시됩니다.</p>
-                  </div>
+                  <div className="text-center py-12 text-gray-500">신청 내역이 없습니다.</div>
                 ) : (
-                  <div className="space-y-3">
-                    {requests.map((it: any, idx: number) => {
-                      const scheduleDate = new Date(it.date)
-                      const twoDaysBefore = new Date(scheduleDate)
-                      twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
-                      twoDaysBefore.setHours(14, 0, 0, 0)
-                      const canCancel = Date.now() <= twoDaysBefore.getTime()
-                      const isUpcoming = scheduleDate.getTime() > Date.now()
-                      
-                      return (
-                        <div key={idx} className={`bg-white rounded-xl shadow-md border border-gray-100 p-4 hover:shadow-lg transition-all duration-300 ${
-                          !isUpcoming ? 'opacity-75' : ''
-                        }`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3 flex-1">
-                              {/* 아이콘 */}
-                              <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm ${
-                                it.type === 'education' 
-                                  ? 'bg-gradient-to-br from-blue-500 to-purple-600' 
-                                  : 'bg-gradient-to-br from-green-500 to-emerald-600'
-                              }`}>
-                                {it.type === 'education' ? (
-                                  <Users className="w-5 h-5 text-white" />
-                                ) : (
-                                  <Mic className="w-5 h-5 text-white" />
-                                )}
+                  <div className="space-y-2">
+                    {/* @ts-ignore-next-line */}
+                    {requests.map((it: any, idx: number)=> (
+                      <div key={idx} className="flex items-center justify-between bg-white rounded-lg border p-4">
+                        <div className="text-sm">
+                          <div className="font-semibold">
+                            {new Date(it.date).toLocaleDateString('ko-KR',{month:'long', day:'numeric', weekday:'short'})} · {it.slot}차수
                           </div>
-                              
-                              {/* 내용 */}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <h4 className="text-base font-semibold text-gray-900 truncate">
-                                    {new Date(it.date).toLocaleDateString('ko-KR', {
-                                      month: 'long', 
-                                      day: 'numeric', 
-                                      weekday: 'short'
-                                    })}
-                                  </h4>
-                                  <Badge variant="outline" className="text-xs px-2 py-0.5 shrink-0">
-                                    {it.slot}차수
-                                  </Badge>
-                                  {!isUpcoming && (
-                                    <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 shrink-0">
-                                      완료
-                                    </Badge>
-                                  )}
+                          <div className="text-gray-600">
+                            {it.type === 'education' ? `교육: ${it.detail}` : `녹음: ${langLabel(it.detail)}`}
                           </div>
-                                
-                                {/* 시간 정보 추가 */}
-                                {(() => {
-                                  const mode = it.details?.mode || it.details?.educationType || '1:1'
-                                  const timeLabel = getSlotTimeInfo(it.type, it.slot, mode)
-                                  return timeLabel && (
-                                    <div className="text-xs text-gray-500 mb-1">
-                                      {timeLabel}
                         </div>
-                                  )
-                                })()}
-                                
-                                <p className="text-gray-700 text-sm font-medium mb-1 truncate">
-                                  {getRequestDetailLabel(it, classroomInfoMap)}
-                                </p>
-                                
-                                <div className="flex items-center gap-3 text-xs text-gray-500">
-                                  <div className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    <span>신청일: {new Date(it.createdAt || it.date).toLocaleDateString('ko-KR', {
-                                      month: 'numeric',
-                                      day: 'numeric'
-                                    })}</span>
-                                  </div>
-                                  {canCancel && (
-                                    <div className="flex items-center gap-1 text-orange-600">
-                                      <AlertCircle className="w-3 h-3" />
-                                      <span>취소 가능</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            
-                            {/* 취소 버튼 */}
-                            <div className="ml-3 shrink-0">
+                        {/* @ts-ignore-next-line */}
                         <CancelButton employeeId={userInfo.employeeId} item={it} />
                       </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+                    ))}
                   </div>
                 )}
               </div>
@@ -4854,124 +4512,30 @@ function langLabel(v: string){
   return v
 }
 
-// 차수별 시간 정보를 반환하는 전역 함수
-function getSlotTimeInfo(type: string, slot: number, educationMode?: string): string {
-  if (type === 'recording') {
-    // 녹음용 시간표 - 데스크톱 녹음 캘린더와 완전히 동일
-    const times: Record<number, string> = {
-      1: "08:30-09:20",
-      2: "09:30-10:20", 
-      3: "10:30-11:20",
-      4: "11:30-12:20",
-      5: "13:40-14:30",
-      6: "14:40-15:30",
-      7: "15:40-16:30",
-      8: "16:40-17:30"
-    }
-    return times[slot] || ""
-  } else if (type === 'education') {
-    if (educationMode === '1:1') {
-      // 1:1 교육용 시간표 (25분 단위, 총 16차수)
-      const times: Record<number, string> = {
-        // 오전 세션 (1-8차수)
-        1: "08:30-08:55",
-        2: "09:00-09:25",
-        3: "09:30-09:55",
-        4: "10:00-10:25",
-        5: "10:30-10:55",
-        6: "11:00-11:25",
-        7: "11:30-11:55",
-        8: "12:00-12:25",
-        // 오후 세션 (9-16차수, 13:35부터 시작)
-        9: "13:35-14:00",
-        10: "14:05-14:30",
-        11: "14:35-15:00",
-        12: "15:05-15:30",
-        13: "15:35-16:00",
-        14: "16:05-16:30",
-        15: "16:35-17:00",
-        16: "17:05-17:30"
-      }
-      return times[slot] || ""
-    } else {
-      // 소규모 교육용 시간표 (2시간 단위)
-      const times: Record<number, string> = {
-        1: "08:30-10:20",
-        2: "10:30-12:20", 
-        3: "13:40-15:30",
-        4: "15:40-17:30"
-      }
-      return times[slot] || ""
-    }
-  }
-  return ""
-}
-
-
-// Request mode에서 사용할 통일된 detail 표시 함수 (모바일 MyPage와 완전히 동일)
+// Request mode에서 사용할 통일된 detail 표시 함수
 function getRequestDetailLabel(request: any, classroomInfoMap: Map<string, string>) {
   if (request.type === 'recording') {
     return `녹음: ${langLabel(request.details?.recordingLanguage || 'recording')}`
   }
   
   // 교육 타입의 경우
-  console.log(`🔍 [getRequestDetailLabel] 받은 request 객체:`, {
-    type: request.type,
-    date: request.date,
-    slot: request.slot,
-    details: request.details,
-    hasDetails: !!request.details,
-    detailsLanguage: request.details?.language,
-    detailsMode: request.details?.mode,
-    detailsEducationType: request.details?.educationType
-  })
-  
   const language = request.details?.language || 'korean-english'
   const languageLabel = langLabel(language)
   
   const mode = request.details?.mode || request.details?.educationType || '1:1'
   const modeLabel = (mode === 'small' || mode === 'small-group') ? '소규모' : '1:1'
   
-  const category = request.details?.category
+  const category = request.details?.category || '공통'
   
-  // 교실 정보 - request.classroomInfo를 우선 사용, 없으면 classroomInfoMap에서 가져오기
-  let classroom = request.classroomInfo?.trim() || ''
-  
-  console.log(`🔍 [Request mode] getMobileRequestDetailLabel 호출:`, {
-    date: request.date,
-    slot: request.slot,
-    language,
-    mode,
-    category,
-    requestClassroomInfo: request.classroomInfo,
-    classroom
-  });
-  
-  if (!classroom) {
-    // fallback: classroomInfoMap에서 가져오기
-    const normalizedMode = mode === 'small-group' ? 'small' : mode;
-    let educationClassroom = ''
-    
-    // 1. 카테고리별 키 시도 (한/영 소규모만)
-    if (category && language === 'korean-english' && normalizedMode === 'small') {
-      const categoryKey = `${request.date}_${request.slot}_${language}_${normalizedMode}_${category}`
-      educationClassroom = classroomInfoMap.get(categoryKey) || ''
-      console.log(`🔍 [Request mode] 카테고리 키 시도 (fallback): ${categoryKey} → ${educationClassroom}`)
-    }
-    
-    // 2. 기본 키 시도 (모든 교육)
-    if (!educationClassroom) {
-      const baseKey = `${request.date}_${request.slot}_${language}_${normalizedMode}`
-      educationClassroom = classroomInfoMap.get(baseKey) || ''
-      console.log(`🔍 [Request mode] 기본 키 시도 (fallback): ${baseKey} → ${educationClassroom}`)
-    }
-    
-    classroom = educationClassroom || ''
-  }
-  
+  // 교육별 교실 정보 가져오기 (카테고리별 우선, 없으면 기존 키 사용)
+  const normalizedMode = mode === 'small' || mode === 'small-group' ? 'small' : '1:1'
+  const educationKey = `${request.date}_${request.slot}_${language}_${normalizedMode}_${category || 'default'}`
+  const legacyKey = `${request.date}_${request.slot}_${language}_${normalizedMode}`
+  const educationClassroom = classroomInfoMap.get(educationKey) || classroomInfoMap.get(legacyKey) || ''
+  const classroom = educationClassroom ? (educationClassroom.includes('학과장') ? educationClassroom : `${educationClassroom} 학과장`) : ''
   const locationPart = (mode === 'small' || mode === 'small-group') && classroom ? ` · ${classroom}` : ''
   
-  console.log(`🔍 [Request mode] 최종 교실 정보: request.classroomInfo=${request.classroomInfo}, classroom=${classroom}, locationPart=${locationPart}`)
+  console.log(`🔍 [Request mode] 교실 매칭: ${educationKey} → ${classroomInfoMap.get(educationKey)} (기존: ${classroomInfoMap.get(legacyKey)}) → ${classroom}`)
   
   // 카테고리 이모지 및 라벨
   const categoryEmoji = category === '신규' ? '✨' :
@@ -5036,27 +4600,8 @@ function CancelButton({ employeeId, item }: { employeeId: string, item: any }){
     }
   }
   return (
-    <Button 
-      size="sm" 
-      variant={canCancel ? "destructive" : "outline"} 
-      onClick={onCancel} 
-      disabled={!canCancel || busy} 
-      className={`h-8 px-3 text-xs transition-all duration-200 ${
-        canCancel 
-          ? 'bg-red-500 hover:bg-red-600 text-white border-red-500' 
-          : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-      }`}
-    >
-      {busy ? (
-        <>
-          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-          처리중
-        </>
-      ) : canCancel ? (
-        '취소'
-      ) : (
-        '불가'
-      )}
+    <Button size="sm" variant="outline" onClick={onCancel} disabled={!canCancel || busy} className="min-w-24">
+      {busy ? '처리 중...' : (canCancel ? '취소' : '취소 불가')}
     </Button>
   )
 }
@@ -5149,6 +4694,35 @@ function ReviewMode({
 
   return (
     <div className="min-h-screen">
+      {/* 사용자 정보 - 상단 우측 */}
+      {authenticatedUser && (
+        <div
+          style={{ position: "fixed", top: 20, right: 32, zIndex: 50, opacity: 0.5 }}
+          className="flex items-center gap-3 bg-white/80 shadow px-3 py-2 rounded-full border border-gray-200 backdrop-blur-sm"
+        >
+          <img
+            src={authenticatedUser.picture || "/placeholder.svg?height=32&width=32&text=User"}
+            alt={authenticatedUser.name}
+            className="w-8 h-8 rounded-full object-cover border border-gray-300"
+          />
+          <div className="flex flex-col text-right">
+            <div className="flex items-center gap-2 justify-end">
+              <span className="text-xs font-semibold text-gray-800 leading-tight">{authenticatedUser.name}</span>
+              {getUserMainRole() && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  getUserMainRole() === "관리자" 
+                    ? "bg-orange-100 text-orange-700" 
+                    : "bg-purple-100 text-purple-700"
+                }`}>
+                  {getUserMainRole()}
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-gray-500 leading-tight">{authenticatedUser.email}</span>
+          </div>
+        </div>
+      )}
+
       {/* 사이드바 네비게이션 */}
       <div className="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col">
         {/* JVOICE 브랜드명 */}
@@ -5177,8 +4751,8 @@ function ReviewMode({
             </button>
 
             <button
-              disabled
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-400 cursor-not-allowed opacity-50"
+              onClick={() => handleNavigation("recording")}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
             >
               <Mic className="w-4 h-4" />
               Record
@@ -5446,9 +5020,6 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
   const [showFinalConfirmation, setShowFinalConfirmation] = useState(false)
   const [availableScripts, setAvailableScripts] = useState<number[]>([])
   const [currentLanguageMode, setCurrentLanguageMode] = useState<"korean" | "english">("korean")
-  const [isTransitioning, setIsTransitioning] = useState(false)
-  const [transitionStep, setTransitionStep] = useState(0)
-  const [targetScript, setTargetScript] = useState<number | null>(null)
   // const [isLoadingScript, setIsLoadingScript] = useState(true)
 
   // 녹음 중 페이지 이탈 방지
@@ -5463,28 +5034,6 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
 
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload)
-    }
-  }, [])
-
-  // 브라우저 뒤로가기 방지
-  useEffect(() => {
-    const handlePopState = (e: PopStateEvent) => {
-      e.preventDefault()
-      
-      // 현재 URL을 다시 푸시하여 뒤로가기를 무효화
-      window.history.pushState(null, '', window.location.href)
-      
-      // 경고 팝업 표시
-      alert('녹음이 진행 중입니다.\n녹음을 완료하거나 취소한 후 페이지를 이동해주세요.')
-    }
-
-    // 현재 상태를 히스토리에 추가 (뒤로가기 감지를 위해)
-    window.history.pushState(null, '', window.location.href)
-    
-    window.addEventListener('popstate', handlePopState)
-    
-    return () => {
-      window.removeEventListener('popstate', handlePopState)
     }
   }, [])
 
@@ -5541,46 +5090,10 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
 
   const nextScript = () => {
     const currentIndex = getCurrentScriptIndex()
-    
-    // 확인 알림창 표시
-    const confirmMessage = currentIndex < availableScripts.length - 1 
-      ? "다음 문안으로 넘어가시겠습니까? 현재 문안으로 되돌아올 수 없습니다."
-      : "녹음을 완료하고 제출하시겠습니까? 제출 후에는 수정할 수 없습니다."
-    
-    if (!confirm(confirmMessage)) {
-      return // 사용자가 취소를 선택한 경우 함수 종료
-    }
-    
     if (currentIndex < availableScripts.length - 1) {
-      const nextScriptNumber = availableScripts[currentIndex + 1]
-      setTargetScript(nextScriptNumber)
-      setIsTransitioning(true)
-      setTransitionStep(0)
-      
-      // 단계별 애니메이션 실행 (더 여유있는 타이밍)
-      const steps = [
-        { delay: 0, step: 1, action: () => {} },
-        { delay: 600, step: 2, action: () => {} },
-        { delay: 1200, step: 3, action: () => {} },
-        { delay: 1800, step: 4, action: () => {} },
-        { delay: 2400, step: 5, action: () => {
-          // 마지막 단계에서 실제 내용 변경
-          setCurrentScript(nextScriptNumber)
-          setCurrentLanguageMode("korean")
-        }},
-        { delay: 3200, step: 0, action: () => {
-          // 애니메이션 완료 (완료 메시지를 충분히 보여준 후)
-          setIsTransitioning(false)
-          setTargetScript(null)
-        }}
-      ]
-      
-      steps.forEach(({ delay, step, action }) => {
-        setTimeout(() => {
-          setTransitionStep(step)
-          action()
-        }, delay)
-      })
+      // setIsLoadingScript(true) // 새 문안 로딩 시작
+      setCurrentScript(availableScripts[currentIndex + 1])
+      setCurrentLanguageMode("korean")
     } else {
       setShowFinalConfirmation(true)
     }
@@ -5660,103 +5173,6 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
         message="문안을 불러오는 중입니다..."
         subMessage={`${userInfo.language} ${currentScript}번 문안`}
       /> */}
-
-      {/* 문안 전환 모달 오버레이 */}
-      {isTransitioning && targetScript && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          {/* 파티클 효과 */}
-          <div className="absolute inset-0 overflow-hidden">
-            {Array.from({ length: 20 }).map((_, i) => (
-              <div
-                key={i}
-                className={`absolute w-2 h-2 bg-blue-400 rounded-full opacity-70 animate-particle-float-${(i % 9) + 1}`}
-                style={{
-                  left: `${Math.random() * 100}%`,
-                  top: `${Math.random() * 100}%`,
-                  animationDelay: `${Math.random() * 2}s`,
-                  animationDuration: `${3 + Math.random() * 2}s`
-                }}
-              />
-            ))}
-            {Array.from({ length: 15 }).map((_, i) => (
-              <div
-                key={`purple-${i}`}
-                className={`absolute w-1.5 h-1.5 bg-purple-400 rounded-full opacity-60 animate-particle-float-${(i % 9) + 1}`}
-                style={{
-                  left: `${Math.random() * 100}%`,
-                  top: `${Math.random() * 100}%`,
-                  animationDelay: `${Math.random() * 2}s`,
-                  animationDuration: `${4 + Math.random() * 2}s`
-                }}
-              />
-            ))}
-          </div>
-
-          {/* 메인 모달 */}
-          <div className="bg-white/95 backdrop-blur-md rounded-3xl p-8 shadow-2xl border border-white/20 max-w-md w-full mx-4 relative overflow-hidden">
-            {/* 배경 그라데이션 */}
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 via-purple-50/30 to-indigo-50/50 rounded-3xl" />
-            
-            {/* 내용 */}
-            <div className="relative z-10 text-center">
-              <div className="mb-6">
-                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-                  <FileText className="w-8 h-8 text-white" />
-                </div>
-                <h3 className="text-2xl font-bold text-gray-800 mb-2">
-                  {targetScript}번 문안으로 이동 중...
-                </h3>
-                <p className="text-gray-600">
-                  새로운 문안을 준비하고 있습니다
-                </p>
-              </div>
-
-              {/* 전체 문안 진행 단계 표시 */}
-              <div className="flex justify-center gap-3 mb-6">
-                {availableScripts.map((scriptNum, index) => {
-                  const isCompleted = scriptNum < targetScript!
-                  const isCurrent = scriptNum === targetScript!
-                  
-                  return (
-                    <div
-                      key={scriptNum}
-                      className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-sm transition-all duration-500 ${
-                        isCompleted
-                          ? 'bg-gradient-to-br from-green-500 to-emerald-600 text-white shadow-lg scale-110'
-                          : isCurrent
-                            ? 'bg-gradient-to-br from-blue-500 to-purple-600 text-white shadow-lg scale-125 animate-pulse'
-                            : 'bg-gray-200 text-gray-500'
-                      }`}
-                    >
-                      {isCompleted ? '✓' : scriptNum}
-                    </div>
-                  )
-                })}
-              </div>
-
-              {/* 전체 진행 바 */}
-              <div className="w-full bg-gray-200 rounded-full h-2 mb-4 overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-500 ease-out"
-                  style={{ 
-                    width: `${((availableScripts.findIndex(s => s === targetScript!) + 1) / availableScripts.length) * 100}%` 
-                  }}
-                />
-              </div>
-
-              {/* 단계별 메시지 */}
-              <div className="text-sm text-gray-600">
-                {transitionStep === 1 && "문안 데이터 로딩 중..."}
-                {transitionStep === 2 && "PDF 파일 준비 중..."}
-                {transitionStep === 3 && "언어 설정 초기화 중..."}
-                {transitionStep === 4 && "녹음 환경 설정 중..."}
-                {transitionStep === 5 && "문안 전환 완료!"}
-                {transitionStep === 0 && `총 ${availableScripts.length}개 문안 중 ${availableScripts.findIndex(s => s === targetScript!) + 1}번째 문안`}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       {/* 헤더 */}
       <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60 p-6 shadow-sm">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
@@ -5811,21 +5227,17 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
         <div className="grid lg:grid-cols-5 gap-8">
           {/* PDF 뷰어 */}
           <div className="lg:col-span-3">
-            <Card className={`bg-white shadow-lg rounded-2xl overflow-hidden transition-all duration-500 transform-gpu ${
-              isTransitioning 
-                ? 'animate-flip-card shadow-2xl shadow-blue-500/25 scale-105' 
-                : 'hover:shadow-xl'
-            }`}>
+            <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
               <CardHeader className="bg-gray-50/80">
-                <CardTitle className="flex items-center justify-between text-xl font-bold text-gray-800">
-                  <div className="flex items-center gap-3">
-                    <FileText className="w-6 h-6 text-blue-600" />
-                    <span>문안 {currentScript}번 - {getLanguageDisplay(userInfo.language)}</span>
-                  </div>
-                  <Badge className="bg-blue-100 text-blue-800 border-blue-200">
-                    {getCurrentScriptIndex() + 1} / {availableScripts.length}
-                  </Badge>
-                </CardTitle>
+                              <CardTitle className="flex items-center justify-between text-xl font-bold text-gray-800">
+                <div className="flex items-center gap-3">
+                  <FileText className="w-6 h-6 text-blue-600" />
+                  <span>문안 {currentScript}번 - {getLanguageDisplay(userInfo.language)}</span>
+                </div>
+                <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+                  {getCurrentScriptIndex() + 1} / {availableScripts.length}
+                </Badge>
+              </CardTitle>
               </CardHeader>
               <CardContent className="p-4">
                 <PDFViewer
@@ -5874,73 +5286,33 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
             {userInfo.language === "korean-english" && (
               <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
                 <CardHeader className="bg-gray-50/80">
-                  <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
-                    <Globe className="w-6 h-6 text-purple-600" />
-                    언어 선택
-                  </CardTitle>
+                                  <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                  <Globe className="w-6 h-6 text-purple-600" />
+                  언어 모드
+                </CardTitle>
                 </CardHeader>
-                <CardContent className="p-4 space-y-4">
-                  {/* 언어 선택 버튼 */}
+                <CardContent className="p-4">
                   <div className="flex gap-2">
                     <Button
                       onClick={() => setCurrentLanguageMode("korean")}
-                      className={`flex-1 relative ${
+                      className={`flex-1 ${
                         currentLanguageMode === "korean"
                           ? "bg-blue-600 hover:bg-blue-700"
                           : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                       }`}
                     >
-                      <div className="flex items-center justify-between w-full">
-                        <span>한국어</span>
-                        {recordings[getRecordingKey(currentScript, "korean")] && (
-                          <span className="text-green-300 font-bold">✓</span>
-                        )}
-                      </div>
-                      {recordings[getRecordingKey(currentScript, "korean")] && (
-                        <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
-                      )}
+                      한국어
                     </Button>
                     <Button
                       onClick={() => setCurrentLanguageMode("english")}
-                      className={`flex-1 relative ${
+                      className={`flex-1 ${
                         currentLanguageMode === "english"
                           ? "bg-purple-600 hover:bg-purple-700"
                           : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                       }`}
                     >
-                      <div className="flex items-center justify-between w-full">
-                        <span>English</span>
-                        {recordings[getRecordingKey(currentScript, "english")] && (
-                          <span className="text-green-300 font-bold">✓</span>
-                        )}
-                      </div>
-                      {recordings[getRecordingKey(currentScript, "english")] && (
-                        <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
-                      )}
+                      English
                     </Button>
-                  </div>
-
-                  {/* 진행 상태 바 - 한 줄로 통합 */}
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium text-gray-700">문안 {currentScript}번 진행 상태</div>
-                    <div className="flex bg-gray-200 rounded-full h-3 overflow-hidden">
-                      <div 
-                        className={`h-full transition-all duration-300 ${
-                          recordings[getRecordingKey(currentScript, "korean")] ? "bg-blue-500" : "bg-gray-200"
-                        }`}
-                        style={{ width: '50%' }}
-                      />
-                      <div 
-                        className={`h-full transition-all duration-300 ${
-                          recordings[getRecordingKey(currentScript, "english")] ? "bg-purple-500" : "bg-gray-200"
-                        }`}
-                        style={{ width: '50%' }}
-                      />
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-600">
-                      <span>한국어 {recordings[getRecordingKey(currentScript, "korean")] ? "✓" : ""}</span>
-                      <span>English {recordings[getRecordingKey(currentScript, "english")] ? "✓" : ""}</span>
-                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -5948,28 +5320,10 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
 
             {/* 녹음 컨트롤 */}
             <Card className="bg-white shadow-lg rounded-2xl overflow-hidden">
-              <CardHeader className={`${
-                userInfo.language === "korean-english" 
-                  ? currentLanguageMode === "korean" 
-                    ? "bg-blue-50/80 border-b border-blue-100" 
-                    : "bg-purple-50/80 border-b border-purple-100"
-                  : "bg-gray-50/80"
-              }`}>
-                <CardTitle className={`flex items-center gap-3 text-xl font-bold ${
-                  userInfo.language === "korean-english" 
-                    ? currentLanguageMode === "korean" 
-                      ? "text-blue-800" 
-                      : "text-purple-800"
-                    : "text-gray-800"
-                }`}>
-                  <Mic className={`w-6 h-6 ${
-                    userInfo.language === "korean-english" 
-                      ? currentLanguageMode === "korean" 
-                        ? "text-blue-600" 
-                        : "text-purple-600"
-                      : "text-red-600"
-                  }`} />
-                  녹음 컨트롤{userInfo.language === "korean-english" ? ` - ${currentLanguageMode === "korean" ? "한국어" : "English"}` : ""}
+              <CardHeader className="bg-gray-50/80">
+                <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
+                  <Mic className="w-6 h-6 text-red-600" />
+                  녹음 컨트롤
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4">
@@ -5986,16 +5340,7 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
                     console.log("📌 녹음 키 생성:", recordingKey, "언어:", userInfo.language)
                     setRecordings((prev) => ({ ...prev, [recordingKey]: blob }))
                   }}
-                  existingRecording={
-                    userInfo.language === "korean-english" 
-                      ? recordings[getRecordingKey(currentScript, currentLanguageMode)]
-                      : recordings[getRecordingKey(currentScript, userInfo.language as "japanese" | "chinese")]
-                  }
-                  hasExistingRecording={
-                    userInfo.language === "korean-english" 
-                      ? !!recordings[getRecordingKey(currentScript, currentLanguageMode)]
-                      : !!recordings[getRecordingKey(currentScript, userInfo.language as "japanese" | "chinese")]
-                  }
+                  existingRecording={recordings[getRecordingKey(currentScript, currentLanguageMode)]}
                 />
               </CardContent>
             </Card>
@@ -6005,52 +5350,39 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
               <CardHeader className="bg-gray-50/80">
                 <CardTitle className="flex items-center gap-3 text-xl font-bold text-gray-800">
                   <ClipboardCheck className="w-6 h-6 text-green-600" />
-                  녹음 현황
+                  진행 상태
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4">
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {availableScripts.map((scriptNum, index) => {
-                    const isKoreanEnglish = userInfo.language === "korean-english"
-                    const koreanCompleted = isKoreanEnglish ? recordings[getRecordingKey(scriptNum, "korean")] : false
-                    const englishCompleted = isKoreanEnglish ? recordings[getRecordingKey(scriptNum, "english")] : false
-                    const mainCompleted = !isKoreanEnglish ? recordings[getRecordingKey(scriptNum, userInfo.language as "japanese" | "chinese")] : false
-                    const allCompleted = isKoreanEnglish ? (koreanCompleted && englishCompleted) : mainCompleted
-                    const partialCompleted = isKoreanEnglish ? (koreanCompleted || englishCompleted) : false
+                    const isCompleted =
+                      userInfo.language === "korean-english"
+                        ? recordings[getRecordingKey(scriptNum, "korean")] &&
+                          recordings[getRecordingKey(scriptNum, "english")]
+                        : recordings[getRecordingKey(scriptNum, userInfo.language as "japanese" | "chinese")]
 
                     return (
                       <div key={scriptNum} className="flex items-center gap-3">
                         <div
-                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold relative ${
+                          className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
                             scriptNum === currentScript
-                              ? "bg-blue-600 text-white ring-2 ring-blue-200"
-                              : allCompleted
+                              ? "bg-blue-600 text-white"
+                              : isCompleted
                                 ? "bg-green-500 text-white"
-                                : partialCompleted
-                                  ? "bg-yellow-500 text-white"
-                                  : "bg-gray-200 text-gray-600"
+                                : "bg-gray-200 text-gray-600"
                           }`}
                         >
-                          {allCompleted ? "✓" : partialCompleted ? "½" : index + 1}
-                          
-                          {/* 한/영 녹음 상태 표시 */}
-                          {isKoreanEnglish && (
-                            <div className="absolute -bottom-1 -right-1 flex gap-0.5">
-                              {koreanCompleted && <div className="w-2 h-2 bg-green-400 rounded-full border border-white"></div>}
-                              {englishCompleted && <div className="w-2 h-2 bg-blue-400 rounded-full border border-white"></div>}
-                            </div>
-                          )}
+                          {index + 1}
                         </div>
-                        <div className="flex-1">
-                          <span
-                            className={`text-sm ${
-                              scriptNum === currentScript ? "font-bold text-blue-600" : "text-gray-600"
-                            }`}
-                          >
-                            문안 {scriptNum}번
-                          </span>
-                        </div>
-                        {allCompleted && <span className="text-green-500 text-sm">✓</span>}
+                        <span
+                          className={`text-sm ${
+                            scriptNum === currentScript ? "font-bold text-blue-600" : "text-gray-600"
+                          }`}
+                        >
+                          문안 {scriptNum}번
+                        </span>
+                        {isCompleted && <span className="text-green-500 text-xs">✓</span>}
                       </div>
                     )
                   })}
@@ -6157,6 +5489,35 @@ function AdminMode({
 
   return (
     <div className="min-h-screen">
+      {/* 사용자 정보 - 상단 우측 */}
+      {authenticatedUser && (
+        <div
+          style={{ position: "fixed", top: 20, right: 32, zIndex: 50, opacity: 0.5 }}
+          className="flex items-center gap-3 bg-white/80 shadow px-3 py-2 rounded-full border border-gray-200 backdrop-blur-sm"
+        >
+          <img
+            src={authenticatedUser.picture || "/placeholder.svg?height=32&width=32&text=User"}
+            alt={authenticatedUser.name}
+            className="w-8 h-8 rounded-full object-cover border border-gray-300"
+          />
+          <div className="flex flex-col text-right">
+            <div className="flex items-center gap-2 justify-end">
+              <span className="text-xs font-semibold text-gray-800 leading-tight">{authenticatedUser.name}</span>
+              {getUserMainRole() && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  getUserMainRole() === "관리자" 
+                    ? "bg-orange-100 text-orange-700" 
+                    : "bg-purple-100 text-purple-700"
+                }`}>
+                  {getUserMainRole()}
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-gray-500 leading-tight">{authenticatedUser.email}</span>
+          </div>
+        </div>
+      )}
+
       {/* 사이드바 네비게이션 */}
       <div className="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col">
         {/* JVOICE 브랜드명 */}
@@ -6427,6 +5788,27 @@ function EvaluationMode({
           </button>
           <h1 className="text-gray-900 font-bold text-lg">JVOICE</h1>
         </div>
+        {authenticatedUser && (
+          <div className="flex items-center gap-2">
+            <img
+              src={authenticatedUser.picture || "/placeholder.svg?height=32&width=32&text=User"}
+              alt={authenticatedUser.name}
+              className="w-8 h-8 rounded-full object-cover border border-gray-300"
+            />
+            <div className="hidden sm:flex flex-col text-right">
+              <span className="text-xs font-semibold text-gray-800 leading-tight">{authenticatedUser.name}</span>
+              {getUserMainRole() && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  getUserMainRole() === "관리자" 
+                    ? "bg-orange-100 text-orange-700" 
+                    : "bg-purple-100 text-purple-700"
+                }`}>
+                  {getUserMainRole()}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 데스크톱 사용자 정보 - 상단 우측 (evaluate 모드에서는 숨김) */}

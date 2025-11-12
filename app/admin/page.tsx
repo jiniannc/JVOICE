@@ -1,11 +1,12 @@
 "use client"
 
-import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect, useMemo, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { PDFUploadManager } from "@/components/pdf-upload-manager"
 import { ScheduleSyncAdmin } from "@/components/schedule-sync-admin"
@@ -15,6 +16,9 @@ import { AdminRequestManagerModal } from "@/components/admin-request-manager-mod
 import { AdminEducationJournalModal } from "@/components/admin-education-journal-modal"
 import { InstructorStatsModal } from "@/components/instructor-stats-modal"
 import { RecordingManagementModal } from "@/components/recording-management-modal"
+import { MonthlyStatsModal } from "@/components/monthly-stats-modal"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { EmployeesManagement } from "@/components/employees-management"
 import {
   CheckCircle,
   Download,
@@ -37,6 +41,14 @@ import {
   Users,
   RotateCcw,
   Activity,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  BarChart3,
+  ChevronDown,
+  Settings,
+  Database,
+  TrendingUp,
 } from "lucide-react"
 import { getGradeInfo } from "@/lib/evaluation-criteria";
 
@@ -145,6 +157,12 @@ export default function AdminDashboard() {
   // 검색 기능 제거
   const [searchTerm, setSearchTerm] = useState("")
   
+  // 정렬 상태
+  type SortField = "name" | "employeeId" | "language" | "category" | "submittedAt" | "status" | "grade"
+  type SortOrder = "asc" | "desc" | null
+  const [sortField, setSortField] = useState<SortField | null>(null)
+  const [sortOrder, setSortOrder] = useState<SortOrder>(null)
+  
   // 시간 제한 토글 상태
   const [timeRestrictionsDisabled, setTimeRestrictionsDisabled] = useState(false)
   const [timeRestrictionsLoading, setTimeRestrictionsLoading] = useState(false)
@@ -152,6 +170,7 @@ export default function AdminDashboard() {
   const [showEducationJournalManager, setShowEducationJournalManager] = useState(false)
   const [showInstructorStats, setShowInstructorStats] = useState(false)
   const [showRecordingManager, setShowRecordingManager] = useState(false)
+  const [showMonthlyStats, setShowMonthlyStats] = useState(false)
   const [searchMode, setSearchMode] = useState<"all" | "monthly">("monthly")
   const [languageFilter, setLanguageFilter] = useState<string>("all")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
@@ -181,12 +200,34 @@ export default function AdminDashboard() {
   const [deviceLabel, setDeviceLabel] = useState("")
   const [currentIp, setCurrentIp] = useState<string>("")
 
+  // 시스템 설정 탭 스크롤을 위한 ref
+  const pdfSectionRef = useRef<HTMLDivElement>(null)
+  const scheduleSectionRef = useRef<HTMLDivElement>(null)
+  const deviceSectionRef = useRef<HTMLDivElement>(null)
+
+  // 시스템 설정 통계 상태
+  const [pdfCount, setPdfCount] = useState<number>(0)
+  const [scheduleCount, setScheduleCount] = useState<number>(0)
+
+  // 활성 탭 관리
+  const [activeTab, setActiveTab] = useState<string>("dashboard")
+
   useEffect(() => {
     loadData(1, itemsPerPage, "replace");
     setLastUpdate(new Date().toLocaleTimeString());
     loadLoginLogs(); // 로그인 기록 자동 로드 추가
     // 자동 새로고침 제거, 수동 업데이트만 허용
   }, []);
+
+  // 시스템 설정 탭 활성화 시 통계 로드
+  useEffect(() => {
+    if (activeTab === "system") {
+      loadPdfCount()
+      loadScheduleCount()
+      loadAllowedDevices()
+      loadCurrentIp()
+    }
+  }, [activeTab]);
 
   // 월 변경 시점에 해당 월 데이터만 새로 로드 (선택 시 다운로드)
   useEffect(() => {
@@ -467,10 +508,28 @@ export default function AdminDashboard() {
     }
   };
 
+  // 정렬 함수
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // 같은 필드를 클릭하면 순서 변경: null -> asc -> desc -> null
+      if (sortOrder === null) {
+        setSortOrder("asc")
+      } else if (sortOrder === "asc") {
+        setSortOrder("desc")
+      } else {
+        setSortOrder(null)
+        setSortField(null)
+      }
+    } else {
+      // 다른 필드를 클릭하면 오름차순으로 시작
+      setSortField(field)
+      setSortOrder("asc")
+    }
+  }
+
   // 필터링 로직 수정
   const filteredSubmissions = useMemo(() => {
-    return submissions
-      .filter((sub) => {
+    let filtered = submissions.filter((sub) => {
         // submittedAt이 없는 경우 필터링에서 제외
         if (!sub.submittedAt) {
           console.warn('submittedAt이 없는 제출물 발견:', sub);
@@ -520,8 +579,76 @@ export default function AdminDashboard() {
 
         return true
       })
-      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()) // 최신순 정렬
-  }, [submissions, listMonth, searchTerm, searchMode, languageFilter, categoryFilter, statusFilter]);
+    
+    // 정렬 적용
+    if (sortField && sortOrder) {
+      filtered = filtered.sort((a, b) => {
+        let aValue: any
+        let bValue: any
+        
+        switch (sortField) {
+          case "name":
+            aValue = a.name
+            bValue = b.name
+            break
+          case "employeeId":
+            aValue = a.employeeId
+            bValue = b.employeeId
+            break
+          case "language":
+            aValue = a.language
+            bValue = b.language
+            break
+          case "category":
+            aValue = a.category
+            bValue = b.category
+            break
+          case "submittedAt":
+            aValue = new Date(a.submittedAt).getTime()
+            bValue = new Date(b.submittedAt).getTime()
+            break
+          case "status":
+            // 상태 우선순위: approved > submitted > re_evaluation > review_requested > pending
+            const statusOrder: Record<string, number> = {
+              approved: 5,
+              submitted: 4,
+              completed: 4,
+              re_evaluation: 3,
+              review_requested: 2,
+              pending: 1
+            }
+            aValue = a.approved ? statusOrder.approved : (statusOrder[a.status] || 0)
+            bValue = b.approved ? statusOrder.approved : (statusOrder[b.status] || 0)
+            break
+          case "grade":
+            // 등급 우선순위
+            const gradeOrder: Record<string, number> = {
+              'S등급': 4, 'S': 4,
+              'A등급': 3, 'A': 3,
+              'B등급': 2, 'B': 2,
+              'FAIL': 1, 'F': 1,
+              'N/A': 0
+            }
+            aValue = gradeOrder[a.grade || 'N/A'] || 0
+            bValue = gradeOrder[b.grade || 'N/A'] || 0
+            break
+          default:
+            return 0
+        }
+        
+        if (sortOrder === "asc") {
+          return aValue > bValue ? 1 : aValue < bValue ? -1 : 0
+        } else {
+          return aValue < bValue ? 1 : aValue > bValue ? -1 : 0
+        }
+      })
+    } else {
+      // 기본 정렬: 최신순
+      filtered = filtered.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
+    }
+    
+    return filtered
+  }, [submissions, listMonth, searchTerm, searchMode, languageFilter, categoryFilter, statusFilter, sortField, sortOrder]);
 
   // 페이지네이션된 데이터
   // 페이지네이션 제거: 필터 결과 전체 표시
@@ -556,9 +683,19 @@ export default function AdminDashboard() {
           sub.submittedAt.startsWith(selectedMonth)
       );
 
-      // 해당 월의 평가 완료된 데이터 (submitted, completed, approved 상태)
+      // 해당 월의 평가 완료된 데이터 (점수나 등급이 있는 모든 평가 포함)
       const monthEvaluationResults = monthSubmissions.filter(
-        (sub) => sub.status === 'submitted' || sub.status === 'completed' || sub.approved
+        (sub) => {
+          // 점수가 있거나 등급이 있으면 평가 완료로 간주
+          const hasValidScore = sub.totalScore !== undefined && sub.totalScore !== null && sub.totalScore > 0;
+          const hasValidGrade = sub.grade !== undefined && sub.grade !== null && sub.grade !== '' && sub.grade !== 'N/A';
+          const hasCategoryScores = sub.categoryScores && Object.keys(sub.categoryScores).length > 0;
+          
+          // status와 무관하게 점수/등급이 있으면 포함 (pending 제외)
+          const notPending = sub.status !== 'pending' && sub.status !== 'evaluating' && sub.status !== 'reviewing';
+          
+          return notPending && (hasValidScore || hasValidGrade || hasCategoryScores);
+        }
       );
 
       result.byLanguage[lang] = {
@@ -571,20 +708,62 @@ export default function AdminDashboard() {
       if (lang === "korean-english") {
         const gradeStats = { S등급: 0, A등급: 0, B등급: 0, FAIL: 0 };
         for (const evaluationResult of monthEvaluationResults) {
-          const grade = evaluationResult.grade;
-          if (grade === "S등급") gradeStats.S등급++;
-          else if (grade === "A등급") gradeStats.A등급++;
-          else if (grade === "B등급") gradeStats.B등급++;
-          else if (grade === "FAIL" || grade === "F") gradeStats.FAIL++;
+          let actualGrade = evaluationResult.grade;
+          
+          // grade가 N/A이거나 없으면 계산 시도
+          if (!actualGrade || actualGrade === "N/A") {
+            const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
+            const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
+            
+            if (hasScores && hasValidScore) {
+              const gradeInfo = getGradeInfo(
+                evaluationResult.totalScore,
+                evaluationResult.categoryScores,
+                lang,
+                evaluationResult.category || "신규"
+              );
+              actualGrade = gradeInfo.grade;
+              console.log(`🔍 [통계] 한/영 등급 계산 - ID: ${evaluationResult.id}, 총점: ${evaluationResult.totalScore}, 계산된 등급: ${actualGrade}`);
+            } else {
+              console.warn(`⚠️ [통계] 한/영 등급 계산 불가 - ID: ${evaluationResult.id}, hasScores: ${hasScores}, hasValidScore: ${hasValidScore}`);
+              continue; // 통계에서 제외
+            }
+          }
+          
+          if (actualGrade === "S등급" || actualGrade === "S") gradeStats.S등급++;
+          else if (actualGrade === "A등급" || actualGrade === "A") gradeStats.A등급++;
+          else if (actualGrade === "B등급" || actualGrade === "B") gradeStats.B등급++;
+          else if (actualGrade === "FAIL" || actualGrade === "F") gradeStats.FAIL++;
         }
         result.byGrade[lang] = gradeStats;
       } else if (lang === "japanese" || lang === "chinese") {
         const gradeStats = { A: 0, B: 0, F: 0 };
         for (const evaluationResult of monthEvaluationResults) {
-          const grade = evaluationResult.grade;
-          if (grade === "A") gradeStats.A++;
-          else if (grade === "B") gradeStats.B++;
-          else if (grade === "F" || grade === "FAIL") gradeStats.F++;
+          let actualGrade = evaluationResult.grade;
+          
+          // grade가 N/A이거나 없으면 계산 시도
+          if (!actualGrade || actualGrade === "N/A") {
+            const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
+            const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
+            
+            if (hasScores && hasValidScore) {
+              const gradeInfo = getGradeInfo(
+                evaluationResult.totalScore,
+                evaluationResult.categoryScores,
+                lang,
+                evaluationResult.category || "신규"
+              );
+              actualGrade = gradeInfo.grade;
+              console.log(`🔍 [통계] ${lang} 등급 계산 - ID: ${evaluationResult.id}, 총점: ${evaluationResult.totalScore}, 계산된 등급: ${actualGrade}`);
+            } else {
+              console.warn(`⚠️ [통계] ${lang} 등급 계산 불가 - ID: ${evaluationResult.id}, hasScores: ${hasScores}, hasValidScore: ${hasValidScore}`);
+              continue; // 통계에서 제외
+            }
+          }
+          
+          if (actualGrade === "A" || actualGrade === "A등급") gradeStats.A++;
+          else if (actualGrade === "B" || actualGrade === "B등급") gradeStats.B++;
+          else if (actualGrade === "F" || actualGrade === "FAIL") gradeStats.F++;
         }
         result.byGrade[lang] = gradeStats;
       }
@@ -727,7 +906,7 @@ export default function AdminDashboard() {
       return;
     }
     // 실제 항목명으로 헤더 구성
-    const cnLabels = ["성조", "억양", "PAUSE", "속도", "Tone", "Volume"];
+    const cnLabels = ["한어병음", "억양", "PAUSE", "속도", "Tone", "Volume"];
     const headers = [
       "번호", "사번", "이름", "구분", "언어",
       ...cnLabels,
@@ -737,7 +916,7 @@ export default function AdminDashboard() {
     let rowNumber = 1;
     for (const sub of monthlyData) {
       if (isFullyEvaluated(sub)) {
-        const keys = ["성조", "억양", "PAUSE", "속도", "Tone", "Volume"];
+        const keys = ["한어병음", "억양", "PAUSE", "속도", "Tone", "Volume"];
         const itemScores = keys.map(k => sub.categoryScores?.[k] ?? "");
         const total = keys.reduce((sum, k) => sum + (sub.categoryScores?.[k] ?? 0), 0);
         const result = sub.grade === "FAIL" || sub.grade === "F" ? "Fail" : "Pass";
@@ -805,7 +984,7 @@ export default function AdminDashboard() {
         const keys = ["발음", "억양", "Pause", "Speed", "Tone", "Volume"];
         return keys.map(k => categoryScores?.[k] ?? "");
       } else if (langType === 'chinese') {
-        const keys = ["성조", "억양", "PAUSE", "속도", "Tone", "Volume"];
+        const keys = ["한어병음", "억양", "PAUSE", "속도", "Tone", "Volume"];
         return keys.map(k => categoryScores?.[k] ?? "");
       } else {
         return Array(6).fill("");
@@ -1118,6 +1297,45 @@ export default function AdminDashboard() {
     }
   }
 
+  // PDF 문안 개수 불러오기
+  const loadPdfCount = async () => {
+    try {
+      const timestamp = new Date().getTime()
+      const res = await fetch(`/api/pdf-scripts?t=${timestamp}`, {
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setPdfCount(data.files?.length || 0)
+      }
+    } catch (e) {
+      console.error('PDF 개수 로딩 실패:', e)
+    }
+  }
+
+  // 스케줄 개수 불러오기
+  const loadScheduleCount = async () => {
+    try {
+      const res = await fetch('/api/schedules/sync-from-sheets')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) {
+          // 전체 스케줄 개수의 합계
+          const totalSchedules = (data.schedules || []).reduce((sum: number, status: any) => {
+            return sum + (status.scheduleCount || 0)
+          }, 0)
+          setScheduleCount(totalSchedules)
+        }
+      }
+    } catch (e) {
+      console.error('스케줄 개수 로딩 실패:', e)
+    }
+  }
+
   // 현재 접속 IP 확인
   const loadCurrentIp = async () => {
     try {
@@ -1207,278 +1425,259 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen p-3">
-      <div className="max-w-7xl mx-auto">
-        {/* v85 헤더 */}
-        <div className="flex items-center justify-between mb-4 mt-10">
-          <div className="flex items-center gap-4">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">관리자 대시보드</h1>
-              <p className="text-sm text-gray-600">마지막 업데이트: {lastUpdate} | 실시간 모니터링 중</p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            {/* 시간 제한 토글 버튼 */}
-            <Button
-              onClick={toggleTimeRestrictions}
-              disabled={timeRestrictionsLoading}
-              className={`${
-                timeRestrictionsDisabled 
-                  ? 'bg-red-600 hover:bg-red-700' 
-                  : 'bg-blue-600 hover:bg-blue-700'
-              } text-white font-semibold`}
-            >
-              {timeRestrictionsLoading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  설정 중...
-                </>
-              ) : (
-                <>
-                  <Clock className="w-4 h-4 mr-2" />
-                  시간 제한 {timeRestrictionsDisabled ? 'OFF' : 'ON'}
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* 관리자 도구 모음 */}
-        <div className="bg-gray-50 rounded-lg p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="max-w-7xl mx-auto mt-10">
+        {/* Tab 네비게이션 */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <div className="flex items-center justify-center gap-2 mb-6">
+            <TabsList className="grid grid-cols-3">
+              <TabsTrigger value="dashboard">평가 관리</TabsTrigger>
+              <TabsTrigger value="system">시스템 설정</TabsTrigger>
+              <TabsTrigger value="employees">User 정보 관리</TabsTrigger>
+            </TabsList>
             
-            {/* 시스템 관리 */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-gray-700 mb-2">시스템 관리</h3>
-              <div className="flex flex-col gap-2">
+            {/* 관리 도구 드롭다운 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button 
-                  onClick={async () => { 
-                    try {
-                      console.log("✅ Database 데이터 새로고침");
-                    } catch (error) {
-                      console.warn("⚠️ 데이터 새로고침 실패:", error);
-                    }
-                    await loadData(); 
-                    setLastUpdate(new Date().toLocaleTimeString()); 
-                  }} 
-                  variant="outline"
-                  size="sm"
-                  className="justify-start text-xs"
+                  variant="outline" 
+                  className="h-10 px-4 bg-gradient-to-r from-gray-50 to-gray-100 border-gray-200 hover:from-gray-100 hover:to-gray-200 transition-all"
                 >
-                  <RefreshCw className="w-3 h-3 mr-2" />
-                  즉시 새로고침
+                  <Settings className="w-4 h-4 mr-2 text-gray-600" />
+                  <span className="font-medium text-gray-700">관리 도구</span>
+                  <ChevronDown className="w-4 h-4 ml-2 text-gray-500" />
                 </Button>
-                <Button
-                  onClick={async () => {
-                    if (confirm('모든 사용자 정보를 구글 스프레드시트 정보로 동기화하시겠습니까?')) {
-                      try {
-                        const response = await fetch('/api/admin/sync-user-info', { method: 'POST' });
-                        const result = await response.json();
-                        if (result.success) {
-                          alert(`동기화 완료: ${result.stats.updatedCount}명 업데이트됨`);
-                          await loadData();
-                        } else {
-                          alert(`동기화 실패: ${result.error}`);
-                        }
-                      } catch (error) {
-                        alert('동기화 중 오류가 발생했습니다.');
-                      }
-                    }
-                  }}
-                  variant="outline"
-                  size="sm"
-                  className="justify-start text-xs"
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem
+                  onClick={toggleTimeRestrictions}
+                  disabled={timeRestrictionsLoading}
+                  className="cursor-pointer"
                 >
-                  <RotateCcw className="w-3 h-3 mr-2" />
-                  사용자 정보 동기화
-                </Button>
-              </div>
-            </div>
-
-            {/* 데이터 관리 */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-gray-700 mb-2">데이터 관리</h3>
-              <div className="flex flex-col gap-2">
-                <Button
+                  {timeRestrictionsLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      <span>설정 중...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="w-4 h-4 mr-2" />
+                      <span>시간 제한</span>
+                      <Badge 
+                        className={`ml-auto ${timeRestrictionsDisabled ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}
+                        variant="outline"
+                      >
+                        {timeRestrictionsDisabled ? 'OFF' : 'ON'}
+                      </Badge>
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
                   onClick={() => setShowRequestManager(true)}
-                  variant="outline"
-                  size="sm"
-                  className="justify-start text-xs"
+                  className="cursor-pointer"
                 >
-                  <Users className="w-3 h-3 mr-2" />
-                  신청 내역 관리
-                </Button>
-                <Button
+                  <Users className="w-4 h-4 mr-2" />
+                  <span>신청 내역 관리</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   onClick={() => setShowEducationJournalManager(true)}
-                  variant="outline"
-                  size="sm"
-                  className="justify-start text-xs"
+                  className="cursor-pointer"
                 >
-                  <FileSpreadsheet className="w-3 h-3 mr-2" />
-                  교육 기록 관리
-                </Button>
-                <Button
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  <span>교육 기록 관리</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   onClick={() => setShowRecordingManager(true)}
-                  variant="outline"
-                  size="sm"
-                  className="justify-start text-xs"
+                  className="cursor-pointer"
                 >
-                  <FileAudio className="w-3 h-3 mr-2" />
-                  녹음 파일 관리
-                </Button>
-              </div>
-            </div>
-
-            {/* 분석 및 외부 링크 */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-gray-700 mb-2">분석 및 외부 링크</h3>
-              <div className="flex flex-col gap-2">
-                <Button 
+                  <FileAudio className="w-4 h-4 mr-2" />
+                  <span>녹음 파일 관리</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
                   onClick={() => setShowInstructorStats(true)}
-                  variant="outline"
-                  size="sm"
-                  className="justify-start text-xs"
+                  className="cursor-pointer"
                 >
-                  <Activity className="w-3 h-3 mr-2" />
-                  교관 관리
-                </Button>
-                <Button 
+                  <Activity className="w-4 h-4 mr-2" />
+                  <span>교관 관리</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Tab 1: 평가 관리 */}
+          <TabsContent value="dashboard" className="space-y-6 mt-0">
+            {/* 월 선택 컨트롤 - 중앙 배치 */}
+            <div className="flex justify-center mb-4 mt-4">
+              <div className="flex items-center gap-6 px-8 py-4">
+                <Button
+                  variant="ghost"
+                  size="lg"
                   onClick={() => {
-                    const employeeSpreadsheetId = "1F1xWL9dv0vAFvMfZaf05nO_vZKpuz82WIJLLBHWgaes";
-                    const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${employeeSpreadsheetId}/edit`;
-                    window.open(spreadsheetUrl, '_blank');
+                    const sortedMonths = (loadedMonths.length ? loadedMonths : monthOptions.map(o => o.value)).sort().reverse()
+                    const currentIndex = sortedMonths.findIndex(m => m === selectedMonth)
+                    if (currentIndex < sortedMonths.length - 1) {
+                      const newMonth = sortedMonths[currentIndex + 1]
+                      setSelectedMonth(newMonth)
+                      setListMonth(newMonth)
+                    }
                   }}
-                  variant="outline"
-                  size="sm"
-                  className="justify-start text-xs"
+                  className="h-12 w-12 p-0 hover:bg-blue-50"
                 >
-                  <Globe className="w-3 h-3 mr-2" />
-                  사용자 계정 정보
+                  <ChevronLeft className="h-6 w-6 text-gray-700" />
                 </Button>
+                
+                <div className="text-center min-w-[200px]">
+                  <div className="text-3xl font-extrabold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                    {selectedMonth ? new Date(selectedMonth + '-01').toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' }) : '전체'}
+                  </div>
+                </div>
+                
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  onClick={() => {
+                    const sortedMonths = (loadedMonths.length ? loadedMonths : monthOptions.map(o => o.value)).sort().reverse()
+                    const currentIndex = sortedMonths.findIndex(m => m === selectedMonth)
+                    if (currentIndex > 0) {
+                      const newMonth = sortedMonths[currentIndex - 1]
+                      setSelectedMonth(newMonth)
+                      setListMonth(newMonth)
+                    }
+                  }}
+                  className="h-12 w-12 p-0 hover:bg-blue-50"
+                >
+                  <ChevronRight className="h-6 w-6 text-gray-700" />
+                </Button>
+                
+                <Select value={selectedMonth} onValueChange={(value) => {
+                  setSelectedMonth(value)
+                  setListMonth(value)
+                }}>
+                  <SelectTrigger className="w-[140px] h-10 ml-4 border-2 border-gray-300">
+                    <SelectValue placeholder="월 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(loadedMonths.length ? loadedMonths : monthOptions.map(o => o.value)).map((ym) => {
+                      const date = new Date(ym + '-01')
+                      const label = date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' })
+                      return (
+                        <SelectItem key={ym} value={ym}>{label}</SelectItem>
+                      )
+                    })}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-          </div>
-        </div>
 
-        
-
-        {/* v85 언어별 현황 카드 */}
+        {/* 언어별 현황 카드 */}
         <div className="grid md:grid-cols-3 gap-6 mb-6">
-          {["korean-english", "japanese", "chinese"].map((lang) => (
-            <Card key={lang} className="bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
-              <CardHeader className="pb-2 bg-gray-50/80 rounded-t-2xl">
-                <CardTitle className="text-lg flex items-center justify-between">
+          {["korean-english", "japanese", "chinese"].map((lang) => {
+            const gradientColors = lang === "korean-english" 
+              ? "from-blue-50 to-blue-100" 
+              : lang === "japanese" 
+              ? "from-purple-50 to-purple-100" 
+              : "from-red-50 to-red-100"
+            const textColor = lang === "korean-english" 
+              ? "text-blue-700" 
+              : lang === "japanese" 
+              ? "text-purple-700" 
+              : "text-red-700"
+            const numColor = lang === "korean-english" 
+              ? "text-blue-900" 
+              : lang === "japanese" 
+              ? "text-purple-900" 
+              : "text-red-900"
+            
+            const exportFunction = lang === "korean-english" 
+              ? exportKoreanEnglishSpreadsheet 
+              : lang === "japanese" 
+              ? exportJapaneseSpreadsheet 
+              : exportChineseSpreadsheet
+            
+            return (
+            <Card 
+              key={lang} 
+              className={`border-0 shadow-md hover:shadow-xl transition-all cursor-pointer transform hover:-translate-y-1 bg-gradient-to-br ${gradientColors}`}
+              onClick={() => setLanguageFilter(lang)}
+            >
+              <CardHeader className="pb-3">
+                <CardTitle className={`text-sm font-medium ${textColor} flex items-center justify-between`}>
                   <div className="flex items-center gap-2">
-                    {/* 국기 아이콘과 한글 언어명 표시 */}
                     {getLanguageFlag(lang)}
                     <span>{getLanguageDisplay(lang)}</span>
                   </div>
-                  <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                    <SelectTrigger className="w-32 h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {monthOptions.map((option, i) => (
-                        <SelectItem key={`stats-${lang}-${option.value}`} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      exportFunction()
+                    }}
+                    className="h-7 w-7 p-0 hover:bg-white/50"
+                    title="엑셀 다운로드"
+                  >
+                    <Download className="h-4 w-4" />
+                  </Button>
                 </CardTitle>
               </CardHeader>
-              <CardContent className="pt-4">
-                <div className="grid grid-cols-2 gap-3 text-sm mb-4">
-                  <div className="text-center p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                    <div className="font-bold text-lg text-blue-600">{monthlyStats.byLanguage[lang]?.total || 0}</div>
-                    <div className="text-xs text-gray-600">총 제출</div>
-                  </div>
-                  <div className="text-center p-3 bg-green-50 border border-green-100 rounded-lg">
-                    <div className="font-bold text-lg text-green-600">{monthlyStats.byLanguage[lang]?.completed || 0}</div>
-                    <div className="text-xs text-gray-600">평가완료</div>
-                  </div>
+              <CardContent>
+                <div className={`text-3xl font-bold ${numColor} mb-3`}>
+                  {monthlyStats.byLanguage[lang]?.total || 0}<span className="text-lg ml-1">건</span>
                 </div>
-
-                {/* v85 등급별 통계 - 언어에 따라 다르게 표시 */}
-                <div className="mt-4">
+                <p className="text-xs text-gray-600 mb-3">
+                  완료: {monthlyStats.byLanguage[lang]?.completed || 0}건
+                </p>
+                
+                {/* 등급별 통계 */}
+                <div className="grid grid-cols-4 gap-2 text-xs mt-3 pt-3 border-t border-gray-300">
                   {lang === "korean-english" ? (
-                    <div className="grid grid-cols-4 gap-2 text-xs">
-                      <div className="text-center p-2 bg-gray-50 border rounded-md">
+                    <>
+                      <div className="text-center p-2 bg-white/50 rounded-md">
                         <div className="font-bold text-green-700">{monthlyStats.byGrade[lang]?.["S등급"] || 0}</div>
                         <div className="text-green-600">S</div>
                       </div>
-                      <div className="text-center p-2 bg-gray-50 border rounded-md">
+                      <div className="text-center p-2 bg-white/50 rounded-md">
                         <div className="font-bold text-blue-700">{monthlyStats.byGrade[lang]?.["A등급"] || 0}</div>
                         <div className="text-blue-600">A</div>
                       </div>
-                      <div className="text-center p-2 bg-gray-50 border rounded-md">
+                      <div className="text-center p-2 bg-white/50 rounded-md">
                         <div className="font-bold text-yellow-700">{monthlyStats.byGrade[lang]?.["B등급"] || 0}</div>
                         <div className="text-yellow-600">B</div>
                       </div>
-                      <div className="text-center p-2 bg-gray-50 border rounded-md">
+                      <div className="text-center p-2 bg-white/50 rounded-md">
                         <div className="font-bold text-red-700">{monthlyStats.byGrade[lang]?.["FAIL"] || 0}</div>
                         <div className="text-red-600">F</div>
                       </div>
-                    </div>
+                    </>
                   ) : (
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="text-center p-2 bg-gray-50 border rounded-md">
+                    <>
+                      <div className="text-center p-2 bg-white/50 rounded-md">
                         <div className="font-bold text-green-700">{monthlyStats.byGrade[lang]?.["A"] || 0}</div>
                         <div className="text-green-600">A</div>
                       </div>
-                      <div className="text-center p-2 bg-gray-50 border rounded-md">
+                      <div className="text-center p-2 bg-white/50 rounded-md">
                         <div className="font-bold text-blue-700">{monthlyStats.byGrade[lang]?.["B"] || 0}</div>
                         <div className="text-blue-600">B</div>
                       </div>
-                      <div className="text-center p-2 bg-gray-50 border rounded-md">
+                      <div className="text-center p-2 bg-white/50 rounded-md">
                         <div className="font-bold text-red-700">{monthlyStats.byGrade[lang]?.["F"] || 0}</div>
                         <div className="text-red-600">F</div>
                       </div>
-                    </div>
+                      <div className="text-center p-2 bg-white/50 rounded-md invisible">
+                        <div className="font-bold">-</div>
+                        <div>-</div>
+                      </div>
+                    </>
                   )}
                 </div>
               </CardContent>
             </Card>
-          ))}
+            )
+          })}
         </div>
 
-        {/* v85 월별 데이터 추출 */}
-        <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
-          <CardHeader className="pb-2 bg-gray-50/80 rounded-t-2xl flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-purple-600" />
-              <span className="text-lg font-bold text-gray-900">월별 데이터 추출</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger className="w-32 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {monthOptions.map((option, i) => (
-                    <SelectItem key={`export-${option.value}`} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-4 pb-6">
-            <div className="flex flex-wrap gap-3 items-center justify-start">
-              <Button onClick={exportKoreanEnglishSpreadsheet} className="bg-blue-700 hover:bg-blue-800 text-white flex items-center gap-2 px-5 py-2 rounded-lg shadow-sm">
-                <FileSpreadsheet className="w-4 h-4" /> 한/영 다운로드
-              </Button>
-              <Button onClick={exportJapaneseSpreadsheet} className="bg-red-600 hover:bg-red-700 text-white flex items-center gap-2 px-5 py-2 rounded-lg shadow-sm">
-                <FileSpreadsheet className="w-4 h-4" /> 일본어 다운로드
-              </Button>
-              <Button onClick={exportChineseSpreadsheet} className="bg-yellow-500 hover:bg-yellow-600 text-white flex items-center gap-2 px-5 py-2 rounded-lg shadow-sm">
-                <FileSpreadsheet className="w-4 h-4" /> 중국어 다운로드
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* v85 제출 인원 리스트 */}
+        {/* 제출 인원 리스트 */}
         <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
           <CardHeader className="pb-4 bg-gray-50/80 rounded-t-2xl">
             <div className="flex items-center justify-between">
@@ -1487,99 +1686,143 @@ export default function AdminDashboard() {
                   <Users className="w-6 h-6 text-purple-600" />
                   <span className="text-xl font-bold text-gray-800">제출 인원 현황</span>
                 </CardTitle>
-                <Select value={listMonth} onValueChange={setListMonth}>
-                  <SelectTrigger className="w-40 h-8">
-                    <SelectValue placeholder="월 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(loadedMonths.length ? loadedMonths : monthOptions.map(o=>o.value)).map((ym) => {
-                      const date = new Date(ym + '-01')
-                      const label = date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' })
-                      return (
-                        <SelectItem key={`list-${ym}`} value={ym}>{label}</SelectItem>
-                      )
-                    })}
-                  </SelectContent>
-                </Select>
+                <Badge className="bg-blue-100 text-blue-700 text-base font-bold px-3 py-1 border border-blue-200">
+                  {filteredSubmissions.length}명
+                </Badge>
               </div>
-              <Badge variant="outline" className="text-sm">
-                <SortDesc className="w-3 h-3 mr-1" />
-                최신순 정렬
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={async () => { 
+                    try {
+                      console.log("✅ Database 데이터 새로고침");
+                    } catch (error) {
+                      console.warn("⚠️ 데이터 새로고침 실패:", error);
+                    }
+                    await loadData(); 
+                    setLastUpdate(new Date().toLocaleTimeString()); 
+                  }}
+                  title="즉시 새로고침"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={() => setShowMonthlyStats(true)}
+                  title="월별 통계 보기"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
           </CardHeader>
-          <CardContent className="pt-0">
-            {/* 선택 버튼과 필터를 같은 라인에 배치 */}
-            <div className="flex justify-between items-center mb-3">
-              {/* 왼쪽: 선택 버튼들 */}
-              <div className="flex gap-3">
-                <Button 
-                  size="sm" 
-                  disabled={selectedIds.size === 0 || !filteredSubmissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
-                  onClick={approveMany}
-                >
-                  선택 항목 승인
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  disabled={selectedIds.size === 0 || !filteredSubmissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
-                  onClick={reevaluateMany}
-                  className="text-orange-600 border-orange-300 hover:bg-orange-50"
-                >
-                  <RotateCcw className="w-3 h-3 mr-1" />
-                  선택 항목 재평가
-                </Button>
-                <Button size="sm" variant="destructive" disabled={selectedIds.size===0} onClick={deleteMany}>선택 항목 삭제</Button>
+          <CardContent className="pt-4">
+            {/* 검색창과 필터 영역 - 통합 디자인 */}
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100/50 p-4 rounded-xl border border-gray-200 mb-4 space-y-3">
+              {/* 검색창 */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500" />
+                <Input
+                  placeholder="이름 또는 사번으로 검색..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10 h-10 bg-white border-gray-300 shadow-sm"
+                />
               </div>
               
-              {/* 오른쪽: 필터 드롭다운들 */}
-              <div className="flex gap-2 items-center">
-                <Select value={languageFilter} onValueChange={setLanguageFilter}>
-                  <SelectTrigger className="w-28 h-8">
-                    <SelectValue placeholder="언어" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">전체</SelectItem>
-                    <SelectItem value="korean-english">한/영</SelectItem>
-                    <SelectItem value="japanese">일본어</SelectItem>
-                    <SelectItem value="chinese">중국어</SelectItem>
-                  </SelectContent>
-                </Select>
+              {/* 버튼과 필터 */}
+              <div className="flex justify-between items-center">
+                {/* 왼쪽: 선택 버튼들 */}
+                <div className="flex gap-2">
+                  <Button 
+                    size="sm" 
+                    disabled={selectedIds.size === 0 || !filteredSubmissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
+                    onClick={reevaluateMany}
+                    className="bg-orange-600 hover:bg-orange-700 text-white border-0 shadow-sm h-9"
+                  >
+                    <RotateCcw className="w-4 h-4 mr-1.5" />
+                    재평가
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    disabled={selectedIds.size === 0 || !filteredSubmissions.filter(s => selectedIds.has(s.id)).some(s => s.status === 'submitted' && !s.approved)} 
+                    onClick={approveMany}
+                    className="bg-green-600 hover:bg-green-700 text-white border-0 shadow-sm h-9"
+                  >
+                    <CheckCircle className="w-4 h-4 mr-1.5" />
+                    승인
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="destructive" 
+                    disabled={selectedIds.size===0} 
+                    onClick={deleteMany}
+                    className="shadow-sm h-9"
+                  >
+                    <Trash2 className="w-4 h-4 mr-1.5" />
+                    삭제
+                  </Button>
+                </div>
+                
+                {/* 오른쪽: 필터 드롭다운들 */}
+                <div className="flex gap-2 items-center">
+                  <Select value={languageFilter} onValueChange={setLanguageFilter}>
+                    <SelectTrigger className="w-28 h-9 bg-white shadow-sm border-gray-300">
+                      <SelectValue placeholder="언어" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">언어</SelectItem>
+                      <SelectItem value="korean-english">한/영</SelectItem>
+                      <SelectItem value="japanese">일본어</SelectItem>
+                      <SelectItem value="chinese">중국어</SelectItem>
+                    </SelectContent>
+                  </Select>
 
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-24 h-8">
-                    <SelectValue placeholder="구분" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">전체</SelectItem>
-                    <SelectItem value="신규">신규</SelectItem>
-                    <SelectItem value="재자격">재자격</SelectItem>
-                    <SelectItem value="상위">상위</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="w-24 h-9 bg-white shadow-sm border-gray-300">
+                      <SelectValue placeholder="구분" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">구분</SelectItem>
+                      <SelectItem value="신규">신규</SelectItem>
+                      <SelectItem value="재자격">재자격</SelectItem>
+                      <SelectItem value="상위">상위</SelectItem>
+                    </SelectContent>
+                  </Select>
 
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-28 h-8">
-                    <SelectValue placeholder="상태" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">전체</SelectItem>
-                    <SelectItem value="completed">평가완료</SelectItem>
-                    <SelectItem value="pending">평가대기</SelectItem>
-                    <SelectItem value="re_evaluation">재평가 대기</SelectItem>
-                    <SelectItem value="approved">승인 완료</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-28 h-9 bg-white shadow-sm border-gray-300">
+                      <SelectValue placeholder="상태" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">상태</SelectItem>
+                      <SelectItem value="completed">평가완료</SelectItem>
+                      <SelectItem value="pending">평가대기</SelectItem>
+                      <SelectItem value="re_evaluation">재평가 대기</SelectItem>
+                      <SelectItem value="approved">승인 완료</SelectItem>
+                    </SelectContent>
+                  </Select>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { setLanguageFilter("all"); setCategoryFilter("all"); setStatusFilter("all"); }}
-                  className="h-8"
-                >
-                  <Filter className="w-3 h-3 mr-1" /> 초기화
-                </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { 
+                      setLanguageFilter("all"); 
+                      setCategoryFilter("all"); 
+                      setStatusFilter("all"); 
+                      setSearchTerm("");
+                      setSortField(null);
+                      setSortOrder(null);
+                    }}
+                    className="h-9 bg-white shadow-sm border-gray-300"
+                  >
+                    <Filter className="w-3.5 h-3.5 mr-1.5" /> 초기화
+                  </Button>
+                </div>
               </div>
             </div>
             {isLoading ? (
@@ -1598,108 +1841,181 @@ export default function AdminDashboard() {
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <TableRow className="h-10">
-                      <TableHead className="w-6 text-center">
+                    <TableRow className="h-8">
+                      <TableHead className="w-6 text-center py-1">
                         <input type="checkbox" onChange={e=>{
                           if(e.target.checked){setSelectedIds(new Set(filteredSubmissions.map(s=>s.id)))}
                           else setSelectedIds(new Set());
                         }}
                         checked={selectedIds.size===filteredSubmissions.length && filteredSubmissions.length>0}/>
                       </TableHead>
-                      <TableHead className="w-20 text-center">이름</TableHead>
-                      <TableHead className="w-24 text-center">사번</TableHead>
-                      <TableHead className="w-16 text-center">언어</TableHead>
-                      <TableHead className="w-16 text-center">구분</TableHead>
-                      <TableHead className="w-32 text-center">제출시간</TableHead>
-                      <TableHead className="w-24 text-center">상태</TableHead>
-                      <TableHead className="w-24 text-center">평가결과</TableHead>
-                      <TableHead className="w-24 text-center">결과 확인</TableHead>
-                      <TableHead className="w-16 text-center">삭제</TableHead>
+                      <TableHead className="w-20 text-center py-1">
+                        <button onClick={() => handleSort("name")} className="flex items-center justify-center gap-1 w-full hover:text-blue-600">
+                          이름
+                          {sortField === "name" ? (
+                            sortOrder === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                          ) : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-24 text-center py-1">
+                        <button onClick={() => handleSort("employeeId")} className="flex items-center justify-center gap-1 w-full hover:text-blue-600">
+                          사번
+                          {sortField === "employeeId" ? (
+                            sortOrder === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                          ) : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-16 text-center py-1">
+                        <button onClick={() => handleSort("language")} className="flex items-center justify-center gap-1 w-full hover:text-blue-600">
+                          언어
+                          {sortField === "language" ? (
+                            sortOrder === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                          ) : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-16 text-center py-1">
+                        <button onClick={() => handleSort("category")} className="flex items-center justify-center gap-1 w-full hover:text-blue-600">
+                          구분
+                          {sortField === "category" ? (
+                            sortOrder === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                          ) : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-32 text-center py-1">
+                        <button onClick={() => handleSort("submittedAt")} className="flex items-center justify-center gap-1 w-full hover:text-blue-600">
+                          제출시간
+                          {sortField === "submittedAt" ? (
+                            sortOrder === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                          ) : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-24 text-center py-1">
+                        <button onClick={() => handleSort("status")} className="flex items-center justify-center gap-1 w-full hover:text-blue-600">
+                          상태
+                          {sortField === "status" ? (
+                            sortOrder === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                          ) : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-24 text-center py-1">
+                        <button onClick={() => handleSort("grade")} className="flex items-center justify-center gap-1 w-full hover:text-blue-600">
+                          평가결과
+                          {sortField === "grade" ? (
+                            sortOrder === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                          ) : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-24 text-center py-1">결과 확인</TableHead>
+                      <TableHead className="w-16 text-center py-1">삭제</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {paginatedSubmissions.map((sub, index) => (
-                      <TableRow key={sub.id || sub.dropboxPath || index} className="h-8">
-                        <TableCell className="text-center">
+                      <TableRow key={sub.id || sub.dropboxPath || index} style={{height: '2.75rem', maxHeight: '2.75rem'}}>
+                        <TableCell className="text-center py-1.5 align-middle">
                           <input type="checkbox" checked={selectedIds.has(sub.id)} onChange={e=>{
                             const copy=new Set(selectedIds);
                             e.target.checked?copy.add(sub.id):copy.delete(sub.id);
                             setSelectedIds(copy);
                           }}/>
                         </TableCell>
-                        <TableCell className="font-medium py-1 text-center text-sm">{sub.name}</TableCell>
-                        <TableCell className="py-1 text-center text-sm">{sub.employeeId}</TableCell>
-                        <TableCell className="py-1 text-center">
+                        <TableCell className="font-medium py-1.5 text-center text-sm align-middle">{sub.name}</TableCell>
+                        <TableCell className="py-1.5 text-center text-sm align-middle">{sub.employeeId}</TableCell>
+                        <TableCell className="py-1.5 text-center align-middle">
                           <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${getLanguageColor(sub.language)}`}>
                             {getLanguageDisplay(sub.language)}
                           </Badge>
                         </TableCell>
-                        <TableCell className="py-1 text-center text-sm">{sub.category}</TableCell>
-                        <TableCell className="text-[11px] py-1 text-center">{formatDateTime(sub.submittedAt)}</TableCell>
-                        <TableCell className="py-1 text-center">
-                          {sub.approved ? (
-                            <Badge className="bg-green-100 text-green-700 border-green-300">승인 완료</Badge>
-                          ) : (
-                            <div className="flex flex-col gap-1 items-center">
-                              <Badge variant={(sub.status === "submitted" || sub.status === "completed") ? "default" : (sub.status === "re_evaluation" ? "destructive" : "secondary")}>
-                                {(sub.status === "submitted" || sub.status === "completed") ? "평가 완료" : 
-                                 (sub.status === "review_requested" ? "검토 요청" : 
-                                  (sub.status === "re_evaluation" ? "재평가 대기" : "평가 대기"))}
-                              </Badge>
-                              {sub.status === "review_requested" && sub.reviewRequestedBy && (
-                                <span className="text-xs text-orange-600">검토 요청: {sub.reviewRequestedBy}</span>
-                              )}
-                            </div>
-                          )}
+                        <TableCell className="py-1.5 text-center text-sm align-middle">{sub.category}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-center align-middle">{formatDateTime(sub.submittedAt)}</TableCell>
+                        <TableCell className="py-0 text-center align-middle">
+                          <div className="flex items-center justify-center h-9 overflow-hidden">
+                            {sub.approved ? (
+                              <Badge className="bg-green-100 text-green-700 border-green-300 text-xs py-0">승인 완료</Badge>
+                            ) : (
+                              <div className="flex flex-col gap-0.5 items-center">
+                                <Badge variant={(sub.status === "submitted" || sub.status === "completed") ? "default" : (sub.status === "re_evaluation" ? "destructive" : "secondary")} className="text-xs py-0">
+                                  {(sub.status === "submitted" || sub.status === "completed") ? "평가 완료" : 
+                                   (sub.status === "review_requested" ? "검토 요청" : 
+                                    (sub.status === "re_evaluation" ? "재평가 대기" : "평가 대기"))}
+                                </Badge>
+                                {sub.status === "review_requested" && sub.reviewRequestedBy && (
+                                  <span className="text-[10px] text-orange-600 truncate max-w-full">검토: {sub.reviewRequestedBy}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </TableCell>
-                        <TableCell className="text-center">
-                          {(sub.status === 'submitted' || sub.status === 'completed' || sub.approved) ? (
-                            (<>{(() => {
-                              const gradeInfo = getGradeInfo(
-                                typeof sub.totalScore === 'number' ? sub.totalScore : 0,
-                                sub.categoryScores || {},
-                                sub.language,
-                                sub.category
-                              );
-                              const isFail = gradeInfo.grade === 'FAIL' || gradeInfo.grade === 'F';
-                              return (
-                                <div className="flex flex-col items-center gap-1">
-                                  <span className={isFail ? "font-bold text-red-600" : "font-bold text-blue-600"}>
-                                    {gradeInfo.grade === 'F' ? 'FAIL' : (sub.language === 'korean-english' ? String(gradeInfo.grade).replace(/등급$/, '') : gradeInfo.grade)}
-                                  </span>
-                                  {sub.language === 'korean-english' ? (
-                                    <span className="text-xs text-gray-500">
-                                      ({typeof sub.koreanTotalScore === 'number' ? sub.koreanTotalScore.toFixed(1) : '0.0'} / {typeof sub.englishTotalScore === 'number' ? sub.englishTotalScore.toFixed(1) : '0.0'})
+                        <TableCell className="text-center py-0 align-middle">
+                          <div className="flex items-center justify-center h-9 overflow-hidden">
+                            {(sub.status === 'submitted' || sub.status === 'completed' || sub.approved) ? (
+                              (<>{(() => {
+                                const gradeInfo = getGradeInfo(
+                                  typeof sub.totalScore === 'number' ? sub.totalScore : 0,
+                                  sub.categoryScores || {},
+                                  sub.language,
+                                  sub.category
+                                );
+                                const isFail = gradeInfo.grade === 'FAIL' || gradeInfo.grade === 'F';
+                                const isS = gradeInfo.grade === 'S등급' || gradeInfo.grade === 'S';
+                                const isA = gradeInfo.grade === 'A등급' || gradeInfo.grade === 'A';
+                                const isB = gradeInfo.grade === 'B등급' || gradeInfo.grade === 'B';
+                                
+                                // 색상 결정: S-보라, A-주황, B-블루, FAIL-레드
+                                let gradeColor = "text-gray-600";
+                                let glowClass = "";
+                                
+                                if (isFail) {
+                                  gradeColor = "text-red-600";
+                                } else if (isS) {
+                                  gradeColor = "text-purple-600";
+                                  glowClass = "animate-pulse drop-shadow-[0_0_8px_rgba(147,51,234,0.6)]";
+                                } else if (isA) {
+                                  gradeColor = "text-orange-600";
+                                  glowClass = "animate-pulse drop-shadow-[0_0_8px_rgba(249,115,22,0.6)]";
+                                } else if (isB) {
+                                  gradeColor = "text-blue-600";
+                                }
+                                
+                                return (
+                                  <div className="flex flex-col items-center">
+                                    <span className={`font-bold ${gradeColor} ${glowClass}`}>
+                                      {gradeInfo.grade === 'F' ? 'FAIL' : (sub.language === 'korean-english' ? String(gradeInfo.grade).replace(/등급$/, '') : gradeInfo.grade)}
                                     </span>
-                                  ) : (
-                                    <span className="text-xs text-gray-500">
-                                      ({typeof sub.totalScore === 'number' ? sub.totalScore.toFixed(1) : '0.0'})
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })()}</>)
-                          ) : (
-                              <span className="text-xs text-gray-500">대기</span>
-                          )}
+                                    {sub.language === 'korean-english' ? (
+                                      <span className="text-[10px] text-gray-500">
+                                        ({typeof sub.koreanTotalScore === 'number' ? sub.koreanTotalScore.toFixed(1) : '0.0'} / {typeof sub.englishTotalScore === 'number' ? sub.englishTotalScore.toFixed(1) : '0.0'})
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-gray-500">
+                                        ({typeof sub.totalScore === 'number' ? sub.totalScore.toFixed(1) : '0.0'})
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}</>)
+                            ) : (
+                                <span className="text-xs text-gray-500">대기</span>
+                            )}
+                          </div>
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className="text-center py-1.5 align-middle">
                           {(sub.status === 'submitted' || sub.status === 'completed' || sub.approved) ? (
-                            <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => viewEvaluationResult(sub.id)}>
-                              <Eye className="w-4 h-4 mr-1" />
-                              결과 확인
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => viewEvaluationResult(sub.id)}>
+                              <Eye className="w-3 h-3 mr-1" />
+                              확인
                             </Button>
                           ) : (
                             <span className="text-xs text-gray-400">-</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className="text-center py-1.5 align-middle">
                           <Button 
                             variant="outline" 
                             size="sm"
-                            className="h-7 px-2 text-red-600 border-red-300 hover:bg-red-50"
+                            className="h-6 px-2 text-xs text-red-600 border-red-300 hover:bg-red-50"
                             onClick={() => handleDelete(sub.id)}>
-                            <Trash2 className="w-4 h-4 mr-1" />
+                            <Trash2 className="w-3 h-3 mr-0.5" />
                             삭제
                           </Button>
                         </TableCell>
@@ -1707,11 +2023,6 @@ export default function AdminDashboard() {
                     ))}
                   </TableBody>
                 </Table>
-
-                {/* 결과 개수 표시 (페이지네이션 제거) */}
-                <div className="mt-3 text-sm text-gray-600 text-center">
-                  총 {filteredSubmissions.length}명의 제출 기록
-                </div>
               </div>
             )}
           </CardContent>
@@ -1749,11 +2060,6 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* v85 PDF 동기화 */}
-        <PDFUploadManager />
-
-        {/* 스케줄 동기화 */}
-        <ScheduleSyncAdmin />
 
         {/* v85 로그인 기록 */}
         <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
@@ -1884,66 +2190,6 @@ export default function AdminDashboard() {
           )}
         </Card>
 
-        {/* 등록된 컴퓨터 목록 (IP 허용 목록) */}
-        <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
-          <CardHeader className="pb-4 bg-gray-50/80 rounded-t-2xl">
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-3 text-lg">
-                <Globe className="w-6 h-6 text-purple-600" />
-                <span className="text-xl font-bold text-gray-800">등록된 컴퓨터 목록</span>
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                <Input
-                  placeholder="라벨(선택): 예) 교육실 1번 PC"
-                  value={deviceLabel}
-                  onChange={(e) => setDeviceLabel(e.target.value)}
-                  className="h-9 w-64"
-                />
-                <Button variant="outline" size="sm" onClick={() => { loadAllowedDevices(); loadCurrentIp(); }}>
-                  새로고침
-                </Button>
-                <Button size="sm" onClick={registerCurrentComputer} disabled={registering}>
-                  {registering ? '등록 중...' : '이 컴퓨터 등록'}
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <div className="text-sm text-gray-600 mb-3">현재 접속 IP: {currentIp || '확인 중...'}</div>
-            {loadingDevices ? (
-              <div className="text-center py-6">불러오는 중...</div>
-            ) : allowedDevices.length === 0 ? (
-              <div className="text-center py-6 text-gray-500">등록된 컴퓨터가 없습니다.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-40 text-center">IP</TableHead>
-                      <TableHead className="w-64 text-center">라벨</TableHead>
-                      <TableHead className="w-40 text-center">등록일</TableHead>
-                      <TableHead className="w-32 text-center">관리</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {allowedDevices.map((d) => (
-                      <TableRow key={d.ip}>
-                        <TableCell className="text-center font-mono">{d.ip}</TableCell>
-                        <TableCell className="text-center">{d.label || '-'}</TableCell>
-                        <TableCell className="text-center text-sm">
-                          {new Date(d.createdAt).toLocaleString('ko-KR')}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Button size="sm" variant="destructive" onClick={() => deleteAllowedDevice(d.ip)}>삭제</Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
 
         {/* 평가 결과 모달 */}
         {selectedResult && (
@@ -1985,29 +2231,186 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* 신청 내역 관리 모달 */}
-        <AdminRequestManagerModal
-          isOpen={showRequestManager}
-          onClose={() => setShowRequestManager(false)}
-        />
+        </TabsContent>
 
-        {/* 교육 일지 관리 모달 */}
-        <AdminEducationJournalModal
-          isOpen={showEducationJournalManager}
-          onClose={() => setShowEducationJournalManager(false)}
-        />
+        {/* Tab 2: 시스템 설정 */}
+        <TabsContent value="system" className="space-y-6 mt-0">
+          {/* 헤더 */}
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold flex items-center gap-3 bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              <Settings className="h-8 w-8 text-blue-600" />
+              시스템 설정
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">핵심 시스템 컴포넌트 조회 및 관리</p>
+          </div>
 
-        {/* 교관 통계 모달 */}
-        <InstructorStatsModal
-          isOpen={showInstructorStats}
-          onClose={() => setShowInstructorStats(false)}
-        />
+          {/* 통계 카드 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            {/* PDF 문안 카드 */}
+            <Card 
+              className="border-0 shadow-md hover:shadow-xl transition-all cursor-pointer transform hover:-translate-y-1 bg-gradient-to-br from-blue-50 to-blue-100"
+              onClick={() => pdfSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            >
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-blue-700 flex items-center gap-2">
+                  <FileSpreadsheet className="h-4 w-4" />
+                  PDF 문안
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-blue-900">
+                  {pdfCount}<span className="text-lg ml-1">개</span>
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* 녹음 파일 관리 모달 */}
-        <RecordingManagementModal
-          isOpen={showRecordingManager}
-          onClose={() => setShowRecordingManager(false)}
-        />
+            {/* 스케줄 카드 */}
+            <Card 
+              className="border-0 shadow-md hover:shadow-xl transition-all cursor-pointer transform hover:-translate-y-1 bg-gradient-to-br from-green-50 to-green-100"
+              onClick={() => scheduleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            >
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-green-700 flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  스케줄
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-green-900">
+                  {scheduleCount}<span className="text-lg ml-1">개</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 등록된 컴퓨터 카드 */}
+            <Card 
+              className="border-0 shadow-md hover:shadow-xl transition-all cursor-pointer transform hover:-translate-y-1 bg-gradient-to-br from-purple-50 to-purple-100"
+              onClick={() => deviceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            >
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-purple-700 flex items-center gap-2">
+                  <Globe className="h-4 w-4" />
+                  등록된 컴퓨터
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-purple-900">
+                  {allowedDevices.length}<span className="text-lg ml-1">개</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* PDF 문안 업로드 */}
+          <div ref={pdfSectionRef}>
+            <PDFUploadManager />
+          </div>
+
+          {/* 스케줄 동기화 */}
+          <div ref={scheduleSectionRef}>
+            <ScheduleSyncAdmin />
+          </div>
+
+          {/* 등록된 컴퓨터 목록 (IP 허용 목록) */}
+          <div ref={deviceSectionRef}>
+          <Card className="mb-6 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+            <CardHeader className="pb-4 bg-gray-50/80 rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-3 text-lg">
+                  <Globe className="w-6 h-6 text-purple-600" />
+                  <span className="text-xl font-bold text-gray-800">등록된 컴퓨터 목록</span>
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="라벨(선택): 예) 교육실 1번 PC"
+                    value={deviceLabel}
+                    onChange={(e) => setDeviceLabel(e.target.value)}
+                    className="h-9 w-64"
+                  />
+                  <Button variant="outline" size="sm" onClick={() => { loadAllowedDevices(); loadCurrentIp(); }}>
+                    새로고침
+                  </Button>
+                  <Button size="sm" onClick={registerCurrentComputer} disabled={registering}>
+                    {registering ? '등록 중...' : '이 컴퓨터 등록'}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <div className="text-sm text-gray-600 mb-3">현재 접속 IP: {currentIp || '확인 중...'}</div>
+              {loadingDevices ? (
+                <div className="text-center py-6">불러오는 중...</div>
+              ) : allowedDevices.length === 0 ? (
+                <div className="text-center py-6 text-gray-500">등록된 컴퓨터가 없습니다.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-40 text-center">IP</TableHead>
+                        <TableHead className="w-64 text-center">라벨</TableHead>
+                        <TableHead className="w-40 text-center">등록일</TableHead>
+                        <TableHead className="w-32 text-center">관리</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {allowedDevices.map((d) => (
+                        <TableRow key={d.ip}>
+                          <TableCell className="text-center font-mono">{d.ip}</TableCell>
+                          <TableCell className="text-center">{d.label || '-'}</TableCell>
+                          <TableCell className="text-center text-sm">
+                            {new Date(d.createdAt).toLocaleString('ko-KR')}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Button size="sm" variant="destructive" onClick={() => deleteAllowedDevice(d.ip)}>삭제</Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          </div>
+        </TabsContent>
+
+        {/* Tab 3: User 정보 관리 */}
+        <TabsContent value="employees" className="space-y-6 mt-0">
+          <EmployeesManagement />
+        </TabsContent>
+      </Tabs>
+
+      {/* 모달들 - Tabs 밖에 위치 */}
+      {/* 신청 내역 관리 모달 */}
+      <AdminRequestManagerModal
+        isOpen={showRequestManager}
+        onClose={() => setShowRequestManager(false)}
+      />
+
+      {/* 교육 일지 관리 모달 */}
+      <AdminEducationJournalModal
+        isOpen={showEducationJournalManager}
+        onClose={() => setShowEducationJournalManager(false)}
+      />
+
+      {/* 교관 통계 모달 */}
+      <InstructorStatsModal
+        isOpen={showInstructorStats}
+        onClose={() => setShowInstructorStats(false)}
+      />
+
+      {/* 녹음 파일 관리 모달 */}
+      <RecordingManagementModal
+        isOpen={showRecordingManager}
+        onClose={() => setShowRecordingManager(false)}
+      />
+
+      {/* 월별 통계 모달 */}
+      <MonthlyStatsModal
+        isOpen={showMonthlyStats}
+        onClose={() => setShowMonthlyStats(false)}
+      />
       </div>
     </div>
   )
