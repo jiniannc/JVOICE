@@ -84,7 +84,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   const [loginLogsPagination, setLoginLogsPagination] = useState<any>({})
 
   // 녹음 응시 목록 상태
-  const [applicants, setApplicants] = useState<{ name: string; employeeId: string; language: string; batch: string }[]>([])
+  const [applicants, setApplicants] = useState<{ name: string; employeeId: string; language: string; batch: string; time?: string }[]>([])
   const [applicantDates, setApplicantDates] = useState<string[]>([])
   const [selectedApplicantDate, setSelectedApplicantDate] = useState<string>("")
   const [loadingApplicants, setLoadingApplicants] = useState<boolean>(false)
@@ -105,6 +105,9 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   
   // 캘린더 초대 생성 상태
   const [generatingCalendarInvite, setGeneratingCalendarInvite] = useState<Record<string, boolean>>({})
+
+  // 실시간 대시보드용 현재 시간 상태
+  const [currentTime, setCurrentTime] = useState(new Date())
 
   // 평가 기록 사이드 모달 상태
   const [showEvaluationHistory, setShowEvaluationHistory] = useState(false)
@@ -254,6 +257,29 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       await loadEducationApplicantsWithInitialDate()
     })()
   }, [refreshKey])
+
+  // 실시간 타이머 (1초마다 업데이트)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+    
+    return () => clearInterval(timer)
+  }, [])
+
+  // Auto-refresh (1분마다)
+  useEffect(() => {
+    const refresher = setInterval(async () => {
+      if (activeTab === 'requests') {
+        const map = await loadAttendance(selectedApplicantDate || undefined)
+        await loadApplicants(selectedApplicantDate || undefined, map)
+        await loadEducationApplicants(selectedEducationDate || undefined)
+      }
+    }, 60000) // 60초
+    
+    return () => clearInterval(refresher)
+  }, [activeTab, selectedApplicantDate, selectedEducationDate])
+
   const loadApplicants = async (date?: string, attendanceMap?: Record<string, boolean>) => {
     setLoadingApplicants(true)
     try {
@@ -284,8 +310,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           console.log(`✅ [loadApplicants] ${a.name} (${a.employeeId}) ${a.language}: 출석`)
         }
         
+        // time 필드 추출 (batch 또는 timeSlot에서)
+        const timeMatch = (a.batch || a.timeSlot || '').match(/(\d{1,2}):(\d{2})/)
+        const time = timeMatch ? `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}` : ''
+        
         return {
         ...a,
+          time,
           __attended: attended
         }
       })
@@ -926,6 +957,46 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       "chinese": "border-red-300 bg-red-50 text-red-700",
     }
     return colorMap[language] || "border-gray-300 bg-gray-50 text-gray-700"
+  }
+
+  // 12시간 형식으로 변환 (예: "15:40" → "오후 3:40")
+  const formatTo12Hour = (time24: string): string => {
+    const [hours, minutes] = time24.split(':').map(Number)
+    const period = hours >= 12 ? '오후' : '오전'
+    const hours12 = hours % 12 || 12
+    return `${period} ${hours12}:${minutes.toString().padStart(2, '0')}`
+  }
+
+  // 남은 시간 계산 (분 단위)
+  const getTimeUntil = (targetTime: string): number => {
+    const now = currentTime
+    const [hours, minutes] = targetTime.split(':').map(Number)
+    const target = new Date(now)
+    target.setHours(hours, minutes, 0, 0)
+    
+    if (target < now) {
+      target.setDate(target.getDate() + 1)
+    }
+    
+    return Math.floor((target.getTime() - now.getTime()) / 60000) // 분 단위
+  }
+
+  // 긴급도 계산
+  const getUrgencyLevel = (minutesUntil: number): 'urgent' | 'warning' | 'normal' | 'far' => {
+    if (minutesUntil <= 5) return 'urgent'
+    if (minutesUntil <= 15) return 'warning'
+    if (minutesUntil <= 30) return 'normal'
+    return 'far'
+  }
+
+  // 남은 시간 포맷팅
+  const formatTimeUntil = (minutesUntil: number): string => {
+    if (minutesUntil < 0) return '진행 중'
+    if (minutesUntil === 0) return '곧 시작'
+    if (minutesUntil < 60) return `${minutesUntil}분 후`
+    const hours = Math.floor(minutesUntil / 60)
+    const mins = minutesUntil % 60
+    return mins > 0 ? `${hours}시간 ${mins}분 후` : `${hours}시간 후`
   }
 
   const playAudio = async (recordingKey: string) => {
@@ -2707,9 +2778,249 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               {/* 헤더 */}
               <div className="mb-6">
                 <h1 className="text-3xl font-bold flex items-center gap-3 bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">
+                  <ClipboardList className="w-8 h-8 text-purple-600" />
                   신청 관리
                 </h1>
                 <p className="text-sm text-gray-500 mt-1">기내방송 녹음 응시자 및 교육 신청자의 출결 관리</p>
+              </div>
+
+              {/* 실시간 대시보드 (Sticky Header) */}
+              <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-sm pb-3 mb-4 border-b-2 border-gray-100">
+                <div className="grid grid-cols-2 gap-3">
+                  {/* 다음 녹음 응시 카드 */}
+                  {(() => {
+                    const now = currentTime
+                    const todayApplicants = applicants.filter(a => a.time)
+                    const upcomingRecordings = todayApplicants
+                      .filter(a => {
+                        if (!a.time) return false
+                        const [hours, minutes] = a.time.split(':').map(Number)
+                        const timeInMinutes = hours * 60 + minutes
+                        const nowMinutes = now.getHours() * 60 + now.getMinutes()
+                        return timeInMinutes >= nowMinutes
+                      })
+                      .sort((a, b) => {
+                        const aTime = (a.time || '00:00').split(':').map(Number)
+                        const bTime = (b.time || '00:00').split(':').map(Number)
+                        return (aTime[0] * 60 + aTime[1]) - (bTime[0] * 60 + bTime[1])
+                      })
+
+                    const nextRecording = upcomingRecordings[0]
+                    
+                    if (!nextRecording || !nextRecording.time) {
+                      return (
+                        <Card className="bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200">
+                          <CardContent className="p-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <PlayCircle className="w-4 h-4 text-gray-500" />
+                              <span className="text-xs font-bold text-gray-600">다음 녹음 응시</span>
+                            </div>
+                            <p className="text-sm text-gray-500">오늘 예정된 녹음 없음</p>
+                          </CardContent>
+                        </Card>
+                      )
+                    }
+
+                    const minutesUntil = getTimeUntil(nextRecording.time)
+                    const urgency = getUrgencyLevel(minutesUntil)
+                    
+                    const urgencyColors = {
+                      urgent: 'from-red-50 to-red-100 border-red-300',
+                      warning: 'from-orange-50 to-orange-100 border-orange-300',
+                      normal: 'from-blue-50 to-blue-100 border-blue-300',
+                      far: 'from-gray-50 to-gray-100 border-gray-200'
+                    }
+
+                    const urgencyTextColors = {
+                      urgent: 'text-red-700',
+                      warning: 'text-orange-700',
+                      normal: 'text-blue-700',
+                      far: 'text-gray-700'
+                    }
+
+                    const batchApplicants = todayApplicants.filter(a => a.batch === nextRecording.batch)
+                    const languageCounts = batchApplicants.reduce((acc, a) => {
+                      const lang = a.language.includes('한') ? '한/영' : 
+                                   a.language.includes('일') ? '일본어' : 
+                                   a.language.includes('중') ? '중국어' : a.language
+                      acc[lang] = (acc[lang] || 0) + 1
+                      return acc
+                    }, {} as Record<string, number>)
+
+                    return (
+                      <Card className={`bg-gradient-to-br ${urgencyColors[urgency]} border-2`}>
+                        <CardContent className="p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <PlayCircle className={`w-4 h-4 ${urgencyTextColors[urgency]}`} />
+                              <span className={`text-xs font-bold ${urgencyTextColors[urgency]}`}>다음 녹음 응시</span>
+                            </div>
+                            {minutesUntil <= 5 && (
+                              <Badge className="bg-red-600 text-white text-[9px] px-1.5 py-0 animate-pulse">LIVE</Badge>
+                            )}
+                          </div>
+                          
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className={`text-lg font-bold ${urgencyTextColors[urgency]}`}>
+                                {formatTo12Hour(nextRecording.time)}
+                              </span>
+                              <span className={`text-xs font-semibold ${urgencyTextColors[urgency]}`}>
+                                {formatTimeUntil(minutesUntil)}
+                              </span>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="text-gray-600">{nextRecording.batch}</span>
+                              <span className="text-gray-400">•</span>
+                              <span className="font-semibold text-gray-700">{batchApplicants.length}명</span>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1">
+                              {Object.entries(languageCounts).map(([lang, count]) => (
+                                <Badge key={lang} variant="outline" className="text-[9px] px-1.5 py-0">
+                                  {lang} {count}
+                                </Badge>
+                              ))}
+                            </div>
+
+                            <div className="w-full bg-gray-200 rounded-full h-1 mt-2">
+                              <div 
+                                className={`h-1 rounded-full transition-all ${
+                                  urgency === 'urgent' ? 'bg-red-600' :
+                                  urgency === 'warning' ? 'bg-orange-500' :
+                                  urgency === 'normal' ? 'bg-blue-500' : 'bg-gray-400'
+                                }`}
+                                style={{ width: `${Math.max(0, Math.min(100, ((30 - minutesUntil) / 30) * 100))}%` }}
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )
+                  })()}
+
+                  {/* 다음 교육 세션 카드 */}
+                  {(() => {
+                    const now = currentTime
+                    const todayEducationSessions = educationSessions.filter(s => s.slotTime)
+                    const upcomingEducation = todayEducationSessions
+                      .filter(s => {
+                        if (!s.slotTime) return false
+                        const startTime = s.slotTime.split('-')[0].trim()
+                        const [hours, minutes] = startTime.split(':').map(Number)
+                        const timeInMinutes = hours * 60 + minutes
+                        const nowMinutes = now.getHours() * 60 + now.getMinutes()
+                        return timeInMinutes >= nowMinutes
+                      })
+                      .sort((a, b) => {
+                        const aStart = a.slotTime.split('-')[0].trim()
+                        const bStart = b.slotTime.split('-')[0].trim()
+                        const aTime = aStart.split(':').map(Number)
+                        const bTime = bStart.split(':').map(Number)
+                        return (aTime[0] * 60 + aTime[1]) - (bTime[0] * 60 + bTime[1])
+                      })
+
+                    const nextEducation = upcomingEducation[0]
+                    
+                    if (!nextEducation || !nextEducation.slotTime) {
+                      return (
+                        <Card className="bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200">
+                          <CardContent className="p-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Globe className="w-4 h-4 text-gray-500" />
+                              <span className="text-xs font-bold text-gray-600">다음 교육</span>
+                            </div>
+                            <p className="text-sm text-gray-500">오늘 예정된 교육 없음</p>
+                          </CardContent>
+                        </Card>
+                      )
+                    }
+
+                    const startTime = nextEducation.slotTime.split('-')[0].trim()
+                    const minutesUntil = getTimeUntil(startTime)
+                    const urgency = getUrgencyLevel(minutesUntil)
+                    
+                    const urgencyColors = {
+                      urgent: 'from-red-50 to-red-100 border-red-300',
+                      warning: 'from-orange-50 to-orange-100 border-orange-300',
+                      normal: 'from-green-50 to-green-100 border-green-300',
+                      far: 'from-gray-50 to-gray-100 border-gray-200'
+                    }
+
+                    const urgencyTextColors = {
+                      urgent: 'text-red-700',
+                      warning: 'text-orange-700',
+                      normal: 'text-green-700',
+                      far: 'text-gray-700'
+                    }
+
+                    const langDisplay = nextEducation.language?.includes('한') ? '한/영' :
+                                       nextEducation.language?.includes('일') ? '일본어' :
+                                       nextEducation.language?.includes('중') ? '중국어' : nextEducation.language
+                    const classTypeDisplay = nextEducation.classType === '소규모' || nextEducation.classType === 'small-group' ? '소규모' : '1:1'
+
+                    return (
+                      <Card className={`bg-gradient-to-br ${urgencyColors[urgency]} border-2`}>
+                        <CardContent className="p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Globe className={`w-4 h-4 ${urgencyTextColors[urgency]}`} />
+                              <span className={`text-xs font-bold ${urgencyTextColors[urgency]}`}>다음 교육</span>
+                            </div>
+                            {minutesUntil <= 5 && (
+                              <Badge className="bg-green-600 text-white text-[9px] px-1.5 py-0 animate-pulse">LIVE</Badge>
+                            )}
+                          </div>
+                          
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className={`text-lg font-bold ${urgencyTextColors[urgency]}`}>
+                                {formatTo12Hour(startTime)}
+                              </span>
+                              <span className={`text-xs font-semibold ${urgencyTextColors[urgency]}`}>
+                                {formatTimeUntil(minutesUntil)}
+                              </span>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="text-gray-600">{langDisplay}</span>
+                              <span className="text-gray-400">•</span>
+                              <span className="text-gray-600">{classTypeDisplay} {nextEducation.sessionNumber}차수</span>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1">
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                                {nextEducation.applicants?.length || 0}명
+                              </Badge>
+                              {nextEducation.classroom && (
+                                <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                                  {nextEducation.classroom}
+                                </Badge>
+                              )}
+                              {nextEducation.category && (
+                                <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                                  {nextEducation.category}
+                                </Badge>
+                              )}
+                            </div>
+
+                            <div className="w-full bg-gray-200 rounded-full h-1 mt-2">
+                              <div 
+                                className={`h-1 rounded-full transition-all ${
+                                  urgency === 'urgent' ? 'bg-red-600' :
+                                  urgency === 'warning' ? 'bg-orange-500' :
+                                  urgency === 'normal' ? 'bg-green-500' : 'bg-gray-400'
+                                }`}
+                                style={{ width: `${Math.max(0, Math.min(100, ((30 - minutesUntil) / 30) * 100))}%` }}
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )
+                  })()}
+                </div>
               </div>
 
               {/* 녹음 응시 목록 카드 */}
@@ -3254,9 +3565,81 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               {/* 헤더 */}
               <div className="mb-6">
                 <h1 className="text-3xl font-bold flex items-center gap-3 bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                  <Award className="w-8 h-8 text-blue-600" />
                   평가 관리
                 </h1>
                 <p className="text-sm text-gray-500 mt-1">제출된 녹음 파일을 확인하여 평가를 진행</p>
+              </div>
+
+              {/* 언어별 통계 카드 */}
+              <div className="grid md:grid-cols-3 gap-6 mb-6">
+                {["korean-english", "japanese", "chinese"].map((lang) => {
+                  const langCandidates = candidates.filter(c => c.language === lang)
+                  const pending = langCandidates.filter(c => c.status === 'pending').length
+                  const evaluating = langCandidates.filter(c => c.status === 'evaluating').length
+                  const reviewing = langCandidates.filter(c => c.status === 'reviewing' || c.status === 'review_requested').length
+                  const completed = langCandidates.filter(c => c.status === 'submitted' || c.approved).length
+                  const reEvaluation = langCandidates.filter(c => c.status === 're_evaluation').length
+                  
+                  const gradientColors = lang === "korean-english" 
+                    ? "from-blue-50 to-blue-100" 
+                    : lang === "japanese" 
+                    ? "from-purple-50 to-purple-100" 
+                    : "from-red-50 to-red-100"
+                  const textColor = lang === "korean-english" 
+                    ? "text-blue-700" 
+                    : lang === "japanese" 
+                    ? "text-purple-700" 
+                    : "text-red-700"
+                  const numColor = lang === "korean-english" 
+                    ? "text-blue-900" 
+                    : lang === "japanese" 
+                    ? "text-purple-900" 
+                    : "text-red-900"
+                  
+                  const langDisplay = lang === "korean-english" ? "한/영" : lang === "japanese" ? "일본어" : "중국어"
+                  
+                  return (
+                    <Card 
+                      key={lang} 
+                      className={`border-0 shadow-md hover:shadow-xl transition-all cursor-pointer transform hover:-translate-y-1 bg-gradient-to-br ${gradientColors}`}
+                      onClick={() => setLanguageFilter(lang)}
+                    >
+                      <CardHeader className="pb-3">
+                        <CardTitle className={`text-sm font-medium ${textColor} flex items-center justify-between`}>
+                          <span>{langDisplay}</span>
+                          <Badge variant="outline" className="text-[10px]">
+                            {langCandidates.length}건
+                          </Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className={`text-3xl font-bold ${numColor} mb-3`}>
+                          {langCandidates.length}<span className="text-lg ml-1">건</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-2 text-xs mt-3 pt-3 border-t border-gray-300">
+                          <div className="text-center p-2 bg-white/50 rounded-md">
+                            <div className="font-bold text-orange-700">{pending}</div>
+                            <div className="text-orange-600">대기</div>
+                          </div>
+                          <div className="text-center p-2 bg-white/50 rounded-md">
+                            <div className="font-bold text-yellow-700">{evaluating}</div>
+                            <div className="text-yellow-600">진행중</div>
+                          </div>
+                          <div className="text-center p-2 bg-white/50 rounded-md">
+                            <div className="font-bold text-green-700">{completed}</div>
+                            <div className="text-green-600">완료</div>
+                          </div>
+                          <div className="text-center p-2 bg-white/50 rounded-md">
+                            <div className="font-bold text-red-700">{reEvaluation}</div>
+                            <div className="text-red-600">재평가</div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
               </div>
 
               {/* 평가 대기 목록 카드 */}
