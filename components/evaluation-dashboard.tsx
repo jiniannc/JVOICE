@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Slider } from "@/components/ui/slider"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil, Activity, AlertCircle, User, CalendarPlus, History, X, Clock, TrendingUp, Loader2 } from "lucide-react"
+import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil, Activity, AlertCircle, User, Users, CalendarPlus, History, X, Clock, TrendingUp, Loader2 } from "lucide-react"
 import { evaluationCriteria, getEvaluationCriteria, getGradeInfo } from "@/lib/evaluation-criteria"
 import { EvaluationSummary } from "@/components/evaluation-summary"
 import React from "react"
@@ -3054,13 +3054,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                           <div 
                             key={`${batch}-${a.employeeId}-${idx}`} 
                             className={`grid gap-2 px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
-                              a.hasSubmitted
-                                ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300 shadow-sm'
-                                : a.__attended
+                              a.hasSubmitted 
+                                ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300 shadow-sm' 
+                                : a.__attended 
                                   ? `bg-green-50 border-green-200 ${isHighlighted ? 'ring-2 ring-green-400 attendance-highlight' : ''}`
                                   : 'bg-white border-gray-200 shadow-sm'
                             }`}
-                            style={{ gridTemplateColumns: '1fr 60px 52px 52px' }}
+                            style={{ gridTemplateColumns: 'minmax(150px, 1fr) 60px 52px 52px' }}
                           >
                             {/* 이름 • 사번 */}
                             <div className="flex items-center gap-1.5 min-w-0">
