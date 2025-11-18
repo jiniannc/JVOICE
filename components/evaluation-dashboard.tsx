@@ -2823,15 +2823,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     
                     if (!nextRecording || !nextRecording.time) {
                       return (
-                        <Card className="bg-white border border-gray-200 shadow-sm">
+                        <Card className="bg-gradient-to-br from-gray-50 to-slate-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
                           <CardContent className="p-4">
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                                <PlayCircle className="w-5 h-5 text-gray-400" />
-                              </div>
-                              <span className="text-sm font-semibold text-gray-600">다음 녹음 응시</span>
+                            <div className="text-sm font-medium text-gray-600 mb-2">다음 녹음 응시</div>
+                            <div className="text-4xl font-bold text-gray-900 mb-3">
+                              예정 없음
                             </div>
-                            <p className="text-sm text-gray-400 ml-10">오늘 예정된 녹음 없음</p>
+                            <p className="text-sm text-gray-500">오늘 예정된 교육 없음</p>
                           </CardContent>
                         </Card>
                       )
@@ -2849,40 +2847,59 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       return acc
                     }, {} as Record<string, number>)
 
+                    const bgGradient = urgency === 'urgent' ? 'from-red-50 to-rose-100' :
+                                      urgency === 'warning' ? 'from-orange-50 to-amber-100' :
+                                      urgency === 'normal' ? 'from-blue-50 to-sky-100' : 'from-gray-50 to-slate-100'
+                    const textColor = urgency === 'urgent' ? 'text-red-700' :
+                                     urgency === 'warning' ? 'text-orange-700' :
+                                     urgency === 'normal' ? 'text-blue-700' : 'text-gray-700'
+
                     return (
-                      <Card className="bg-white border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                      <Card className={`bg-gradient-to-br ${bgGradient} hover:shadow-lg transition-all hover:-translate-y-1 border-0`}>
                         <CardContent className="p-4">
-                          <div className="flex items-center gap-3 mb-3">
-                            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                              <PlayCircle className="w-5 h-5 text-blue-600" />
-                            </div>
-                            <div className="flex-1">
-                              <div className="text-sm font-semibold text-gray-600">다음 녹음 응시</div>
-                              <div className="text-2xl font-bold text-gray-900 leading-tight">{formatTo12Hour(nextRecording.time)}</div>
-                            </div>
-                            <div className="text-right">
-                              <Badge className={`${
-                                urgency === 'urgent' ? 'bg-red-500' :
-                                urgency === 'warning' ? 'bg-orange-500' :
-                                urgency === 'normal' ? 'bg-blue-500' : 'bg-gray-400'
-                              } text-white text-xs px-2 py-1`}>
-                                {formatTimeUntil(minutesUntil)}
-                              </Badge>
-                            </div>
+                          <div className={`text-sm font-medium ${textColor} mb-2`}>다음 녹음 응시</div>
+                          <div className="text-4xl font-bold text-gray-900 mb-1 leading-tight">
+                            {formatTo12Hour(nextRecording.time)}
+                          </div>
+                          <div className={`text-sm font-semibold ${textColor} mb-3`}>
+                            {formatTimeUntil(minutesUntil)}
                           </div>
                           
-                          <div className="flex items-center gap-2 text-xs text-gray-600 ml-11">
-                            <span>{nextRecording.batch}</span>
-                            <span className="text-gray-400">•</span>
-                            <span className="font-semibold">{batchApplicants.length}명</span>
-                            <div className="flex gap-1 ml-auto">
-                              {Object.entries(languageCounts).map(([lang, count]) => (
-                                <span key={lang} className="text-gray-500">
-                                  {lang} {count}
-                                </span>
-                              ))}
+                          <div className="space-y-1.5 text-sm">
+                            <div className="flex items-center gap-2">
+                              <Clock className="w-4 h-4 text-gray-500" />
+                              <span className="text-gray-600">{nextRecording.batch}</span>
                             </div>
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4 text-gray-500" />
+                              <span className="text-gray-600">{batchApplicants.length}명</span>
+                            </div>
+                            {Object.keys(languageCounts).length > 0 && (
+                              <div className="flex items-center gap-2">
+                                <Globe className="w-4 h-4 text-gray-500" />
+                                <span className="text-gray-600">
+                                  {Object.entries(languageCounts).map(([lang, count]) => `${lang} ${count}`).join(', ')}
+                                </span>
+                              </div>
+                            )}
                           </div>
+
+                          {/* 진행 바 */}
+                          {minutesUntil <= 30 && (
+                            <div className="mt-3 pt-3 border-t border-gray-300">
+                              <div className="text-[10px] text-gray-500 mb-1">준비 상태</div>
+                              <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                <div 
+                                  className={`h-1.5 rounded-full transition-all ${
+                                    urgency === 'urgent' ? 'bg-red-500' :
+                                    urgency === 'warning' ? 'bg-orange-500' :
+                                    'bg-blue-500'
+                                  }`}
+                                  style={{ width: `${Math.max(0, Math.min(100, ((30 - minutesUntil) / 30) * 100))}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     )
@@ -2913,15 +2930,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     
                     if (!nextEducation || !nextEducation.slotTime) {
                       return (
-                        <Card className="bg-white border border-gray-200 shadow-sm">
+                        <Card className="bg-gradient-to-br from-gray-50 to-slate-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
                           <CardContent className="p-4">
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                                <Globe className="w-5 h-5 text-gray-400" />
-                              </div>
-                              <span className="text-sm font-semibold text-gray-600">다음 교육</span>
+                            <div className="text-sm font-medium text-gray-600 mb-2">다음 교육</div>
+                            <div className="text-4xl font-bold text-gray-900 mb-3">
+                              예정 없음
                             </div>
-                            <p className="text-sm text-gray-400 ml-10">오늘 예정된 교육 없음</p>
+                            <p className="text-sm text-gray-500">오늘 예정된 교육 없음</p>
                           </CardContent>
                         </Card>
                       )
@@ -2936,36 +2951,55 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                                        nextEducation.language?.includes('중') ? '중국어' : nextEducation.language
                     const classTypeDisplay = nextEducation.classType === '소규모' || nextEducation.classType === 'small-group' ? '소규모' : '1:1'
 
+                    const bgGradient = urgency === 'urgent' ? 'from-red-50 to-rose-100' :
+                                      urgency === 'warning' ? 'from-orange-50 to-amber-100' :
+                                      urgency === 'normal' ? 'from-green-50 to-emerald-100' : 'from-gray-50 to-slate-100'
+                    const textColor = urgency === 'urgent' ? 'text-red-700' :
+                                     urgency === 'warning' ? 'text-orange-700' :
+                                     urgency === 'normal' ? 'text-green-700' : 'text-gray-700'
+
                     return (
-                      <Card className="bg-white border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                      <Card className={`bg-gradient-to-br ${bgGradient} hover:shadow-lg transition-all hover:-translate-y-1 border-0`}>
                         <CardContent className="p-4">
-                          <div className="flex items-center gap-3 mb-3">
-                            <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                              <Globe className="w-5 h-5 text-green-600" />
-                            </div>
-                            <div className="flex-1">
-                              <div className="text-sm font-semibold text-gray-600">다음 교육</div>
-                              <div className="text-2xl font-bold text-gray-900 leading-tight">{formatTo12Hour(startTime)}</div>
-                            </div>
-                            <div className="text-right">
-                              <Badge className={`${
-                                urgency === 'urgent' ? 'bg-red-500' :
-                                urgency === 'warning' ? 'bg-orange-500' :
-                                urgency === 'normal' ? 'bg-green-500' : 'bg-gray-400'
-                              } text-white text-xs px-2 py-1`}>
-                                {formatTimeUntil(minutesUntil)}
-                              </Badge>
-                            </div>
+                          <div className={`text-sm font-medium ${textColor} mb-2`}>다음 교육</div>
+                          <div className="text-4xl font-bold text-gray-900 mb-1 leading-tight">
+                            {formatTo12Hour(startTime)}
+                          </div>
+                          <div className={`text-sm font-semibold ${textColor} mb-3`}>
+                            {formatTimeUntil(minutesUntil)}
                           </div>
                           
-                          <div className="flex items-center gap-2 text-xs text-gray-600 ml-11">
-                            <span>{langDisplay}</span>
-                            <span className="text-gray-400">•</span>
-                            <span>{classTypeDisplay} {nextEducation.sessionNumber}차수</span>
-                            <div className="flex gap-2 ml-auto">
-                              <span className="font-semibold">{nextEducation.applicants?.length || 0}명</span>
+                          <div className="space-y-1.5 text-sm">
+                            <div className="flex items-center gap-2">
+                              <Globe className="w-4 h-4 text-gray-500" />
+                              <span className="text-gray-600">{langDisplay}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4 text-gray-500" />
+                              <span className="text-gray-600">{classTypeDisplay} {nextEducation.sessionNumber}차수</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Users className="w-4 h-4 text-gray-500" />
+                              <span className="text-gray-600">{nextEducation.applicants?.length || 0}명</span>
                             </div>
                           </div>
+
+                          {/* 진행 바 */}
+                          {minutesUntil <= 30 && (
+                            <div className="mt-3 pt-3 border-t border-gray-300">
+                              <div className="text-[10px] text-gray-500 mb-1">준비 상태</div>
+                              <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                <div 
+                                  className={`h-1.5 rounded-full transition-all ${
+                                    urgency === 'urgent' ? 'bg-red-500' :
+                                    urgency === 'warning' ? 'bg-orange-500' :
+                                    'bg-green-500'
+                                  }`}
+                                  style={{ width: `${Math.max(0, Math.min(100, ((30 - minutesUntil) / 30) * 100))}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     )
@@ -3557,55 +3591,90 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               </div>
 
               {/* 언어별 통계 카드 */}
-              <div className="grid md:grid-cols-3 gap-4 mb-6">
+              <div className="grid md:grid-cols-4 gap-4 mb-6">
+                {/* 전체 카드 */}
+                {(() => {
+                  // 대기 목록만 카운팅 (완료/승인 제외)
+                  const waitingCandidates = candidates.filter(c => 
+                    c.status === 'pending' || 
+                    c.status === 'evaluating' || 
+                    c.status === 'reviewing' || 
+                    c.status === 'review_requested' || 
+                    c.status === 're_evaluation'
+                  )
+                  const pending = waitingCandidates.filter(c => c.status === 'pending').length
+                  const inProgress = waitingCandidates.length - pending
+                  
+                  return (
+                    <Card 
+                      className="bg-gradient-to-br from-gray-50 to-slate-100 hover:shadow-lg transition-all cursor-pointer hover:-translate-y-1 border-0"
+                      onClick={() => setLanguageFilter("all")}
+                    >
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-gray-700">전체</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pb-4">
+                        <div className="text-4xl font-bold text-gray-900 mb-4">
+                          {waitingCandidates.length}<span className="text-xl ml-1">건</span>
+                        </div>
+                        
+                        <div className="space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">대기:</span>
+                            <span className="font-bold text-orange-600">{pending}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">진행중:</span>
+                            <span className="font-bold text-blue-600">{inProgress}</span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )
+                })()}
+
                 {["korean-english", "japanese", "chinese"].map((lang) => {
-                  const langCandidates = candidates.filter(c => c.language === lang)
+                  // 대기 목록만 카운팅
+                  const langCandidates = candidates.filter(c => 
+                    c.language === lang && (
+                      c.status === 'pending' || 
+                      c.status === 'evaluating' || 
+                      c.status === 'reviewing' || 
+                      c.status === 'review_requested' || 
+                      c.status === 're_evaluation'
+                    )
+                  )
                   const pending = langCandidates.filter(c => c.status === 'pending').length
-                  const evaluating = langCandidates.filter(c => c.status === 'evaluating').length
-                  const reviewing = langCandidates.filter(c => c.status === 'reviewing' || c.status === 'review_requested').length
-                  const reEvaluation = langCandidates.filter(c => c.status === 're_evaluation').length
+                  const inProgress = langCandidates.length - pending
                   
-                  // 평가 진행 중 = evaluating + reviewing + reEvaluation
-                  const inProgress = evaluating + reviewing + reEvaluation
-                  
-                  const bgColor = lang === "korean-english" 
-                    ? "bg-blue-50" 
+                  const bgGradient = lang === "korean-english" 
+                    ? "from-blue-50 to-sky-100" 
                     : lang === "japanese" 
-                    ? "bg-purple-50" 
-                    : "bg-red-50"
+                    ? "from-purple-50 to-violet-100" 
+                    : "from-red-50 to-rose-100"
                   const headerColor = lang === "korean-english" 
-                    ? "text-blue-800" 
+                    ? "text-blue-700" 
                     : lang === "japanese" 
-                    ? "text-purple-800" 
-                    : "text-red-800"
+                    ? "text-purple-700" 
+                    : "text-red-700"
                   const numColor = lang === "korean-english" 
                     ? "text-blue-900" 
                     : lang === "japanese" 
                     ? "text-purple-900" 
                     : "text-red-900"
-                  const borderColor = lang === "korean-english" 
-                    ? "border-blue-200" 
-                    : lang === "japanese" 
-                    ? "border-purple-200" 
-                    : "border-red-200"
                   
                   const langDisplay = lang === "korean-english" ? "한/영" : lang === "japanese" ? "일본어" : "중국어"
                   
                   return (
                     <Card 
                       key={lang} 
-                      className={`${bgColor} border ${borderColor} shadow-sm hover:shadow-lg transition-all cursor-pointer`}
+                      className={`bg-gradient-to-br ${bgGradient} hover:shadow-lg transition-all cursor-pointer hover:-translate-y-1 border-0`}
                       onClick={() => setLanguageFilter(lang)}
                     >
                       <CardHeader className="pb-2">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className={`text-base font-bold ${headerColor}`}>
-                            {langDisplay}
-                          </CardTitle>
-                          <Badge variant="outline" className={`text-xs ${borderColor} ${bgColor}`}>
-                            {langCandidates.length}건
-                          </Badge>
-                        </div>
+                        <CardTitle className={`text-sm font-medium ${headerColor}`}>
+                          {langDisplay}
+                        </CardTitle>
                       </CardHeader>
                       <CardContent className="pb-4">
                         <div className={`text-4xl font-bold ${numColor} mb-4`}>
@@ -3613,12 +3682,12 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                         </div>
                         
                         <div className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between py-1.5 px-2 bg-white/60 rounded">
-                            <span className="text-gray-700 font-medium">대기</span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">대기:</span>
                             <span className="font-bold text-orange-600">{pending}</span>
                           </div>
-                          <div className="flex items-center justify-between py-1.5 px-2 bg-white/60 rounded">
-                            <span className="text-gray-700 font-medium">진행중</span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">진행중:</span>
                             <span className="font-bold text-blue-600">{inProgress}</span>
                           </div>
                         </div>
