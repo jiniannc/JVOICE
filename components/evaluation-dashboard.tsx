@@ -2823,20 +2823,19 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     
                     if (!nextRecording || !nextRecording.time) {
                       return (
-                        <Card className="bg-gradient-to-br from-gray-50 to-slate-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
+                        <Card className="bg-gradient-to-br from-blue-50 to-sky-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
                           <CardContent className="p-4">
-                            <div className="text-sm font-medium text-gray-600 mb-2">다음 녹음 응시</div>
-                            <div className="text-4xl font-bold text-gray-900 mb-3">
+                            <div className="text-sm font-medium text-blue-700 mb-2">다음 녹음 응시</div>
+                            <div className="text-4xl font-bold text-blue-900 mb-4">
                               예정 없음
                             </div>
-                            <p className="text-sm text-gray-500">오늘 예정된 교육 없음</p>
+                            <p className="text-sm text-gray-500">오늘 예정된 녹음 없음</p>
                           </CardContent>
                         </Card>
                       )
                     }
 
                     const minutesUntil = getTimeUntil(nextRecording.time)
-                    const urgency = getUrgencyLevel(minutesUntil)
 
                     const batchApplicants = todayApplicants.filter(a => a.batch === nextRecording.batch)
                     const languageCounts = batchApplicants.reduce((acc, a) => {
@@ -2847,21 +2846,14 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       return acc
                     }, {} as Record<string, number>)
 
-                    const bgGradient = urgency === 'urgent' ? 'from-red-50 to-rose-100' :
-                                      urgency === 'warning' ? 'from-orange-50 to-amber-100' :
-                                      urgency === 'normal' ? 'from-blue-50 to-sky-100' : 'from-gray-50 to-slate-100'
-                    const textColor = urgency === 'urgent' ? 'text-red-700' :
-                                     urgency === 'warning' ? 'text-orange-700' :
-                                     urgency === 'normal' ? 'text-blue-700' : 'text-gray-700'
-
                     return (
-                      <Card className={`bg-gradient-to-br ${bgGradient} hover:shadow-lg transition-all hover:-translate-y-1 border-0`}>
+                      <Card className="bg-gradient-to-br from-blue-50 to-sky-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
                         <CardContent className="p-4">
-                          <div className={`text-sm font-medium ${textColor} mb-2`}>다음 녹음 응시</div>
-                          <div className="text-4xl font-bold text-gray-900 mb-1 leading-tight">
+                          <div className="text-sm font-medium text-blue-700 mb-2">다음 녹음 응시</div>
+                          <div className="text-4xl font-bold text-blue-900 mb-1 leading-tight">
                             {formatTo12Hour(nextRecording.time)}
                           </div>
-                          <div className={`text-sm font-semibold ${textColor} mb-3`}>
+                          <div className="text-sm font-semibold text-orange-600 mb-3">
                             {formatTimeUntil(minutesUntil)}
                           </div>
                           
@@ -2890,11 +2882,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                               <div className="text-[10px] text-gray-500 mb-1">준비 상태</div>
                               <div className="w-full bg-gray-200 rounded-full h-1.5">
                                 <div 
-                                  className={`h-1.5 rounded-full transition-all ${
-                                    urgency === 'urgent' ? 'bg-red-500' :
-                                    urgency === 'warning' ? 'bg-orange-500' :
-                                    'bg-blue-500'
-                                  }`}
+                                  className="h-1.5 rounded-full bg-orange-500 transition-all"
                                   style={{ width: `${Math.max(0, Math.min(100, ((30 - minutesUntil) / 30) * 100))}%` }}
                                 />
                               </div>
@@ -2930,10 +2918,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     
                     if (!nextEducation || !nextEducation.slotTime) {
                       return (
-                        <Card className="bg-gradient-to-br from-gray-50 to-slate-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
+                        <Card className="bg-gradient-to-br from-green-50 to-emerald-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
                           <CardContent className="p-4">
-                            <div className="text-sm font-medium text-gray-600 mb-2">다음 교육</div>
-                            <div className="text-4xl font-bold text-gray-900 mb-3">
+                            <div className="text-sm font-medium text-green-700 mb-2">다음 교육</div>
+                            <div className="text-4xl font-bold text-green-900 mb-4">
                               예정 없음
                             </div>
                             <p className="text-sm text-gray-500">오늘 예정된 교육 없음</p>
@@ -2944,28 +2932,20 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
 
                     const startTime = nextEducation.slotTime.split('-')[0].trim()
                     const minutesUntil = getTimeUntil(startTime)
-                    const urgency = getUrgencyLevel(minutesUntil)
 
                     const langDisplay = nextEducation.language?.includes('한') ? '한/영' :
                                        nextEducation.language?.includes('일') ? '일본어' :
                                        nextEducation.language?.includes('중') ? '중국어' : nextEducation.language
                     const classTypeDisplay = nextEducation.classType === '소규모' || nextEducation.classType === 'small-group' ? '소규모' : '1:1'
 
-                    const bgGradient = urgency === 'urgent' ? 'from-red-50 to-rose-100' :
-                                      urgency === 'warning' ? 'from-orange-50 to-amber-100' :
-                                      urgency === 'normal' ? 'from-green-50 to-emerald-100' : 'from-gray-50 to-slate-100'
-                    const textColor = urgency === 'urgent' ? 'text-red-700' :
-                                     urgency === 'warning' ? 'text-orange-700' :
-                                     urgency === 'normal' ? 'text-green-700' : 'text-gray-700'
-
                     return (
-                      <Card className={`bg-gradient-to-br ${bgGradient} hover:shadow-lg transition-all hover:-translate-y-1 border-0`}>
+                      <Card className="bg-gradient-to-br from-green-50 to-emerald-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
                         <CardContent className="p-4">
-                          <div className={`text-sm font-medium ${textColor} mb-2`}>다음 교육</div>
-                          <div className="text-4xl font-bold text-gray-900 mb-1 leading-tight">
+                          <div className="text-sm font-medium text-green-700 mb-2">다음 교육</div>
+                          <div className="text-4xl font-bold text-green-900 mb-1 leading-tight">
                             {formatTo12Hour(startTime)}
                           </div>
-                          <div className={`text-sm font-semibold ${textColor} mb-3`}>
+                          <div className="text-sm font-semibold text-orange-600 mb-3">
                             {formatTimeUntil(minutesUntil)}
                           </div>
                           
@@ -2990,11 +2970,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                               <div className="text-[10px] text-gray-500 mb-1">준비 상태</div>
                               <div className="w-full bg-gray-200 rounded-full h-1.5">
                                 <div 
-                                  className={`h-1.5 rounded-full transition-all ${
-                                    urgency === 'urgent' ? 'bg-red-500' :
-                                    urgency === 'warning' ? 'bg-orange-500' :
-                                    'bg-green-500'
-                                  }`}
+                                  className="h-1.5 rounded-full bg-orange-500 transition-all"
                                   style={{ width: `${Math.max(0, Math.min(100, ((30 - minutesUntil) / 30) * 100))}%` }}
                                 />
                               </div>
@@ -3071,67 +3047,58 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                           return (
                           <div 
                             key={`${batch}-${a.employeeId}-${idx}`} 
-                            className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
+                            className={`grid gap-2 px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
                               a.hasSubmitted
-                                ? 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-300 shadow-sm'
+                                ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300 shadow-sm'
                                 : a.__attended
                                   ? `bg-green-50 border-green-200 ${isHighlighted ? 'ring-2 ring-green-400 attendance-highlight' : ''}`
                                   : 'bg-white border-gray-200 shadow-sm'
                             }`}
+                            style={{ gridTemplateColumns: '1fr 60px 52px 52px' }}
                           >
-                            {/* 왼쪽: 이름 • 사번 • 언어 */}
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                            {/* 이름 • 사번 */}
+                            <div className="flex items-center gap-1.5 min-w-0">
                               <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">{a.name}</span>
-                              <span className="text-gray-400">•</span>
+                              <span className="text-gray-400 text-xs">•</span>
                               <span className="text-gray-600 font-mono text-xs whitespace-nowrap">{a.employeeId}</span>
-                              <span className="text-gray-400">•</span>
-                              <span className={`text-xs font-medium whitespace-nowrap ${
-                                (a.language.includes('한') || a.language.toLowerCase().includes('korean')) ? 'text-blue-700' :
-                                (a.language.includes('일') || a.language.toLowerCase().includes('japanese')) ? 'text-purple-700' :
-                                (a.language.includes('중') || a.language.toLowerCase().includes('chinese')) ? 'text-red-700' :
-                                'text-gray-700'
-                              }`}>
-                                {a.language || '-'}
-                              </span>
                             </div>
 
-                            {/* 오른쪽: 출석/제출 상태 배지 */}
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              {/* 출석 배지 */}
-                              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold whitespace-nowrap min-w-[60px] justify-center ${
-                                a.__attended
-                                  ? 'bg-green-500 text-white shadow-sm'
-                                  : 'bg-gray-200 text-gray-500'
-                              }`} title={a.__attended ? '출석 완료' : '미출석'}>
-                                {a.__attended ? (
-                                  <>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M20 6L9 17l-5-5" />
-                                    </svg>
-                                    <span>출석</span>
-                                  </>
-                                ) : (
-                                  <span>출석</span>
-                                )}
-                              </div>
+                            {/* 언어 배지 */}
+                            <div className={`flex items-center justify-center px-2 py-0.5 rounded text-[11px] font-bold border whitespace-nowrap ${
+                              (a.language.includes('한') || a.language.toLowerCase().includes('korean')) ? 'border-blue-300 bg-blue-100 text-blue-700' :
+                              (a.language.includes('일') || a.language.toLowerCase().includes('japanese')) ? 'border-purple-300 bg-purple-100 text-purple-700' :
+                              (a.language.includes('중') || a.language.toLowerCase().includes('chinese')) ? 'border-red-300 bg-red-100 text-red-700' :
+                              'border-gray-300 bg-gray-100 text-gray-700'
+                            }`}>
+                              {a.language || '-'}
+                            </div>
 
-                              {/* 제출 배지 */}
-                              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold whitespace-nowrap min-w-[60px] justify-center ${
-                                a.hasSubmitted
-                                  ? 'bg-emerald-600 text-white shadow-sm'
-                                  : 'bg-gray-200 text-gray-500'
-                              }`} title={a.hasSubmitted ? `제출 완료: ${a.submittedAt ? new Date(a.submittedAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}` : '미제출'}>
-                                {a.hasSubmitted ? (
-                                  <>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M20 6L9 17l-5-5" />
-                                    </svg>
-                                    <span>제출</span>
-                                  </>
-                                ) : (
-                                  <span>제출</span>
-                                )}
-                              </div>
+                            {/* 출석 배지 */}
+                            <div className={`flex items-center gap-0.5 px-2 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
+                              a.__attended
+                                ? 'bg-green-500 text-white shadow-sm'
+                                : 'bg-gray-200 text-gray-500'
+                            }`} title={a.__attended ? '출석 완료' : '미출석'}>
+                              {a.__attended && (
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                              )}
+                              <span>출석</span>
+                            </div>
+
+                            {/* 제출 배지 */}
+                            <div className={`flex items-center gap-0.5 px-2 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
+                              a.hasSubmitted
+                                ? 'bg-blue-600 text-white shadow-sm'
+                                : 'bg-gray-200 text-gray-500'
+                            }`} title={a.hasSubmitted ? `제출 완료: ${a.submittedAt ? new Date(a.submittedAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}` : '미제출'}>
+                              {a.hasSubmitted && (
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                              )}
+                              <span>제출</span>
                             </div>
                           </div>
                           )
@@ -3607,11 +3574,11 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   
                   return (
                     <Card 
-                      className="bg-gradient-to-br from-gray-50 to-slate-100 hover:shadow-lg transition-all cursor-pointer hover:-translate-y-1 border-0"
+                      className="bg-gradient-to-br from-blue-50 via-purple-50 to-red-50 hover:shadow-lg transition-all cursor-pointer hover:-translate-y-1 border-0"
                       onClick={() => setLanguageFilter("all")}
                     >
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-gray-700">전체</CardTitle>
+                        <CardTitle className="text-sm font-medium text-gray-800">전체</CardTitle>
                       </CardHeader>
                       <CardContent className="pb-4">
                         <div className="text-4xl font-bold text-gray-900 mb-4">
