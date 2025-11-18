@@ -2847,7 +2847,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     }, {} as Record<string, number>)
 
                     return (
-                      <Card className="bg-gradient-to-br from-blue-50 to-sky-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
+                      <Card 
+                        className="bg-gradient-to-br from-blue-50 to-sky-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0 cursor-pointer"
+                        onClick={() => recordingSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      >
                         <CardContent className="p-4">
                           <div className="text-sm font-medium text-blue-700 mb-2">다음 녹음 응시</div>
                           <div className="text-4xl font-bold text-blue-900 mb-1 leading-tight">
@@ -2939,7 +2942,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     const classTypeDisplay = nextEducation.classType === '소규모' || nextEducation.classType === 'small-group' ? '소규모' : '1:1'
 
                     return (
-                      <Card className="bg-gradient-to-br from-green-50 to-emerald-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
+                      <Card 
+                        className="bg-gradient-to-br from-green-50 to-emerald-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0 cursor-pointer"
+                        onClick={() => educationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      >
                         <CardContent className="p-4">
                           <div className="text-sm font-medium text-green-700 mb-2">다음 교육</div>
                           <div className="text-4xl font-bold text-green-900 mb-1 leading-tight">
@@ -2984,7 +2990,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               </div>
 
               {/* 녹음 응시 목록 카드 */}
-          <Card className="mb-4 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+          <Card ref={recordingSectionRef} className="mb-4 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
             <CardHeader className="bg-gray-50/80 rounded-t-2xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -3041,7 +3047,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                         {batch}
                         <span className="text-[10px] text-gray-500">({list.length}명)</span>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-1.5 mt-2">
+                      <div className="space-y-1.5 mt-2">
                         {list.map((a: any, idx) => {
                           const isHighlighted = highlightedAttendedIds.has(a.employeeId) || highlightedAttendedIds.has(a.email) || highlightedAttendedIds.has(a.name)
                           return (
@@ -3063,12 +3069,12 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                               <span className="text-gray-600 font-mono text-xs whitespace-nowrap">{a.employeeId}</span>
                             </div>
 
-                            {/* 언어 배지 */}
-                            <div className={`flex items-center justify-center px-2 py-0.5 rounded text-[11px] font-bold border whitespace-nowrap ${
-                              (a.language.includes('한') || a.language.toLowerCase().includes('korean')) ? 'border-blue-300 bg-blue-100 text-blue-700' :
-                              (a.language.includes('일') || a.language.toLowerCase().includes('japanese')) ? 'border-purple-300 bg-purple-100 text-purple-700' :
-                              (a.language.includes('중') || a.language.toLowerCase().includes('chinese')) ? 'border-red-300 bg-red-100 text-red-700' :
-                              'border-gray-300 bg-gray-100 text-gray-700'
+                            {/* 언어 텍스트 */}
+                            <div className={`flex items-center justify-center text-[11px] font-bold whitespace-nowrap ${
+                              (a.language.includes('한') || a.language.toLowerCase().includes('korean')) ? 'text-blue-700' :
+                              (a.language.includes('일') || a.language.toLowerCase().includes('japanese')) ? 'text-purple-700' :
+                              (a.language.includes('중') || a.language.toLowerCase().includes('chinese')) ? 'text-red-700' :
+                              'text-gray-700'
                             }`}>
                               {a.language || '-'}
                             </div>
@@ -3112,7 +3118,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           </Card>
 
           {/* 교육 신청자 목록 카드 */}
-          <Card className="mb-4 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
+          <Card ref={educationSectionRef} className="mb-4 bg-white shadow-lg rounded-2xl hover:shadow-xl transition-shadow duration-300">
             <CardHeader className="bg-gray-50/80 rounded-t-2xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -3570,7 +3576,12 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     c.status === 're_evaluation'
                   )
                   const pending = waitingCandidates.filter(c => c.status === 'pending').length
-                  const inProgress = waitingCandidates.length - pending
+                  const reviewRequested = waitingCandidates.filter(c => c.status === 'review_requested').length
+                  const inProgress = waitingCandidates.filter(c => 
+                    c.status === 'evaluating' || 
+                    c.status === 'reviewing' || 
+                    c.status === 're_evaluation'
+                  ).length
                   
                   return (
                     <Card 
@@ -3580,19 +3591,24 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-gray-800">전체</CardTitle>
                       </CardHeader>
-                      <CardContent className="pb-4">
+                      <CardContent className="pb-3">
                         <div className="text-4xl font-bold text-gray-900 mb-4">
                           {waitingCandidates.length}<span className="text-xl ml-1">건</span>
                         </div>
                         
-                        <div className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-600">대기:</span>
-                            <span className="font-bold text-orange-600">{pending}</span>
+                        {/* 가로 3개 바 */}
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div className="text-center py-2 bg-white/60 rounded-md">
+                            <div className="font-bold text-orange-600 text-base">{pending}</div>
+                            <div className="text-orange-600 mt-0.5">대기</div>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-600">진행중:</span>
-                            <span className="font-bold text-blue-600">{inProgress}</span>
+                          <div className="text-center py-2 bg-white/60 rounded-md">
+                            <div className="font-bold text-yellow-600 text-base">{reviewRequested}</div>
+                            <div className="text-yellow-600 mt-0.5">검토요청</div>
+                          </div>
+                          <div className="text-center py-2 bg-white/60 rounded-md">
+                            <div className="font-bold text-blue-600 text-base">{inProgress}</div>
+                            <div className="text-blue-600 mt-0.5">진행중</div>
                           </div>
                         </div>
                       </CardContent>
@@ -3612,7 +3628,12 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     )
                   )
                   const pending = langCandidates.filter(c => c.status === 'pending').length
-                  const inProgress = langCandidates.length - pending
+                  const reviewRequested = langCandidates.filter(c => c.status === 'review_requested').length
+                  const inProgress = langCandidates.filter(c => 
+                    c.status === 'evaluating' || 
+                    c.status === 'reviewing' || 
+                    c.status === 're_evaluation'
+                  ).length
                   
                   const bgGradient = lang === "korean-english" 
                     ? "from-blue-50 to-sky-100" 
@@ -3643,19 +3664,24 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                           {langDisplay}
                         </CardTitle>
                       </CardHeader>
-                      <CardContent className="pb-4">
+                      <CardContent className="pb-3">
                         <div className={`text-4xl font-bold ${numColor} mb-4`}>
                           {langCandidates.length}<span className="text-xl ml-1">건</span>
                         </div>
                         
-                        <div className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-600">대기:</span>
-                            <span className="font-bold text-orange-600">{pending}</span>
+                        {/* 가로 3개 바 */}
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div className="text-center py-2 bg-white/60 rounded-md">
+                            <div className="font-bold text-orange-600 text-base">{pending}</div>
+                            <div className="text-orange-600 mt-0.5">대기</div>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-600">진행중:</span>
-                            <span className="font-bold text-blue-600">{inProgress}</span>
+                          <div className="text-center py-2 bg-white/60 rounded-md">
+                            <div className="font-bold text-yellow-600 text-base">{reviewRequested}</div>
+                            <div className="text-yellow-600 mt-0.5">검토요청</div>
+                          </div>
+                          <div className="text-center py-2 bg-white/60 rounded-md">
+                            <div className="font-bold text-blue-600 text-base">{inProgress}</div>
+                            <div className="text-blue-600 mt-0.5">진행중</div>
                           </div>
                         </div>
                       </CardContent>
