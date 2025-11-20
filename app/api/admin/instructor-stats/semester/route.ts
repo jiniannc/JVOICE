@@ -56,28 +56,43 @@ export async function GET(request: NextRequest) {
       months.push({ month: monthStr, monthLabel });
     }
 
-    // 1. 평가 데이터 조회
+    // 1. 평가 데이터 조회 (최초 평가자 기준)
     const evaluations = await prisma.evaluation.findMany({
       where: {
-        evaluatedAt: {
-          gte: startDate,
-          lte: endDate,
-        },
+        OR: [
+          {
+            // initialEvaluatedAt이 있는 경우
+            initialEvaluatedAt: {
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+          {
+            // initialEvaluatedAt이 없으면 evaluatedAt 사용
+            initialEvaluatedAt: null,
+            evaluatedAt: {
+              gte: startDate,
+              lte: endDate,
+            },
+          }
+        ],
         status: {
-          in: ["submitted", "completed"],
+          in: ["submitted", "completed", "approved"],
         },
-        evaluatedBy: {
+        initialEvaluatedBy: {
           not: null,
         },
       },
       select: {
-        evaluatedBy: true,
-        evaluatedAt: true,
+        initialEvaluatedBy: true, // 최초 평가자
+        initialEvaluatedAt: true, // 최초 평가 시간
+        evaluatedBy: true, // 최종 평가자 (참고용)
+        evaluatedAt: true, // fallback용
         language: true,
       },
     });
 
-    console.log(`📊 [API] 반기 평가 데이터 ${evaluations.length}건 조회됨`);
+    console.log(`📊 [API] 반기 평가 데이터 ${evaluations.length}건 조회됨 (최초 평가자 기준)`);
 
     // 2. 교육 일지 조회
     const educationJournals = await prisma.educationJournal.findMany({
@@ -101,10 +116,11 @@ export async function GET(request: NextRequest) {
     // 3. 교관별 데이터 집계
     const instructorDataMap = new Map<string, InstructorSemesterData>();
 
-    // 평가 데이터 처리 (4건당 1시간으로 환산)
+    // 평가 데이터 처리 (4건당 1시간으로 환산, 최초 평가자 기준)
     evaluations.forEach((evaluation) => {
-      const instructorId = evaluation.evaluatedBy!;
-      const evaluatedDate = new Date(evaluation.evaluatedAt!);
+      const instructorId = evaluation.initialEvaluatedBy!; // 최초 평가자 사용
+      // initialEvaluatedAt이 없으면 evaluatedAt 사용
+      const evaluatedDate = new Date(evaluation.initialEvaluatedAt || evaluation.evaluatedAt!);
       const month = `${evaluatedDate.getFullYear()}-${(evaluatedDate.getMonth() + 1).toString().padStart(2, '0')}`;
 
       if (!instructorDataMap.has(instructorId)) {
@@ -205,8 +221,27 @@ export async function GET(request: NextRequest) {
       instructorData.totalHours += sessionHours;
     });
 
-    // 4. 결과 정리
+    // 4. 결과 정리 및 교관명 조회
     const result = Array.from(instructorDataMap.values());
+    
+    // User 테이블에서 교관 이름 조회 및 업데이트
+    console.log(`🔍 [API] User 테이블에서 교관 이름 조회 중...`);
+    for (const instructor of result) {
+      // 이름이 사번과 같으면 User 테이블에서 조회
+      if (instructor.instructorName === instructor.instructorId) {
+        const user = await prisma.user.findUnique({
+          where: { employeeId: instructor.instructorId },
+          select: { name: true }
+        });
+        
+        if (user?.name) {
+          instructor.instructorName = user.name;
+          console.log(`  ✅ ${instructor.instructorId} -> ${user.name}`);
+        } else {
+          console.log(`  ⚠️ ${instructor.instructorId} -> User 테이블에 없음`);
+        }
+      }
+    }
 
     console.log(`✅ [API] 반기별 교관 통계 완료: ${result.length}명`);
     result.forEach((instructor, index) => {

@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Slider } from "@/components/ui/slider"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil, Activity, AlertCircle, User, Users, CalendarPlus, History, X, Clock, TrendingUp, Loader2 } from "lucide-react"
+import { Search, FilterX, Play, Pause, ArrowLeft, Send, Volume2, Award, PlayCircle, StopCircle, RefreshCw, List, ClipboardList, Pencil, Activity, AlertCircle, User, Users, CalendarPlus, History, X, Clock, TrendingUp, Loader2, ShieldCheck } from "lucide-react"
 import { evaluationCriteria, getEvaluationCriteria, getGradeInfo } from "@/lib/evaluation-criteria"
 import { EvaluationSummary } from "@/components/evaluation-summary"
 import React from "react"
@@ -34,9 +34,16 @@ interface EvaluationCandidate {
   reviewedBy?: string // 추가: 검토한 교관
   reviewRequestedBy?: string // 추가: 검토 요청한 교관
   reviewRequestedAt?: string // 추가: 검토 요청 시간
-  evaluatedBy?: string // 추가: 평가 중인 교관 사번
-  evaluatedAt?: string // 추가: 평가 시작 시간
+  evaluatedBy?: string // 최종 평가자 (마지막으로 평가한 교관)
+  evaluatedAt?: string // 최종 평가 시간
+  initialEvaluatedBy?: string // 최초 평가자 (처음 평가한 교관)
+  initialEvaluatedAt?: string // 최초 평가 시간
   dropboxPath?: string // 추가: Dropbox 경로
+  // 자격 정보 추가
+  koreanEnglishGrade?: string
+  koreanEnglishExpiry?: string
+  japaneseGrade?: string
+  chineseGrade?: string
   dropboxFileId?: string // 추가: Dropbox 파일 ID
   dropboxFileName?: string // 추가: Dropbox 파일 이름
   dropboxFiles?: {
@@ -205,6 +212,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   const isPlayingAllRef = useRef(false) // 즉시 반영되는 재생 상태
   const [isLoading, setIsLoading] = useState(true)
   const [recordingsLoading, setRecordingsLoading] = useState<{ [candidateId: string]: boolean }>({})
+  const [isBackButtonLoading, setIsBackButtonLoading] = useState(false) // 뒤로가기 버튼 로딩 상태
   
   // 일시 중지 상태 관리
   const [playbackState, setPlaybackState] = useState<{
@@ -212,6 +220,16 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     currentIndex: number;
     recordings: string[];
     targetLanguage?: "korean" | "english";
+    pausedTime?: number; // 일시정지된 시간 (초)
+  } | null>(null)
+  
+  // ⭐ playbackState를 ref로도 저장 (state 업데이트 지연 문제 해결)
+  const playbackStateRef = useRef<{
+    isPaused: boolean;
+    currentIndex: number;
+    recordings: string[];
+    targetLanguage?: "korean" | "english";
+    pausedTime?: number;
   } | null>(null)
   
   // 현재 재생 중인 인덱스와 녹음 목록을 ref로 관리 (pauseAllRecordings에서 접근하기 위해)
@@ -220,6 +238,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     recordings: string[];
     targetLanguage?: "korean" | "english";
   } | null>(null)
+
+  // ⭐ playbackState를 설정할 때 ref도 함께 업데이트하는 헬퍼 함수
+  const updatePlaybackState = (newState: typeof playbackState) => {
+    console.log("🔥 updatePlaybackState 호출:", newState)
+    setPlaybackState(newState)
+    playbackStateRef.current = newState
+  }
 
   // 출석 하이라이트용 CSS 키프레임을 주입 (컴포넌트 마운트 시 1회)
   useEffect(() => {
@@ -283,6 +308,12 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   const loadApplicants = async (date?: string, attendanceMap?: Record<string, boolean>) => {
     setLoadingApplicants(true)
     try {
+      // attendanceMap이 없으면 먼저 출석 데이터 로드
+      if (!attendanceMap) {
+        console.log('📋 [loadApplicants] attendanceMap 없음 - loadAttendance 먼저 호출')
+        attendanceMap = await loadAttendance(date)
+      }
+      
       const url = date ? `/api/recording-applicants?date=${encodeURIComponent(date)}` : '/api/recording-applicants'
       const res = await fetch(url, { cache: 'no-store' })
       const data = await res.json()
@@ -307,35 +338,25 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         })
       }
       
-      // 출석 체크와 결합: 서버에서 가져온 응시자에 출석 여부 주입
+      // API 응답에서 이미 hasAttended가 포함되어 있음 (제출과 동일한 로직)
       const applicantsRaw = (data.applicants || []) as Array<any>
       const withAttendance = applicantsRaw.map(a => {
-        // language 형식 변환: "한영" → "korean-english"
-        let languageCode = a.language
-        if (a.language?.includes('한')) languageCode = 'korean-english'
-        else if (a.language?.includes('일')) languageCode = 'japanese'
-        else if (a.language?.includes('중')) languageCode = 'chinese'
-        
-        // employeeId + language 조합으로 체크 (간단하고 정확)
-        const key = `${a.employeeId}-${languageCode}`
-        const attended = !!(attendanceMap || attendanceByEmployeeId)[key]
-        
-        if (attended) {
-          console.log(`✅ [loadApplicants] ${a.name} (${a.employeeId}) ${a.language}: 출석`)
-        }
-        
         // time 필드 추출 (batch 또는 timeSlot에서)
         const timeMatch = (a.batch || a.timeSlot || '').match(/(\d{1,2}):(\d{2})/)
         const time = timeMatch ? `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}` : ''
         
+        if (a.hasAttended) {
+          console.log(`✅ [loadApplicants] ${a.name} (${a.employeeId}) ${a.language}: 출석 완료`)
+        }
+        
         return {
-        ...a,
+          ...a,
           time,
-          __attended: attended
+          __attended: a.hasAttended // API에서 가져온 출석 정보 사용
         }
       })
       setApplicants(withAttendance)
-      setApplicantDates(data.dates || [])
+      setApplicantDates([...(data.dates || [])].reverse()) // 내림차순 정렬
       
       // 초기 날짜 설정 로직 개선 - 교육 신청자 목록과 동일
       if (data.selectedDate) {
@@ -532,7 +553,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
 
       // 2단계: 날짜 목록 설정
       if (data.dates && Array.isArray(data.dates)) {
-        setEducationDates(data.dates)
+        setEducationDates([...data.dates].reverse()) // 내림차순 정렬
         console.log(`✅ [loadEducationApplicantsWithInitialDate] 날짜 목록 로드 완료: ${data.dates.length}개 날짜`)
         
         // 3단계: 적절한 초기 날짜 선택 및 해당 날짜로 필터링된 데이터 로드
@@ -861,8 +882,17 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             approved: evaluation.approved || false,
             reviewedBy: evaluation.reviewedBy,
             reviewRequestedBy: evaluation.reviewRequestedBy,
+            evaluatedBy: evaluation.evaluatedByName || evaluation.evaluatedBy, // 교관 이름 또는 사번
+            evaluatedAt: evaluation.evaluatedAt,
+            initialEvaluatedBy: evaluation.initialEvaluatedByName || evaluation.initialEvaluatedBy,
+            initialEvaluatedAt: evaluation.initialEvaluatedAt,
             dropboxFiles: evaluation.dropboxFiles || submission.dropboxFiles || [],
             dropboxPath: evaluation.dropboxPath || submission.dropboxPath,
+            // 자격 정보 추가
+            koreanEnglishGrade: submission.koreanEnglishGrade,
+            koreanEnglishExpiry: submission.koreanEnglishExpiry,
+            japaneseGrade: submission.japaneseGrade,
+            chineseGrade: submission.chineseGrade,
           }
         });
       setCandidates(candidateList)
@@ -1252,223 +1282,388 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   }
 
   const playAllRecordings = async (targetLanguage?: "korean" | "english") => {
-    console.log("🎵 playAllRecordings 함수 호출됨", { targetLanguage, playbackState })
+    console.log("🎵 playAllRecordings 함수 호출됨", { targetLanguage, playbackState: playbackStateRef.current })
+    console.log("🔍 playbackState 상세:", playbackStateRef.current)
+    
     if (!selectedCandidate || isPlayingAllRef.current) {
       console.log("❌ 조건 불만족:", { selectedCandidate: !!selectedCandidate, isPlayingAll: isPlayingAllRef.current })
       return
     }
 
-      setIsPlayingAll(true)
-    isPlayingAllRef.current = true // ref도 동시에 설정
+    setIsPlayingAll(true)
+    isPlayingAllRef.current = true
     
     // 언어별로 올바른 키 필터링 및 정렬
     const allRecordings = Object.keys(selectedCandidate.recordings || {})
     
     let recordings: string[]
+    let startIndex = 0
+    let resumeTime = 0
+    
+    // ⭐ playbackStateRef 사용 (즉시 반영됨)
+    const savedState = playbackStateRef.current
     
     // 일시 중지 상태에서 재개하는 경우
-    if (playbackState && playbackState.isPaused) {
-      console.log("▶️ 일시 중지된 재생 재개:", playbackState.currentIndex)
-      recordings = playbackState.recordings
+    if (savedState && savedState.isPaused) {
+      console.log("▶️ 일시 중지된 재생 재개:", savedState.currentIndex, "시간:", savedState.pausedTime)
+      recordings = savedState.recordings
+      startIndex = savedState.currentIndex
+      resumeTime = savedState.pausedTime || 0
     } else {
       // 새로운 재생 시작
-    if (selectedCandidate.language === "korean-english") {
-      if (targetLanguage === "english") {
-        // 영어 전체 재생
-        recordings = allRecordings.filter(key => key.endsWith("-english"))
+      if (selectedCandidate.language === "korean-english") {
+        if (targetLanguage === "english") {
+          recordings = allRecordings.filter(key => key.endsWith("-english"))
+        } else {
+          recordings = allRecordings.filter(key => key.endsWith("-korean"))
+        }
       } else {
-        // 한국어 전체 재생 (기본값)
-        recordings = allRecordings.filter(key => key.endsWith("-korean"))
-      }
-    } else {
-      // 일본어, 중국어는 해당 언어 키 사용
-      const languageSuffix = selectedCandidate.language
-      recordings = allRecordings.filter(key => key.endsWith(`-${languageSuffix}`))
-    }
-    
-    // 번호 순서대로 정렬 (1번, 2번, 3번...)
-    recordings.sort((a, b) => {
-      const aMatch = a.match(/^(\d+)-/)
-      const bMatch = b.match(/^(\d+)-/)
-      
-      if (aMatch && bMatch) {
-        const aNum = parseInt(aMatch[1])
-        const bNum = parseInt(bMatch[1])
-        return aNum - bNum
+        const languageSuffix = selectedCandidate.language
+        recordings = allRecordings.filter(key => key.endsWith(`-${languageSuffix}`))
       }
       
-      return a.localeCompare(b)
-    })
+      // 번호 순서대로 정렬
+      recordings.sort((a, b) => {
+        const aMatch = a.match(/^(\d+)-/)
+        const bMatch = b.match(/^(\d+)-/)
+        
+        if (aMatch && bMatch) {
+          const aNum = parseInt(aMatch[1])
+          const bNum = parseInt(bMatch[1])
+          return aNum - bNum
+        }
+        
+        return a.localeCompare(b)
+      })
     }
     
-    console.log("전체 재생 시작:", recordings)
-    console.log("정렬된 순서:", recordings.map(key => {
-      const match = key.match(/^(\d+)-/)
-      return match ? `${match[1]}번` : key
-    }))
-    console.log("언어:", selectedCandidate.language, "타겟 언어:", targetLanguage, "필터링된 키:", recordings)
-
-    console.log("🔍 for 루프 시작, recordings 길이:", recordings.length)
-    
-    // 시작 인덱스 결정
-    const startIndex = (playbackState && playbackState.isPaused) ? playbackState.currentIndex : 0
-    console.log("시작 인덱스:", startIndex)
+    console.log("전체 재생 시작:", recordings, "시작 인덱스:", startIndex, "재개 시간:", resumeTime)
 
     // 재생 상태 초기화
     setPlaybackState({
       isPaused: false,
       currentIndex: startIndex,
       recordings,
-      targetLanguage
+      targetLanguage,
+      pausedTime: 0
     })
 
     for (let i = startIndex; i < recordings.length; i++) {
-      // 현재 재생 인덱스를 ref에 저장 (pauseAllRecordings에서 사용)
       currentPlaybackRef.current = {
         currentIndex: i,
         recordings,
         targetLanguage
       }
       
-      // ref를 사용해서 즉시 재생 중지 확인
       if (!isPlayingAllRef.current) {
-        console.log("⏸️ 재생 중단됨, 현재 인덱스:", i)
-        setPlaybackState({
-          isPaused: true,
-          currentIndex: i,
-          recordings,
-          targetLanguage
-        })
+        console.log("⏸️ 재생 중단됨")
         return
       }
       
       const recordingKey = recordings[i]
-      console.log("🔄 루프 반복:", recordingKey, "인덱스:", i)
+      console.log(`🔄 [${i+1}/${recordings.length}] 재생:`, recordingKey, i === startIndex ? `(${resumeTime.toFixed(1)}초부터)` : "")
 
-      console.log("재생 중인 파일:", recordingKey)
+      // 첫 번째 파일이고 재개 시간이 있으면 해당 위치부터 재생
+      const startTime = (i === startIndex && resumeTime > 0) ? resumeTime : 0
       
-      // 현재 재생 중인 오디오 정지
-      if (currentlyPlaying && audioElementsRef.current[currentlyPlaying]) {
-        audioElementsRef.current[currentlyPlaying].pause()
-        audioElementsRef.current[currentlyPlaying].currentTime = 0
+      const success = await playNextRecording(recordingKey, startTime)
+      if (!success) break
+      
+      if (!isPlayingAllRef.current) {
+        console.log("⏸️ 재생 중단됨")
+        return
       }
 
-      try {
-        // recordings에서 Base64 데이터로 재생
-        if (selectedCandidate && selectedCandidate.recordings && selectedCandidate.recordings[recordingKey]) {
-          const recordingData = selectedCandidate.recordings[recordingKey]
-           console.log("recordings에서 재생 시도:", recordingKey)
-           
-           // Base64 문자열인지 확인
-           if (typeof recordingData === 'string' && recordingData.length > 100) {
-            try {
-              console.log("Base64 데이터를 Blob으로 변환 중...")
-              
-              let base64Data = recordingData
-              
-              // data:audio/webm;base64, 형식인지 확인
-              if (recordingData.startsWith('data:audio/')) {
-                base64Data = recordingData.split(',')[1]
-              }
-              
-              const binaryString = atob(base64Data)
-              const bytes = new Uint8Array(binaryString.length)
-              for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i)
-              }
-              const blob = new Blob([bytes], { type: 'audio/webm' })
-              
-              console.log("Blob 변환 성공:", blob.size, "bytes")
-              const audioUrl = URL.createObjectURL(blob)
-              const audio = new Audio(audioUrl)
-
-              // Promise를 사용해서 재생 완료를 기다림
-              const playPromise = new Promise<void>((resolve, reject) => {
-              audio.onended = () => {
-                console.log("오디오 재생 완료:", recordingKey)
-                syncAudioState(null)
-                URL.revokeObjectURL(audioUrl)
-                  resolve()
-              }
-
-              audio.onerror = (e) => {
-                console.error("오디오 재생 실패:", recordingKey, e)
-                syncAudioState(null)
-                URL.revokeObjectURL(audioUrl)
-                  reject(e)
-              }
-              
-              // ⭐ 일시 정지 시에도 Promise를 완료시켜서 for 루프가 계속 진행되도록!
-              audio.onpause = () => {
-                console.log("⏸️ 오디오 일시 정지됨:", recordingKey)
-                // pause 시에는 URL을 정리하지 않음 (이어서 재생 위해)
-                resolve()
-              }
-              
-              audio.onloadstart = () => {
-                console.log("오디오 로딩 시작:", recordingKey)
-              }
-              
-              audio.oncanplay = () => {
-                console.log("오디오 재생 가능:", recordingKey)
-              }
-              })
-              
-              audioElementsRef.current[recordingKey] = audio
-              syncAudioState(recordingKey)
-              
-              console.log("오디오 재생 시작:", recordingKey)
-              await audio.play()
-              console.log("오디오 재생 명령 완료:", recordingKey)
-              
-              // 재생 완료까지 대기
-              await playPromise
-              
-              // 다음 파일 재생 전 잠시 대기
-              await new Promise(resolve => setTimeout(resolve, 500))
-            } catch (error) {
-              console.error("Base64 변환 실패:", recordingKey, error)
-            }
-          } else {
-            console.warn("유효하지 않은 오디오 데이터:", recordingKey, "타입:", typeof recordingData, "시작:", recordingData?.substring(0, 50))
-          }
-        } else {
-          console.warn("recordings에서 데이터를 찾을 수 없습니다:", recordingKey)
-        }
-      } catch (error) {
-        console.error("재생 중 오류:", recordingKey, error)
-      }
-
-      // 다음 녹음 전 1초 대기
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // 다음 녹음 전 잠시 대기
+      await new Promise((resolve) => setTimeout(resolve, 500))
     }
 
+    console.log("✅ 전체 재생 완료")
     setIsPlayingAll(false)
     isPlayingAllRef.current = false
-    currentPlaybackRef.current = null // ref 초기화
+    currentPlaybackRef.current = null
     setPlaybackState(null)
+  }
+
+  // 개별 녹음 파일 재생 헬퍼 함수
+  const playNextRecording = async (recordingKey: string, startTime: number = 0): Promise<boolean> => {
+    console.log(`재생 중인 파일: ${recordingKey}${startTime > 0 ? ` (${startTime.toFixed(1)}초부터 재개)` : ''}`)
+    
+    // ⭐ 핵심: 이미 존재하는 Audio 객체가 있고 startTime이 주어지면 재사용
+    const existingAudio = audioElementsRef.current[recordingKey]
+    if (existingAudio && startTime > 0) {
+      console.log(`🔄 기존 Audio 객체 재사용: ${recordingKey}, 시작 위치: ${startTime.toFixed(1)}초 설정 (currentTime: ${existingAudio.currentTime.toFixed(1)})`)
+      
+      // ⭐ currentTime을 명시적으로 startTime으로 설정
+      existingAudio.currentTime = startTime
+      syncAudioState(recordingKey)
+      
+      // ⭐ 중요: 기존 이벤트 리스너를 모두 제거하고 새로 등록
+      const oldHandlers = (existingAudio as any)._playbackHandlers
+      if (oldHandlers) {
+        console.log("🧹 기존 이벤트 리스너 제거")
+        existingAudio.removeEventListener('ended', oldHandlers.ended)
+        existingAudio.removeEventListener('pause', oldHandlers.pause)
+        existingAudio.removeEventListener('error', oldHandlers.error)
+      }
+      
+      // Promise를 사용해서 재생 완료를 기다림
+      const playPromise = new Promise<boolean>((resolve) => {
+        const handleEnded = () => {
+          console.log("✅ 오디오 재생 완료:", recordingKey)
+          existingAudio.removeEventListener('ended', handleEnded)
+          existingAudio.removeEventListener('pause', handlePause)
+          existingAudio.removeEventListener('error', handleError)
+          delete (existingAudio as any)._playbackHandlers
+          syncAudioState(null)
+          resolve(true)
+        }
+
+        const handleError = (e: any) => {
+          console.error("❌ 오디오 재생 실패:", recordingKey, e)
+          existingAudio.removeEventListener('ended', handleEnded)
+          existingAudio.removeEventListener('pause', handlePause)
+          existingAudio.removeEventListener('error', handleError)
+          delete (existingAudio as any)._playbackHandlers
+          syncAudioState(null)
+          resolve(false)
+        }
+        
+        const handlePause = () => {
+          const pausedTime = existingAudio.currentTime
+          console.log("⏸️ 오디오 일시 정지됨 (재사용):", recordingKey, "위치:", pausedTime.toFixed(1))
+          
+          // ⚠️ 사용자가 수동으로 일시정지했는지 확인
+          if (!isPlayingAllRef.current) {
+            console.log("👤 사용자에 의한 일시정지 - 루프 중단")
+            
+            if (currentPlaybackRef.current) {
+              setPlaybackState({
+                isPaused: true,
+                currentIndex: currentPlaybackRef.current.currentIndex,
+                recordings: currentPlaybackRef.current.recordings,
+                targetLanguage: currentPlaybackRef.current.targetLanguage,
+                pausedTime: pausedTime
+              })
+            }
+            
+            setIsPlayingAll(false)
+            // resolve 안 함 - for 루프가 멈춤
+          } else {
+            console.log("🔄 자동 일시정지 (전환 중) - 계속 진행")
+          }
+        }
+        
+        // 핸들러 참조를 audio 객체에 저장
+        (existingAudio as any)._playbackHandlers = {
+          ended: handleEnded,
+          pause: handlePause,
+          error: handleError
+        }
+        
+        existingAudio.addEventListener('ended', handleEnded)
+        existingAudio.addEventListener('error', handleError)
+        existingAudio.addEventListener('pause', handlePause)
+      })
+      
+      await existingAudio.play()
+      console.log(`▶️ 기존 Audio 재생 시작: ${existingAudio.currentTime.toFixed(1)}초부터`)
+      const success = await playPromise
+      return success
+    }
+    
+    // ⭐ 새 Audio를 만들기 전에 기존 Audio 완전히 정리
+    if (existingAudio) {
+      console.log(`🗑️ 기존 Audio 객체 정리 (currentTime: ${existingAudio.currentTime.toFixed(1)}초)`)
+      
+      // 이벤트 리스너 제거
+      const oldHandlers = (existingAudio as any)._playbackHandlers
+      if (oldHandlers) {
+        existingAudio.removeEventListener('ended', oldHandlers.ended)
+        existingAudio.removeEventListener('pause', oldHandlers.pause)
+        existingAudio.removeEventListener('error', oldHandlers.error)
+        delete (existingAudio as any)._playbackHandlers
+      }
+      
+      // 오디오 정리
+      existingAudio.pause()
+      existingAudio.currentTime = 0
+      existingAudio.src = ''
+      
+      // ref에서 제거
+      delete audioElementsRef.current[recordingKey]
+      console.log("✅ 기존 Audio 정리 완료")
+    }
+    
+    // 현재 재생 중인 다른 오디오 정지
+    if (currentlyPlaying && currentlyPlaying !== recordingKey && audioElementsRef.current[currentlyPlaying]) {
+      audioElementsRef.current[currentlyPlaying].pause()
+      audioElementsRef.current[currentlyPlaying].currentTime = 0
+    }
+
+    try {
+      if (selectedCandidate && selectedCandidate.recordings && selectedCandidate.recordings[recordingKey]) {
+        const recordingData = selectedCandidate.recordings[recordingKey]
+        
+        if (typeof recordingData === 'string' && recordingData.length > 100) {
+          try {
+            let base64Data = recordingData
+            
+            if (recordingData.startsWith('data:audio/')) {
+              base64Data = recordingData.split(',')[1]
+            }
+            
+            const binaryString = atob(base64Data)
+            const bytes = new Uint8Array(binaryString.length)
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i)
+            }
+            const blob = new Blob([bytes], { type: 'audio/webm' })
+            
+            const audioUrl = URL.createObjectURL(blob)
+            const audio = new Audio(audioUrl)
+            
+            console.log(`🆕 새 Audio 객체 생성: ${recordingKey}`)
+
+            // 메타데이터 로드 완료 대기
+            await new Promise<void>((resolveLoad) => {
+              audio.addEventListener('loadedmetadata', () => {
+                console.log(`📊 ${recordingKey} 메타데이터 로드 완료, 길이: ${audio.duration.toFixed(1)}초`)
+                if (startTime > 0) {
+                  audio.currentTime = startTime
+                  console.log(`⏩ ${recordingKey} 재생 위치를 ${startTime.toFixed(1)}초로 설정`)
+                }
+                resolveLoad()
+              })
+              audio.load()
+            })
+
+            // Promise를 사용해서 재생 완료를 기다림
+            const playPromise = new Promise<boolean>((resolve) => {
+              const handleEnded = () => {
+                console.log("✅ 오디오 재생 완료:", recordingKey)
+                audio.removeEventListener('ended', handleEnded)
+                audio.removeEventListener('pause', handlePause)
+                audio.removeEventListener('error', handleError)
+                delete (audio as any)._playbackHandlers
+                syncAudioState(null)
+                URL.revokeObjectURL(audioUrl)
+                resolve(true)
+              }
+
+              const handleError = (e: any) => {
+                console.error("❌ 오디오 재생 실패:", recordingKey, e)
+                audio.removeEventListener('ended', handleEnded)
+                audio.removeEventListener('pause', handlePause)
+                audio.removeEventListener('error', handleError)
+                delete (audio as any)._playbackHandlers
+                syncAudioState(null)
+                URL.revokeObjectURL(audioUrl)
+                resolve(false)
+              }
+              
+              // 일시 정지 시 현재 시간을 저장하고 루프 중단
+              const handlePause = () => {
+                const pausedTime = audio.currentTime
+                console.log("⏸️ 오디오 일시 정지됨 (신규):", recordingKey, "위치:", pausedTime.toFixed(1))
+                
+                // ⚠️ 사용자가 수동으로 일시정지했는지 확인
+                if (!isPlayingAllRef.current) {
+                  console.log("👤 사용자에 의한 일시정지 - 루프 중단")
+                  
+                  if (currentPlaybackRef.current) {
+                    updatePlaybackState({
+                      isPaused: true,
+                      currentIndex: currentPlaybackRef.current.currentIndex,
+                      recordings: currentPlaybackRef.current.recordings,
+                      targetLanguage: currentPlaybackRef.current.targetLanguage,
+                      pausedTime: pausedTime
+                    })
+                  }
+                  
+                  setIsPlayingAll(false)
+                  // resolve 안 함 - for 루프가 멈춤
+                } else {
+                  console.log("🔄 자동 일시정지 (전환 중) - 계속 진행")
+                }
+              }
+              
+              // 핸들러 참조를 audio 객체에 저장
+              (audio as any)._playbackHandlers = {
+                ended: handleEnded,
+                pause: handlePause,
+                error: handleError
+              }
+              
+              audio.addEventListener('ended', handleEnded)
+              audio.addEventListener('error', handleError)
+              audio.addEventListener('pause', handlePause)
+            })
+            
+            audioElementsRef.current[recordingKey] = audio
+            syncAudioState(recordingKey)
+            
+            await audio.play()
+            console.log(`▶️ 새 Audio 재생 시작: ${recordingKey}`)
+            
+            // 재생 완료까지 대기
+            const success = await playPromise
+            return success
+          } catch (error) {
+            console.error("Base64 변환 실패:", recordingKey, error)
+            return false
+          }
+        } else {
+          console.warn("유효하지 않은 오디오 데이터:", recordingKey)
+          return false
+        }
+      } else {
+        console.warn("recordings에서 데이터를 찾을 수 없습니다:", recordingKey)
+        return false
+      }
+    } catch (error) {
+      console.error("재생 중 오류:", recordingKey, error)
+      return false
+    }
   }
 
   // 일시 중지 기능 - 재생 위치 유지
   const pauseAllRecordings = () => {
     console.log("⏸️ 일시 중지 요청")
-    setIsPlayingAll(false)
-    isPlayingAllRef.current = false // ref도 동시에 설정
+    console.log("현재 재생 중:", currentlyPlaying)
+    console.log("audioElementsRef 키들:", Object.keys(audioElementsRef.current))
     
-    // 현재 재생 중인 인덱스 정보를 즉시 playbackState에 저장
-    if (currentPlaybackRef.current) {
-      console.log("💾 현재 재생 위치 저장:", currentPlaybackRef.current.currentIndex)
-      setPlaybackState({
-        isPaused: true,
-        currentIndex: currentPlaybackRef.current.currentIndex,
-        recordings: currentPlaybackRef.current.recordings,
-        targetLanguage: currentPlaybackRef.current.targetLanguage
-      })
-    }
-    
-    // 현재 재생 중인 오디오만 일시 정지 (currentTime 유지)
+    // ⭐ 중요: pause() 호출 전에 playbackState 먼저 저장
     if (currentlyPlaying && audioElementsRef.current[currentlyPlaying]) {
-      audioElementsRef.current[currentlyPlaying].pause()
+      const audio = audioElementsRef.current[currentlyPlaying]
+      const pausedTime = audio.currentTime
+      
+      console.log("💾 현재 재생 위치 저장:", pausedTime.toFixed(1), "초")
+      console.log("currentPlaybackRef:", currentPlaybackRef.current)
+      
+      // ⭐ pause() 호출 전에 playbackState 저장
+      if (currentPlaybackRef.current) {
+        const newPlaybackState = {
+          isPaused: true,
+          currentIndex: currentPlaybackRef.current.currentIndex,
+          recordings: currentPlaybackRef.current.recordings,
+          targetLanguage: currentPlaybackRef.current.targetLanguage,
+          pausedTime: pausedTime
+        }
+        console.log("📝 playbackState 저장:", newPlaybackState)
+        updatePlaybackState(newPlaybackState)
+      }
+      
+      // 이제 상태 변경
+      setIsPlayingAll(false)
+      isPlayingAllRef.current = false
+      
+      // 마지막으로 pause() 호출 (handlePause 트리거되지만 이미 state 저장됨)
+      audio.pause()
+    } else {
+      console.warn("⚠️ 현재 재생 중인 오디오가 없습니다!")
+      setIsPlayingAll(false)
+      isPlayingAllRef.current = false
     }
   }
 
@@ -1496,11 +1691,78 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     }
   }, [isPlayingAll])
 
-  // 탭 전환 시 재생 중지
+  // ⭐ 후보자 변경 시 모든 재생 상태 초기화
+  useEffect(() => {
+    console.log("🔄 후보자 변경 감지, 재생 상태 초기화:", selectedCandidate?.name)
+    
+    // 모든 오디오 정지 및 초기화
+    Object.keys(audioElementsRef.current).forEach(key => {
+      const audio = audioElementsRef.current[key]
+      if (audio) {
+        console.log("🛑 오디오 정지 및 정리:", key)
+        audio.pause()
+        audio.currentTime = 0
+        audio.src = ''
+        
+        // 이벤트 리스너 제거
+        const handlers = (audio as any)._playbackHandlers
+        if (handlers) {
+          audio.removeEventListener('ended', handlers.ended)
+          audio.removeEventListener('pause', handlers.pause)
+          audio.removeEventListener('error', handlers.error)
+          delete (audio as any)._playbackHandlers
+        }
+      }
+    })
+    
+    // ref 완전 초기화
+    audioElementsRef.current = {}
+    currentPlaybackRef.current = null
+    
+    // state 초기화
+    setIsPlayingAll(false)
+    isPlayingAllRef.current = false
+    setPlaybackState(null)
+    syncAudioState(null)
+    
+    console.log("✅ 재생 상태 초기화 완료")
+  }, [selectedCandidate?.id]) // id가 변경될 때마다 실행
+
+  // 탭 전환 시 재생 중지 및 오디오 정리
   const handleLanguageChange = (language: "korean" | "english") => {
-    if (isPlayingAll) {
-      stopAllRecordings()
-    }
+    console.log("🔄 언어 탭 변경 감지, 재생 상태 초기화:", currentLanguage, "→", language)
+    
+    // 모든 오디오 정지 및 초기화
+    Object.keys(audioElementsRef.current).forEach(key => {
+      const audio = audioElementsRef.current[key]
+      if (audio) {
+        console.log("🛑 오디오 정지 및 정리:", key)
+        audio.pause()
+        audio.currentTime = 0
+        audio.src = ''
+        
+        // 이벤트 리스너 제거
+        const handlers = (audio as any)._playbackHandlers
+        if (handlers) {
+          audio.removeEventListener('ended', handlers.ended)
+          audio.removeEventListener('pause', handlers.pause)
+          audio.removeEventListener('error', handlers.error)
+          delete (audio as any)._playbackHandlers
+        }
+      }
+    })
+    
+    // ref 완전 초기화
+    audioElementsRef.current = {}
+    currentPlaybackRef.current = null
+    
+    // state 초기화
+    setIsPlayingAll(false)
+    isPlayingAllRef.current = false
+    updatePlaybackState(null)
+    syncAudioState(null)
+    
+    console.log("✅ 언어 탭 변경 시 재생 상태 초기화 완료")
     setCurrentLanguage(language)
   }
 
@@ -1528,13 +1790,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   // 실시간 총점 계산
   const getCurrentTotalScore = () => {
     const categoryScores = calculateCategoryScoresDetailed();
-    console.log("🔍 [DEBUG] categoryScores keys:", Object.keys(categoryScores).slice(0, 10), "...", Object.keys(categoryScores).length)
-    const sampleKeys = [
-      "korean-발음-자음", "korean-발음-모음", "korean-전달력-부드러운 연결",
-      "english-발음_자음-P / F", "english-전달력-자연스러운 연결"
-    ]
-    const sample = Object.fromEntries(sampleKeys.map(k => [k, (categoryScores as any)[k]]))
-    console.log("🔍 [DEBUG] categoryScores sample:", sample)
+    // DEBUG 로그 제거
     if (selectedCandidate?.language === "korean-english") {
       const koreanCategories = ["발음", "억양", "전달력", "음성", "속도"]; 
       const englishCategories = ["발음_자음", "발음_모음", "억양", "강세", "전달력"]; 
@@ -1584,19 +1840,9 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     const categoryScores: { [key: string]: number } = {}
     const currentScores = getCurrentScores()
     
-    // 🔥 브라우저 콘솔 디버깅 시작
-    console.log("🔥🔥🔥 [BROWSER DEBUG] calculateCategoryScoresDetailed 시작 🔥🔥🔥")
-    console.log("🔥 [BROWSER] 언어:", selectedCandidate?.language)
-    console.log("🔥 [BROWSER] currentCandidateId:", currentCandidateId)
-    console.log("🔥 [BROWSER] currentScores:", currentScores)
-    
     // 저장된 categoryScores가 있으면 우선 사용 (admin 모드에서 중요)
     const storedCategoryScores = currentCandidateId && evaluationData[currentCandidateId]?.categoryScores
-    console.log("🔥 [BROWSER] storedCategoryScores:", storedCategoryScores)
-    console.log("🔥 [BROWSER] storedCategoryScores keys:", storedCategoryScores ? Object.keys(storedCategoryScores) : 'NONE')
-    console.log("🔥 [BROWSER] evaluationData 전체:", evaluationData[currentCandidateId || ''])
     if (storedCategoryScores && Object.keys(storedCategoryScores).length > 0) {
-      console.log("✅ 저장된 categoryScores 사용:", storedCategoryScores)
       
       // 🔥 중요: 저장된 소항목 점수에서 대항목 합산 점수를 계산해서 추가
       const enhancedScores = { ...storedCategoryScores }
@@ -1609,7 +1855,6 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             .filter(([key]) => key.startsWith(`korean-${category}-`))
             .reduce((acc, [, score]) => acc + (score || 0), 0)
           enhancedScores[`korean-${category}`] = sum
-          console.log(`✅ 한국어 ${category} 합산: ${sum}`)
         }
         
         // 영어 대항목 합산
@@ -1619,18 +1864,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             .filter(([key]) => key.startsWith(`english-${category}-`))
             .reduce((acc, [, score]) => acc + (score || 0), 0)
           enhancedScores[`english-${category}`] = sum
-          console.log(`✅ 영어 ${category} 합산: ${sum}`)
         }
       } else {
         // 일본어/중국어 대항목 정규화 + 기본값(80%) 보정
-        console.log("🔥 [BROWSER] 일본어/중국어 대항목 합산 시작")
-        console.log("🔥 [BROWSER] evaluationData scores:", evaluationData[currentCandidateId || ""]?.scores)
-        console.log("🔥 [BROWSER] storedCategoryScores:", storedCategoryScores)
         const baseScores = {
           ...(evaluationData[currentCandidateId || ""]?.scores || {}),
           ...storedCategoryScores,
         } as Record<string, number>
-        console.log("🔥 [BROWSER] baseScores 합성 결과:", baseScores)
 
         const pickWithAliases = (aliases: string[]): number | undefined => {
           for (const a of aliases) {
@@ -1656,7 +1896,6 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             const v = pickWithAliases(item.aliases)
             const value = typeof v === "number" ? v : Math.round(item.max * 0.8 * 2) / 2
             enhancedScores[item.label] = value
-            console.log(`🔥 [BROWSER] 일본어 ${item.label}: ${value} (aliases: ${item.aliases.join(', ')}, found: ${v})`)
           }
         } else if (selectedCandidate?.language === "chinese") {
           const expected: Array<{ label: string; max: number; aliases: string[] }> = [
@@ -1671,13 +1910,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             const v = pickWithAliases(item.aliases)
             const value = typeof v === "number" ? v : Math.round(item.max * 0.8 * 2) / 2
             enhancedScores[item.label] = value
-            console.log(`✅ 중국어 ${item.label}: ${value}`)
           }
         }
       }
       
-      console.log("🔥 [BROWSER] 대항목 합산 완료 - enhancedScores:", enhancedScores)
-      console.log("🔥 [BROWSER] enhancedScores 키 목록:", Object.keys(enhancedScores))
       return enhancedScores
     }
 
@@ -1729,12 +1965,16 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     console.log("최종 평가 결과:", result)
 
     try {
-              // 직원 정보에서 이름 가져오기
-        const employeeName = await getEmployeeName(authenticatedUser?.email || '');
+              // 직원 정보에서 사번 가져오기
+        const employeeId = userInfo?.employeeId || authenticatedUser?.employeeId || '';
+        
+        if (!employeeId) {
+          alert('⚠️ 사번 정보를 찾을 수 없습니다.');
+          return;
+        }
         
         // 🔥 중요: 제출 시 0인 점수를 80% 기본값으로 보정
         const correctedScores = { ...result.scores };
-        console.log("🔥 [BROWSER] 제출 전 점수 보정 시작 - 원본 점수:", result.scores);
         
         if (selectedCandidate.language === "korean-english") {
           const allCategories = [
@@ -1754,7 +1994,6 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                 const scoreKey = `${koreanPrefix}${category}-${subKey}`;
                 if (correctedScores[scoreKey] === undefined) {
                   correctedScores[scoreKey] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
-                  console.log(`🔥 [BROWSER] ${scoreKey}: undefined → ${correctedScores[scoreKey]} (80%)`);
                 }
               }
             } else {
@@ -1762,7 +2001,6 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
               const scoreKey = `${koreanPrefix}${category}`;
               if (correctedScores[scoreKey] === undefined) {
                 correctedScores[scoreKey] = Math.round((Number(criteria) * 0.8) * 2) / 2;
-                console.log(`🔥 [BROWSER] ${scoreKey}: undefined → ${correctedScores[scoreKey]} (80%)`);
               }
             }
           }
@@ -1772,12 +2010,9 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           for (const [category, maxScore] of Object.entries(criteria)) {
             if (correctedScores[category] === undefined) {
               correctedScores[category] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
-              console.log(`🔥 [BROWSER] ${category}: undefined → ${correctedScores[category]} (80%)`);
             }
           }
         }
-        
-        console.log("🔥 [BROWSER] 제출 후 보정된 점수:", correctedScores);
         
         // grade 계산 (result.grade가 없으면 totalScore 기반으로 계산)
         let calculatedGrade = result.grade;
@@ -1795,7 +2030,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         // 평가 완료 API 호출
         const completeData = {
           evaluationId: currentCandidateId,
-          evaluatedBy: employeeName,
+          evaluatedBy: employeeId, // 사번 전송
           scores: correctedScores,
         comments: result.comments || { korean: '', english: '' },
         totalScore: result.totalScore || 0,
@@ -1810,12 +2045,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         body: JSON.stringify(completeData),
       })
 
+      console.log(`📡 [Complete API] 응답 상태: ${response.status}`);
+
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ [Complete API] 오류:`, errorText);
         throw new Error("평가 결과 저장 실패")
       }
 
       const apiResult = await response.json()
-      console.log("평가 결과 저장 성공:", apiResult)
+      console.log("✅ [Complete API] 평가 결과 저장 성공:", apiResult)
+      console.log("📊 [Complete API] 저장된 평가 데이터:", {
+        evaluationId: apiResult.evaluation?.id,
+        initialEvaluatedBy: apiResult.evaluation?.initialEvaluatedBy,
+        evaluatedBy: apiResult.evaluation?.evaluatedBy,
+      });
 
       // 성공적으로 제출되면 목록에서 해당 후보자 제거
       await loadCandidates(); // 목록 새로고침(상태 반영)
@@ -2371,8 +2615,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     }
 
     try {
-      // 직원 정보에서 이름 가져오기
-      const employeeName = await getEmployeeName(authenticatedUser?.email || '');
+      // 직원 정보에서 사번 가져오기
+      const employeeId = userInfo?.employeeId || authenticatedUser?.employeeId || '';
+      
+      if (!employeeId) {
+        alert('⚠️ 사번 정보를 찾을 수 없습니다.');
+        return;
+      }
       
       // 🔥 현재 evaluationData에서 최신 점수와 코멘트 가져오기 + 기본값 포함
       const currentEvalData = evaluationData[selectedCandidate.id] || { 
@@ -2429,7 +2678,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       // 검토 요청 API 호출 (점수와 의견 포함)
       const reviewRequestData = {
         evaluationId: selectedCandidate.id,
-        requestedBy: employeeName,
+        requestedBy: employeeId, // 사번 전송
         scores: currentScores,
         comments: currentComments
       };
@@ -2479,44 +2728,50 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
 
   // 평가 취소 및 뒤로가기 함수
   const handleCancelEvaluation = async () => {
-    if (!selectedCandidate) return;
+    if (!selectedCandidate || isBackButtonLoading) return;
 
-    // 재생 중인 경우 중지
-    if (isPlayingAll) {
-      stopAllRecordings();
-    }
+    setIsBackButtonLoading(true); // 로딩 시작
 
-    // evaluating 또는 reviewing 상태인 경우에만 취소 API 호출
-    if (selectedCandidate.status === 'pending' || selectedCandidate.status === 'evaluating' || 
-        selectedCandidate.status === 're_evaluation' || selectedCandidate.status === 'reviewing' ||
-        selectedCandidate.status === 'review_requested') {
-      try {
-        const cancelResponse = await fetch('/api/evaluations/cancel', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            evaluationId: selectedCandidate.id,
-            instructorId: userInfo?.employeeId || authenticatedUser?.employeeId
-          })
-        });
-
-        const cancelResult = await cancelResponse.json();
-
-        if (cancelResult.success) {
-          console.log('🔓 [평가/검토 취소] 잠금 해제 완료:', cancelResult);
-        } else {
-          console.warn('⚠️ [평가/검토 취소] 취소 실패:', cancelResult.error);
-        }
-      } catch (cancelError) {
-        console.error('❌ [평가/검토 취소] API 호출 실패:', cancelError);
+    try {
+      // 재생 중인 경우 중지
+      if (isPlayingAll) {
+        stopAllRecordings();
       }
-    }
 
-    // 평가 화면 닫기
-    setSelectedCandidate(null);
-    
-    // 평가 목록 새로고침
-    loadCandidates();
+      // evaluating 또는 reviewing 상태인 경우에만 취소 API 호출
+      if (selectedCandidate.status === 'pending' || selectedCandidate.status === 'evaluating' || 
+          selectedCandidate.status === 're_evaluation' || selectedCandidate.status === 'reviewing' ||
+          selectedCandidate.status === 'review_requested') {
+        try {
+          const cancelResponse = await fetch('/api/evaluations/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              evaluationId: selectedCandidate.id,
+              instructorId: userInfo?.employeeId || authenticatedUser?.employeeId
+            })
+          });
+
+          const cancelResult = await cancelResponse.json();
+
+          if (cancelResult.success) {
+            console.log('🔓 [평가/검토 취소] 잠금 해제 완료:', cancelResult);
+          } else {
+            console.warn('⚠️ [평가/검토 취소] 취소 실패:', cancelResult.error);
+          }
+        } catch (cancelError) {
+          console.error('❌ [평가/검토 취소] API 호출 실패:', cancelError);
+        }
+      }
+
+      // 평가 화면 닫기
+      setSelectedCandidate(null);
+      
+      // 평가 목록 새로고침
+      await loadCandidates();
+    } finally {
+      setIsBackButtonLoading(false); // 로딩 종료
+    }
   }
 
   // 후보자 선택 시 평가 정보와 녹음파일을 병렬로 로드하고, 모두 준비된 후 병합하여 setSelectedCandidate
@@ -2702,7 +2957,6 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       
       // 🔥 중요: 평가 진행 모드에서 초기 80% 점수 자동 설정 (pending 상태인 경우만)
       if (selectedCandidate.status === "pending") {
-        console.log("🔥 [BROWSER] 초기 80% 점수 설정 시작 - 언어:", selectedCandidate.language);
         
         const initialScores: { [key: string]: number } = {};
         const currentScores = getCurrentScores();
@@ -2746,14 +3000,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           }
         }
         
-        console.log("🔥 [BROWSER] 설정할 초기 점수:", initialScores);
-        console.log("🔥 [BROWSER] 기존 점수:", currentScores);
-        
         // 초기 점수와 기존 점수 병합
         if (Object.keys(initialScores).length > 0) {
           const mergedScores = { ...currentScores, ...initialScores };
           setCurrentScores(mergedScores);
-          console.log("🔥 [BROWSER] 최종 병합된 점수:", mergedScores);
         }
       }
     }
@@ -2823,13 +3073,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     
                     if (!nextRecording || !nextRecording.time) {
                       return (
-                        <Card className="bg-gradient-to-br from-blue-50 to-sky-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
+                        <Card className="bg-gray-100 border-gray-300 opacity-60 cursor-not-allowed">
                           <CardContent className="p-4">
-                            <div className="text-sm font-medium text-blue-700 mb-2">다음 녹음 응시</div>
-                            <div className="text-4xl font-bold text-blue-900 mb-4">
+                            <div className="text-sm font-medium text-gray-500 mb-2">다음 녹음 응시</div>
+                            <div className="text-4xl font-bold text-gray-600 mb-4">
                               예정 없음
                             </div>
-                            <p className="text-sm text-gray-500">오늘 예정된 녹음 없음</p>
+                            <p className="text-sm text-gray-400">오늘 예정된 녹음 없음</p>
                           </CardContent>
                         </Card>
                       )
@@ -2921,13 +3171,13 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     
                     if (!nextEducation || !nextEducation.slotTime) {
                       return (
-                        <Card className="bg-gradient-to-br from-green-50 to-emerald-100 hover:shadow-lg transition-all hover:-translate-y-1 border-0">
+                        <Card className="bg-gray-100 border-gray-300 opacity-60 cursor-not-allowed">
                           <CardContent className="p-4">
-                            <div className="text-sm font-medium text-green-700 mb-2">다음 교육</div>
-                            <div className="text-4xl font-bold text-green-900 mb-4">
+                            <div className="text-sm font-medium text-gray-500 mb-2">다음 교육</div>
+                            <div className="text-4xl font-bold text-gray-600 mb-4">
                               예정 없음
                             </div>
-                            <p className="text-sm text-gray-500">오늘 예정된 교육 없음</p>
+                            <p className="text-sm text-gray-400">오늘 예정된 교육 없음</p>
                           </CardContent>
                         </Card>
                       )
@@ -3039,28 +3289,39 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   }, {})).sort((a, b) => {
                     const order = (s: string) => { const m = s.match(/(\d+)/); return m ? parseInt(m[1], 10) : 9999 };
                     return order(a[0]) - order(b[0]);
-                  }).map(([batch, list]) => (
-                    <div key={batch} className="mb-3">
+                  }).map(([batch, list], batchIndex, allBatches) => (
+                    <div key={batch} className={`mb-6 ${batchIndex < allBatches.length - 1 ? 'pb-6' : ''}`} style={{ 
+                      borderBottom: batchIndex < allBatches.length - 1 ? '1px solid #e5e7eb' : 'none' 
+                    }}>
                       <div className="sticky top-0 bg-white/70 backdrop-blur text-xs font-semibold px-2 py-1 rounded-md inline-flex items-center gap-2 border"
                         style={{ borderColor: '#fde68a', backgroundColor: '#fffbeb', color: '#92400e' }}
                       >
                         {batch}
                         <span className="text-[10px] text-gray-500">({list.length}명)</span>
                       </div>
-                      <div className="space-y-1.5 mt-2">
+                      <div className="flex flex-wrap gap-2 mt-2">
                         {list.map((a: any, idx) => {
                           const isHighlighted = highlightedAttendedIds.has(a.employeeId) || highlightedAttendedIds.has(a.email) || highlightedAttendedIds.has(a.name)
                           return (
                           <div 
                             key={`${batch}-${a.employeeId}-${idx}`} 
-                            className={`grid gap-2 px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
+                            className={`px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
                               a.hasSubmitted 
                                 ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300 shadow-sm' 
                                 : a.__attended 
                                   ? `bg-green-50 border-green-200 ${isHighlighted ? 'ring-2 ring-green-400 attendance-highlight' : ''}`
                                   : 'bg-white border-gray-200 shadow-sm'
                             }`}
-                            style={{ gridTemplateColumns: 'minmax(150px, 1fr) 60px 52px 52px' }}
+                            style={{ 
+                              display: 'grid', 
+                              gridTemplateColumns: 'minmax(100px, 1fr) 52px 48px 48px', 
+                              gap: '0.375rem', 
+                              alignItems: 'center',
+                              minWidth: '310px',
+                              maxWidth: '310px',
+                              width: '310px',
+                              boxSizing: 'border-box'
+                            }}
                           >
                             {/* 이름 • 사번 */}
                             <div className="flex items-center gap-1.5 min-w-0">
@@ -3069,22 +3330,22 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                               <span className="text-gray-600 font-mono text-xs whitespace-nowrap">{a.employeeId}</span>
                             </div>
 
-                            {/* 언어 텍스트 */}
-                            <div className={`flex items-center justify-center text-[11px] font-bold whitespace-nowrap ${
+                            {/* 언어 */}
+                            <div className={`flex items-center justify-center text-xs font-bold whitespace-nowrap ${
                               (a.language.includes('한') || a.language.toLowerCase().includes('korean')) ? 'text-blue-700' :
                               (a.language.includes('일') || a.language.toLowerCase().includes('japanese')) ? 'text-purple-700' :
                               (a.language.includes('중') || a.language.toLowerCase().includes('chinese')) ? 'text-red-700' :
                               'text-gray-700'
-                            }`}>
+                            }`} style={{ minWidth: '52px', maxWidth: '52px', width: '52px', flexShrink: 0, flexGrow: 0, boxSizing: 'border-box' }}>
                               {a.language || '-'}
                             </div>
 
                             {/* 출석 배지 */}
-                            <div className={`flex items-center gap-0.5 px-2 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
+                            <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
                               a.__attended
                                 ? 'bg-green-500 text-white shadow-sm'
                                 : 'bg-gray-200 text-gray-500'
-                            }`} title={a.__attended ? '출석 완료' : '미출석'}>
+                            }`} style={{ minWidth: '48px', maxWidth: '48px', width: '48px', flexShrink: 0, flexGrow: 0, boxSizing: 'border-box' }} title={a.__attended ? '출석 완료' : '미출석'}>
                               {a.__attended && (
                                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                                   <path d="M20 6L9 17l-5-5" />
@@ -3094,11 +3355,11 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                             </div>
 
                             {/* 제출 배지 */}
-                            <div className={`flex items-center gap-0.5 px-2 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
+                            <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
                               a.hasSubmitted
                                 ? 'bg-blue-600 text-white shadow-sm'
                                 : 'bg-gray-200 text-gray-500'
-                            }`} title={a.hasSubmitted ? `제출 완료: ${a.submittedAt ? new Date(a.submittedAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}` : '미제출'}>
+                            }`} style={{ minWidth: '48px', maxWidth: '48px', width: '48px', flexShrink: 0, flexGrow: 0, boxSizing: 'border-box' }} title={a.hasSubmitted ? `제출 완료: ${a.submittedAt ? new Date(a.submittedAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}` : '미제출'}>
                               {a.hasSubmitted && (
                                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                                   <path d="M20 6L9 17l-5-5" />
@@ -3191,20 +3452,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     }
                     
                     return oneOnOneSessions.length > 0 && (
-                      <div className="rounded-lg overflow-hidden shadow-sm border border-gray-200">
+                      <div>
                         {/* 헤더 영역 */}
-                        <div className="bg-gradient-to-r from-slate-50 to-gray-50 px-4 py-3 flex items-center justify-between border-b border-gray-200">
-                          <div className="flex items-center gap-3">
-                            <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                            </svg>
-                            <h3 className="text-lg font-bold text-gray-700">1:1 온라인 교정교육</h3>
-                            <span className="px-2 py-0.5 bg-gray-100 rounded-full text-sm text-gray-700 font-medium">{oneOnOneSessions.length}개 세션</span>
-                          </div>
+                        <div className="flex items-center gap-3 px-2 py-4">
+                          <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                          <h3 className="text-base font-semibold text-gray-800">1:1 온라인 교정교육</h3>
+                          <span className="text-sm text-gray-500">{oneOnOneSessions.length}개 세션</span>
                         </div>
                         
+                        {/* 미니멀한 구분선 */}
+                        <div className="mx-8 mb-4 h-px bg-gray-200"></div>
+                        
                         {/* 콘텐츠 영역 */}
-                        <div className="bg-white p-3 space-y-2">
+                        <div className="px-8 space-y-2">
                           {oneOnOneSessions.map((session) => {
                             const applicant = session.applicants[0]
                             return (
@@ -3311,20 +3573,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     }
                     
                     return smallGroupSessions.length > 0 && (
-                      <div className="rounded-lg overflow-hidden shadow-sm border border-gray-200">
+                      <div>
                         {/* 헤더 영역 */}
-                        <div className="bg-gradient-to-r from-gray-50 to-slate-50 px-4 py-3 flex items-center justify-between border-b border-gray-200">
-                          <div className="flex items-center gap-3">
-                            <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                            </svg>
-                            <h3 className="text-lg font-bold text-gray-700">소규모 교정교육</h3>
-                            <span className="px-2 py-0.5 bg-gray-100 rounded-full text-sm text-gray-700 font-medium">{smallGroupSessions.length}개 세션</span>
-                          </div>
+                        <div className="flex items-center gap-3 px-2 py-4">
+                          <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                          </svg>
+                          <h3 className="text-base font-semibold text-gray-800">소규모 교정교육</h3>
+                          <span className="text-sm text-gray-500">{smallGroupSessions.length}개 세션</span>
                         </div>
                         
+                        {/* 미니멀한 구분선 */}
+                        <div className="mx-8 mb-4 h-px bg-gray-200"></div>
+                        
                         {/* 콘텐츠 영역 */}
-                        <div className="bg-white p-3">
+                        <div className="px-8">
                           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
                             {smallGroupSessions.map((session) => (
                               <div key={`${session.language}-${session.classType}-${session.sessionNumber}`} 
@@ -3966,11 +4229,11 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
     if (!selectedCandidate || selectedCandidate.language !== "korean-english") {
       return null;
     }
-
+    
     const categoryScores = calculateCategoryScoresDetailed();
     const totalScore = getCurrentTotalScore();
     
-    console.log("🔍 등급 계산 디버깅:", { categoryScores, totalScore });
+    // 등급 계산 로그 제거
     
     // 한/영 평가 등급 판정 로직
     const koreanCategories = ["korean-발음", "korean-억양", "korean-전달력", "korean-음성", "korean-속도"];
@@ -4019,7 +4282,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
   };
 
   const currentGrade = getCurrentGrade();
-  console.log("📊 현재 등급:", currentGrade);
+  // 등급 로그 제거
 
 
 
@@ -4037,29 +4300,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
       ? ["발음_자음", "발음_모음", "억양", "강세", "전달력"].reduce((sum, cat) => sum + (categoryScores[`english-${cat}`] || 0), 0)
       : 0;
     
-    console.log("🔍 [DEBUG] categoryScores 전체 내용:", categoryScores);
-    console.log("🔍 [DEBUG] categoryScores 키 목록:", Object.keys(categoryScores));
-    console.log("🔍 [DEBUG] 언어별 총점 계산:", {
-      koreanCategories: ["발음", "억양", "전달력", "음성", "속도"],
-      koreanScores: ["발음", "억양", "전달력", "음성", "속도"].map(cat => ({ cat, score: categoryScores[`korean-${cat}`] || 0 })),
-      koreanTotalScore,
-      englishCategories: ["발음_자음", "발음_모음", "억양", "강세", "전달력"],
-      englishScores: ["발음_자음", "발음_모음", "억양", "강세", "전달력"].map(cat => ({ cat, score: categoryScores[`english-${cat}`] || 0 })),
-      englishTotalScore,
-      totalScore: getCurrentTotalScore(),
-      expectedKoreanTotal: 15 + 17 + 16 + 16 + 16, // 스크린샷 기준 예상값
-      expectedEnglishTotal: 15 + 16 + 16 + 16 + 16  // 스크린샷 기준 예상값
-    });
-    
-    // 더 자세한 디버깅을 위해 개별 값들도 출력
-    console.log("🔍 [DEBUG] 개별 대분류 점수:");
-    ["발음", "억양", "전달력", "음성", "속도"].forEach(cat => {
-      console.log(`  korean-${cat}: ${categoryScores[`korean-${cat}`] || 0}`);
-    });
-    ["발음_자음", "발음_모음", "억양", "강세", "전달력"].forEach(cat => {
-      console.log(`  english-${cat}: ${categoryScores[`english-${cat}`] || 0}`);
-    });
-    console.log(`🔍 [DEBUG] 계산된 총점: koreanTotalScore=${koreanTotalScore}, englishTotalScore=${englishTotalScore}`);
+    // DEBUG 로그 제거 (실시간으로 계속 찍혀서 성능 저하 및 콘솔 가독성 하락)
     
     const evaluationResult = {
       ...selectedCandidate,
@@ -4073,7 +4314,8 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           ? { korean: getCurrentComments().korean, english: getCurrentComments().english }
         : getCurrentComments().korean,
       evaluatedAt: new Date().toISOString(),
-      evaluatedBy: userInfo?.name || authenticatedUser?.name || '교관',
+      evaluatedBy: userInfo?.employeeId || authenticatedUser?.employeeId || '교관', // 최종 평가자 (사번)
+      initialEvaluatedBy: selectedCandidate.initialEvaluatedBy || userInfo?.employeeId || authenticatedUser?.employeeId, // 최초 평가자 (없으면 현재 교관)
     }
 
     console.log("📊 evaluationResult 생성 완료:", {
@@ -4149,8 +4391,10 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                 }, {})).sort((a, b) => {
                   const order = (s: string) => { const m = s.match(/(\d+)/); return m ? parseInt(m[1], 10) : 9999 };
                   return order(a[0]) - order(b[0]);
-                }).map(([batch, list]) => (
-                  <div key={batch} className="mb-3">
+                }).map(([batch, list], batchIndex, allBatches) => (
+                  <div key={batch} className={`mb-6 ${batchIndex < allBatches.length - 1 ? 'pb-6' : ''}`} style={{ 
+                    borderBottom: batchIndex < allBatches.length - 1 ? '1px solid #e5e7eb' : 'none' 
+                  }}>
                     <div className="sticky top-0 bg-white/70 backdrop-blur text-xs font-semibold px-2 py-1 rounded-md inline-flex items-center gap-2 border"
                       style={{
                         borderColor: '#fde68a', backgroundColor: '#fffbeb', color: '#92400e'
@@ -4159,23 +4403,77 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       {batch}
                       <span className="text-[10px] text-gray-500">({list.length}명)</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mt-2">
-                      {list.map((a, idx) => (
-                        <div key={`${batch}-${a.employeeId}-${idx}`} className="flex items-center justify-between px-3 py-2 rounded-lg border bg-white shadow-sm">
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-xs text-gray-700 w-20">{a.employeeId}</span>
-                            <span className="text-sm text-gray-900">{a.name}</span>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {list.map((a: any, idx) => {
+                        const isHighlighted = highlightedAttendedIds.has(a.employeeId) || highlightedAttendedIds.has(a.email) || highlightedAttendedIds.has(a.name)
+                        return (
+                        <div 
+                          key={`${batch}-${a.employeeId}-${idx}`} 
+                          className={`px-3 py-2.5 rounded-lg border transition-all hover:shadow-md ${
+                            a.hasSubmitted 
+                              ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300 shadow-sm' 
+                              : a.__attended 
+                                ? `bg-green-50 border-green-200 ${isHighlighted ? 'ring-2 ring-green-400 attendance-highlight' : ''}`
+                                : 'bg-white border-gray-200 shadow-sm'
+                          }`}
+                          style={{ 
+                            display: 'grid', 
+                            gridTemplateColumns: 'minmax(100px, 1fr) 52px 48px 48px', 
+                            gap: '0.375rem', 
+                            alignItems: 'center',
+                            minWidth: '310px',
+                            maxWidth: '310px',
+                            width: '310px',
+                            boxSizing: 'border-box'
+                          }}
+                        >
+                          {/* 이름 • 사번 */}
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">{a.name}</span>
+                            <span className="text-gray-400 text-xs">•</span>
+                            <span className="text-gray-600 font-mono text-xs whitespace-nowrap">{a.employeeId}</span>
                           </div>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium border ${
-                            (a.language.includes('한') || a.language.toLowerCase().includes('korean')) ? 'border-blue-300 bg-blue-50 text-blue-700' :
-                            (a.language.includes('일') || a.language.toLowerCase().includes('japanese')) ? 'border-purple-300 bg-purple-50 text-purple-700' :
-                            (a.language.includes('중') || a.language.toLowerCase().includes('chinese')) ? 'border-red-300 bg-red-50 text-red-700' :
-                            'border-gray-300 bg-gray-50 text-gray-700'
-                          }`}>
+
+                            {/* 언어 */}
+                            <div className={`flex items-center justify-center text-xs font-bold whitespace-nowrap ${
+                            (a.language.includes('한') || a.language.toLowerCase().includes('korean')) ? 'text-blue-700' :
+                            (a.language.includes('일') || a.language.toLowerCase().includes('japanese')) ? 'text-purple-700' :
+                            (a.language.includes('중') || a.language.toLowerCase().includes('chinese')) ? 'text-red-700' :
+                            'text-gray-700'
+                          }`} style={{ minWidth: '52px', maxWidth: '52px', width: '52px', flexShrink: 0, flexGrow: 0, boxSizing: 'border-box' }}>
                             {a.language || '-'}
-                          </span>
+                          </div>
+
+                          {/* 출석 배지 */}
+                          <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
+                            a.__attended
+                              ? 'bg-green-500 text-white shadow-sm'
+                              : 'bg-gray-200 text-gray-500'
+                          }`} style={{ minWidth: '48px', maxWidth: '48px', width: '48px', flexShrink: 0, flexGrow: 0, boxSizing: 'border-box' }} title={a.__attended ? '출석 완료' : '미출석'}>
+                            {a.__attended && (
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M20 6L9 17l-5-5" />
+                              </svg>
+                            )}
+                            <span>출석</span>
+                          </div>
+
+                          {/* 제출 배지 */}
+                          <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap justify-center ${
+                            a.hasSubmitted
+                              ? 'bg-blue-600 text-white shadow-sm'
+                              : 'bg-gray-200 text-gray-500'
+                          }`} style={{ minWidth: '48px', maxWidth: '48px', width: '48px', flexShrink: 0, flexGrow: 0, boxSizing: 'border-box' }} title={a.hasSubmitted ? `제출 완료: ${a.submittedAt ? new Date(a.submittedAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}` : '미제출'}>
+                            {a.hasSubmitted && (
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M20 6L9 17l-5-5" />
+                              </svg>
+                            )}
+                            <span>제출</span>
+                          </div>
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 ))}
@@ -4268,20 +4566,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     <>
                       {/* 1:1 교육 섹션 */}
                       {oneOnOneSessions.length > 0 && (
-                        <div className="rounded-lg overflow-hidden shadow-sm border border-gray-200">
+                        <div>
                           {/* 헤더 영역 */}
-                          <div className="bg-gradient-to-r from-slate-50 to-gray-50 px-4 py-3 flex items-center justify-between border-b border-gray-200">
-                            <div className="flex items-center gap-3">
-                              <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                              </svg>
-                              <h3 className="text-lg font-bold text-gray-700">1:1 온라인 교정교육</h3>
-                              <span className="px-2 py-0.5 bg-gray-100 rounded-full text-sm text-gray-700 font-medium">{oneOnOneSessions.length}개 세션</span>
-                            </div>
+                          <div className="flex items-center gap-3 px-2 py-4">
+                            <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                            <h3 className="text-base font-semibold text-gray-800">1:1 온라인 교정교육</h3>
+                            <span className="text-sm text-gray-500">{oneOnOneSessions.length}개 세션</span>
                           </div>
                           
+                          {/* 미니멀한 구분선 */}
+                          <div className="mx-8 mb-4 h-px bg-gray-200"></div>
+                          
                           {/* 콘텐츠 영역 */}
-                          <div className="bg-white p-3 space-y-2">
+                          <div className="px-8 space-y-2">
                             {oneOnOneSessions.map((session) => {
                               const applicant = session.applicants[0]
                               return (
@@ -4372,6 +4671,11 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                         </div>
                       )}
                       
+                      {/* 1:1과 소규모 사이의 볼드한 구분선 */}
+                      {oneOnOneSessions.length > 0 && educationSessions.filter(s => s.classType === '소규모').length > 0 && (
+                        <div className="mx-4 my-8 h-0.5 bg-gray-300"></div>
+                      )}
+                      
                       {/* 소규모 교육 섹션 */}
                       {(() => {
                         const smallGroupSessions = educationSessions.filter(s => s.classType === '소규모')
@@ -4387,20 +4691,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                         }
                         
                         return smallGroupSessions.length > 0 && (
-                          <div className="rounded-lg overflow-hidden shadow-sm border border-gray-200">
+                          <div>
                             {/* 헤더 영역 */}
-                            <div className="bg-gradient-to-r from-gray-50 to-slate-50 px-4 py-3 flex items-center justify-between border-b border-gray-200">
-                              <div className="flex items-center gap-3">
-                                <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                </svg>
-                                <h3 className="text-lg font-bold text-gray-700">소규모 교정교육</h3>
-                                <span className="px-2 py-0.5 bg-gray-100 rounded-full text-sm text-gray-700 font-medium">{smallGroupSessions.length}개 세션</span>
-                              </div>
+                            <div className="flex items-center gap-3 px-2 py-4">
+                              <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                              </svg>
+                              <h3 className="text-base font-semibold text-gray-800">소규모 교정교육</h3>
+                              <span className="text-sm text-gray-500">{smallGroupSessions.length}개 세션</span>
                             </div>
                             
+                            {/* 미니멀한 구분선 */}
+                            <div className="mx-8 mb-4 h-px bg-gray-200"></div>
+                            
                             {/* 콘텐츠 영역 */}
-                            <div className="bg-white p-3">
+                            <div className="px-2">
                               <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
                               {smallGroupSessions.map((session) => (
                                 <div key={`${session.language}-${session.classType}-${session.sessionNumber}`} 
@@ -4938,10 +5243,15 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
             onClick={handleCancelEvaluation} 
             variant="ghost" 
             size="sm" 
-            className="absolute left-[calc(8vw-1rem-200px)] top-[-6px] h-10 w-10 p-0 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full shrink-0 z-10 shadow-sm bg-white transition-all duration-150 active:scale-90 active:bg-gray-200"
+            disabled={isBackButtonLoading}
+            className="absolute left-[calc(8vw-1rem-200px)] top-[4px] h-10 w-10 p-0 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full shrink-0 z-10 shadow-sm bg-white transition-all duration-150 active:scale-90 active:bg-gray-200 disabled:opacity-70 disabled:cursor-not-allowed"
             title="돌아가기"
           >
-            <ArrowLeft className="w-5 h-5" />
+            {isBackButtonLoading ? (
+              <div className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <ArrowLeft className="w-5 h-5" />
+            )}
           </Button>
         )}
 
@@ -4964,6 +5274,60 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   <Globe className="w-3 h-3 mr-0.5" />
                   {getLanguageDisplay(selectedCandidate?.language ?? '')}
                 </Badge>
+                {/* 자격 정보 표시 */}
+                {selectedCandidate?.language === "korean-english" && (
+                  <>
+                    <div className="w-px h-5 bg-gray-300"></div>
+                    {selectedCandidate.koreanEnglishGrade ? (
+                      <Badge variant="outline" className="text-xs px-2 py-0.5 bg-green-50 border-green-300 text-green-700 font-medium">
+                        <ShieldCheck className="w-3 h-3 mr-0.5" />
+                        {selectedCandidate.koreanEnglishGrade}
+                        {selectedCandidate.koreanEnglishExpiry && (
+                          <span className="ml-1 text-[10px] opacity-75">
+                            (~{new Date(selectedCandidate.koreanEnglishExpiry).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\. /g, '.').replace(/\.$/, '')})
+                          </span>
+                        )}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs px-2 py-0.5 bg-gray-50 border-gray-300 text-gray-500 font-medium">
+                        <ShieldCheck className="w-3 h-3 mr-0.5 opacity-50" />
+                        자격 없음
+                      </Badge>
+                    )}
+                  </>
+                )}
+                {selectedCandidate?.language === "japanese" && (
+                  <>
+                    <div className="w-px h-5 bg-gray-300"></div>
+                    {selectedCandidate.japaneseGrade ? (
+                      <Badge variant="outline" className="text-xs px-2 py-0.5 bg-green-50 border-green-300 text-green-700 font-medium">
+                        <ShieldCheck className="w-3 h-3 mr-0.5" />
+                        {selectedCandidate.japaneseGrade}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs px-2 py-0.5 bg-gray-50 border-gray-300 text-gray-500 font-medium">
+                        <ShieldCheck className="w-3 h-3 mr-0.5 opacity-50" />
+                        자격 없음
+                      </Badge>
+                    )}
+                  </>
+                )}
+                {selectedCandidate?.language === "chinese" && (
+                  <>
+                    <div className="w-px h-5 bg-gray-300"></div>
+                    {selectedCandidate.chineseGrade ? (
+                      <Badge variant="outline" className="text-xs px-2 py-0.5 bg-green-50 border-green-300 text-green-700 font-medium">
+                        <ShieldCheck className="w-3 h-3 mr-0.5" />
+                        {selectedCandidate.chineseGrade}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs px-2 py-0.5 bg-gray-50 border-gray-300 text-gray-500 font-medium">
+                        <ShieldCheck className="w-3 h-3 mr-0.5 opacity-50" />
+                        자격 없음
+                      </Badge>
+                    )}
+                  </>
+                )}
                 <div className="w-px h-4 bg-gray-300"></div>
                 <Button
                   onClick={() => {
@@ -5080,10 +5444,18 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   {currentLanguage === "korean" && (
                     <Button
                       onClick={() => {
-                        console.log("🔘 한국어 전체 재생 버튼 클릭됨", { isPlayingAll })
-                        if (isPlayingAll) {
+                        console.log("🔘 한국어 전체 재생 버튼 클릭됨", { 
+                          isPlayingAll, 
+                          isPlayingAllRef: isPlayingAllRef.current,
+                          playbackState 
+                        })
+                        
+                        // ref를 기준으로 판단 (state보다 즉시 반영됨)
+                        if (isPlayingAllRef.current) {
+                          console.log("→ 한국어 일시정지 실행")
                           pauseAllRecordings()
                         } else {
+                          console.log("→ 한국어 재생 실행")
                           playAllRecordings("korean")
                         }
                       }}
@@ -5102,7 +5474,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       ) : (
                         <>
                           <PlayCircle className="w-5 h-5 mr-2" />
-                          한국어 {playbackState?.isPaused && playbackState.targetLanguage !== "english" ? "이어서" : "전체"} 재생
+                          한국어 {playbackStateRef.current?.isPaused && playbackStateRef.current.targetLanguage !== "english" ? "이어서" : "전체"} 재생
                         </>
                       )}
                     </Button>
@@ -5110,10 +5482,18 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                   {currentLanguage === "english" && (
                     <Button
                       onClick={() => {
-                        console.log("🔘 영어 전체 재생 버튼 클릭됨", { isPlayingAll })
-                        if (isPlayingAll) {
+                        console.log("🔘 영어 전체 재생 버튼 클릭됨", { 
+                          isPlayingAll, 
+                          isPlayingAllRef: isPlayingAllRef.current,
+                          playbackState 
+                        })
+                        
+                        // ref를 기준으로 판단 (state보다 즉시 반영됨)
+                        if (isPlayingAllRef.current) {
+                          console.log("→ 영어 일시정지 실행")
                           pauseAllRecordings()
                         } else {
+                          console.log("→ 영어 재생 실행")
                           playAllRecordings("english")
                         }
                       }}
@@ -5132,7 +5512,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                       ) : (
                         <>
                           <PlayCircle className="w-5 h-5 mr-2" />
-                          영어 {playbackState?.isPaused && playbackState.targetLanguage === "english" ? "이어서" : "전체"} 재생
+                          영어 {playbackStateRef.current?.isPaused && playbackStateRef.current.targetLanguage === "english" ? "이어서" : "전체"} 재생
                         </>
                       )}
                     </Button>
@@ -5143,10 +5523,18 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                 <div className="space-y-2">
                   <Button
                     onClick={() => {
-                      console.log("🔘 전체 재생 버튼 클릭됨", { isPlayingAll })
-                      if (isPlayingAll) {
+                      console.log("🔘 전체 재생 버튼 클릭됨", { 
+                        isPlayingAll, 
+                        isPlayingAllRef: isPlayingAllRef.current,
+                        playbackState 
+                      })
+                      
+                      // ref를 기준으로 판단 (state보다 즉시 반영됨)
+                      if (isPlayingAllRef.current) {
+                        console.log("→ 일시정지 실행")
                         pauseAllRecordings()
                       } else {
+                        console.log("→ 재생 실행")
                         playAllRecordings()
                       }
                     }}
@@ -5165,7 +5553,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
                     ) : (
                       <>
                         <PlayCircle className="w-5 h-5 mr-2" />
-                        {playbackState?.isPaused ? "이어서" : "전체"} 재생
+                        {playbackStateRef.current?.isPaused ? "이어서" : "전체"} 재생
                       </>
                     )}
                   </Button>

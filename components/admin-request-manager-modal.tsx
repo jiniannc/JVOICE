@@ -371,7 +371,7 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl w-[90vw] h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-7xl w-[90vw] h-[90vh] overflow-hidden flex flex-col z-[99999]">
         <DialogHeader className="pb-2">
           <DialogTitle className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-lg">

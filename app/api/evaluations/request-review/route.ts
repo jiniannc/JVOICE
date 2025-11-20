@@ -9,6 +9,23 @@ export async function POST(request: NextRequest) {
     
     console.log(`📝 [API] 검토 요청: ${evaluationId}, 요청자: ${requestedBy}`);
 
+    // 기존 평가 조회
+    const existingEvaluation = await prisma.evaluation.findUnique({
+      where: { id: evaluationId }
+    });
+
+    if (!existingEvaluation) {
+      return NextResponse.json(
+        { success: false, error: "평가를 찾을 수 없습니다." },
+        { status: 404 }
+      );
+    }
+
+    console.log(`🔍 [Request-Review] 기존 평가 상태:`);
+    console.log(`   - initialEvaluatedBy: ${existingEvaluation.initialEvaluatedBy}`);
+    console.log(`   - evaluatedBy: ${existingEvaluation.evaluatedBy}`);
+    console.log(`   - status: ${existingEvaluation.status}`);
+
     // 점수 계산
     let calculatedTotalScore = 0;
     let calculatedKoreanScore = 0;
@@ -31,13 +48,21 @@ export async function POST(request: NextRequest) {
       data: {
         status: 'review_requested',
         reviewRequestedBy: requestedBy,
+        reviewRequestedAt: new Date(),
         totalScore: totalScore || calculatedTotalScore,
         koreanTotalScore: koreanTotalScore || calculatedKoreanScore,
         englishTotalScore: englishTotalScore || calculatedEnglishScore,
         grade: grade || 'N/A',
-        comments: comments || { korean: '', english: '' }
+        comments: comments || { korean: '', english: '' },
+        evaluatedAt: new Date(), // 평가 완료 시간 설정
+        evaluatedBy: requestedBy, // 최종 평가자 (검토 요청한 교관)
+        // 최초 평가자 설정 (없을 때만)
+        initialEvaluatedBy: existingEvaluation.initialEvaluatedBy || requestedBy,
+        initialEvaluatedAt: existingEvaluation.initialEvaluatedAt || new Date()
       }
     });
+    
+    console.log(`✅ [API] 검토 요청 - 최초 평가자: ${evaluation.initialEvaluatedBy}, 검토 요청자(최종 평가자): ${evaluation.evaluatedBy}`);
 
     // 기존 점수 삭제 후 새 점수 추가
     await prisma.evaluationScore.deleteMany({

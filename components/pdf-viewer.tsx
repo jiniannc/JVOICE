@@ -87,7 +87,7 @@ export function PDFViewer({ language, scriptNumber, currentLanguageMode, classNa
               <div className="text-xs text-gray-500 mt-4 p-3 bg-gray-100 rounded">
                 <p className="font-medium mb-2">해결 방법:</p>
                 <p>1. "새 탭에서 열기" 버튼으로 PDF 직접 확인</p>
-                <p>2. Dropbox scripts 폴더에 파일이 올바르게 업로드되었는지 확인</p>
+                <p>2. 관리자 페이지에서 해당 문안이 업로드되었는지 확인</p>
                 <p>3. 파일명 형식 확인: {language === "korean-english" ? "한영_문안1_KR.pdf / 한영_문안1_EN.pdf" : language === "japanese" ? "일본어_문안1.pdf" : "중국어_문안1.pdf"}</p>
                 <p>4. 브라우저 보안 정책으로 인해 iframe에서 차단될 수 있음</p>
               </div>

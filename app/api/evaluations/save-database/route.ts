@@ -30,6 +30,9 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. 평가 데이터 업데이트
+    const currentEvaluatedBy = evaluationData.evaluatedBy || existingEvaluation.evaluatedBy;
+    const isFirstEvaluation = !existingEvaluation.initialEvaluatedBy;
+    
     const updatedEvaluation = await prisma.evaluation.update({
       where: { id: evaluationData.id },
       data: {
@@ -40,10 +43,17 @@ export async function POST(request: NextRequest) {
         grade: evaluationData.grade || existingEvaluation.grade,
         comments: evaluationData.comments || existingEvaluation.comments,
         evaluatedAt: evaluationData.evaluatedAt ? new Date(evaluationData.evaluatedAt) : existingEvaluation.evaluatedAt,
-        evaluatedBy: evaluationData.evaluatedBy || existingEvaluation.evaluatedBy,
+        evaluatedBy: currentEvaluatedBy, // 최종 평가자 (항상 업데이트)
+        // 최초 평가자 설정 (없을 때만)
+        initialEvaluatedBy: isFirstEvaluation ? currentEvaluatedBy : existingEvaluation.initialEvaluatedBy,
+        initialEvaluatedAt: isFirstEvaluation && evaluationData.evaluatedAt 
+          ? new Date(evaluationData.evaluatedAt) 
+          : existingEvaluation.initialEvaluatedAt,
         approved: evaluationData.approved !== undefined ? evaluationData.approved : existingEvaluation.approved
       }
     });
+    
+    console.log(`✅ [API] 평가자 정보 저장: 최초=${updatedEvaluation.initialEvaluatedBy}, 최종=${updatedEvaluation.evaluatedBy}`);
 
     // 3. 기존 점수 삭제 후 새로 생성
     if (evaluationData.scores) {

@@ -429,18 +429,29 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
           })
           
           // 로컬 스토리지에 한영 소규모 체크인 기록 저장
+          const normalizedEmployeeId = String(userInfo.employeeId || '').trim()
           const checkinRecord = {
-            employeeId: userInfo.employeeId,
+            employeeId: normalizedEmployeeId,
+            name: userInfo.name,
             educationId,
+            educationLanguage: education?.details?.language,
+            educationMode: education?.details?.mode,
             checkinTime: new Date().toISOString(),
             hasDetailedReviewAccess: true
           }
           
           const existingRecords = JSON.parse(localStorage.getItem('koreanEnglishSmallCheckins') || '[]')
-          existingRecords.push(checkinRecord)
-          localStorage.setItem('koreanEnglishSmallCheckins', JSON.stringify(existingRecords))
+          
+          // 중복 체크인 방지 (같은 사번의 기록은 업데이트)
+          const filteredRecords = existingRecords.filter((r: any) => 
+            String(r.employeeId || '').trim() !== normalizedEmployeeId
+          )
+          filteredRecords.push(checkinRecord)
+          
+          localStorage.setItem('koreanEnglishSmallCheckins', JSON.stringify(filteredRecords))
           
           console.log('✅ [Education Checkin] 한영 소규모 체크인 기록 저장:', checkinRecord)
+          console.log('📋 [Education Checkin] 전체 체크인 기록:', filteredRecords)
         } else {
         showAlert({
           title: '체크인 완료',

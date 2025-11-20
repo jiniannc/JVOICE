@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 
     // 필터 조건 구성
     const where: any = {
-      deletedAt: null, // 삭제되지 않은 직원만 조회
+      // isActive가 명시적으로 false가 아니면 모두 조회 (기본값은 활성 직원)
     };
 
     if (search) {

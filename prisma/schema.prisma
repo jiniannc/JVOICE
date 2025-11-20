@@ -54,7 +54,9 @@ model Evaluation {
   status          String   @default("pending") // 'pending', 'review_requested', 'completed', 'approved', 'deleted', 're_evaluation'
   submittedAt     DateTime @default(now())
   evaluatedAt     DateTime?
-  evaluatedBy     String?
+  evaluatedBy     String?  // 최종 평가자 (마지막으로 평가한 교관)
+  initialEvaluatedAt DateTime? // 최초 평가 시간
+  initialEvaluatedBy String?   // 최초 평가자 (처음 평가한 교관, 교관 통계용)
   totalScore      Float    @default(0)
   koreanTotalScore Float   @default(0)
   englishTotalScore Float  @default(0)

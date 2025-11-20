@@ -131,20 +131,19 @@ export async function DELETE(
       );
     }
 
-    // 이미 삭제된 직원인지 확인
-    if (existingEmployee.deletedAt) {
+    // 이미 비활성화된 직원인지 확인
+    if (!existingEmployee.isActive) {
       return NextResponse.json(
-        { success: false, error: "이미 삭제된 직원입니다." },
+        { success: false, error: "이미 비활성화된 직원입니다." },
         { status: 400 }
       );
     }
 
-    // Soft delete: deletedAt과 deletedBy만 업데이트
+    // Soft delete: isActive를 false로 업데이트
     const deletedEmployee = await prisma.user.update({
       where: { id: existingEmployee.id },
       data: {
-        deletedAt: new Date(),
-        deletedBy: deletedBy || null,
+        isActive: false,
       },
     });
 

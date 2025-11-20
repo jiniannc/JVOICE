@@ -55,9 +55,13 @@ export async function POST(request: NextRequest) {
         // 재평가 메타데이터 추가
         reevaluatedAt: new Date(),
         reevaluatedBy: reevaluatedBy || 'Admin'
+        // 🔥 initialEvaluatedBy는 유지 (최초 평가자 보존)
+        // 🔥 evaluatedBy는 재평가 후 save 시 업데이트될 예정 (최종 평가자)
         // 🔥 기존 점수, 코멘트, 평가 정보는 유지
       }
     })
+    
+    console.log(`✅ [API] 재평가 설정 완료: 최초 평가자=${evaluation.initialEvaluatedBy} 유지, 기존 최종 평가자=${evaluation.evaluatedBy}`);
 
     // 4. 기존 점수 데이터는 유지 (삭제하지 않음)
 

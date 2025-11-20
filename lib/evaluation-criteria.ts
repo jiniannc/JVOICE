@@ -87,10 +87,10 @@ export const evaluationCriteria = {
     Volume: 5,
   }, // 총 100점
   chinese: {
-    성조: 20,
+    한어병음: 30,
     억양: 20,
     PAUSE: 20,
-    속도: 20,
+    속도: 10,
     Tone: 10,
     Volume: 10,
   }, // 총 100점
@@ -180,26 +180,69 @@ export function getGradeInfo(
     // 일본어/중국어의 경우
     const majorCategories = Object.keys(evaluationCriteria[language as keyof typeof evaluationCriteria] || {})
 
-    // 주요 항목(20점)에서 16점 이상, 기타 항목(10점)에서 8점 이상
+    // 🔥 일본어 특수 항목 판정 추적 변수
+    let japanesePauseLevel: 'pass' | 'fail' | null = null  // pass면 통과, fail이면 불합격
+    let japaneseVolumeLevel: 'pass' | 'fail' | null = null
+    let japanesePauseForGrade: 'A' | 'B' | null = null  // A/B 자격 구분용
+    let japaneseVolumeForGrade: 'A' | 'B' | null = null
+
+    // 각 항목별 80% 이상 체크
     for (const cat of majorCategories) {
       const score = categoryScores[cat] || 0
-      const maxScore = evaluationCriteria[language as keyof typeof evaluationCriteria][cat] as number
-
-      if (maxScore === 20 && score < 16) {
-        return {
-          grade: "F",
-          color: "text-red-600",
-          bgColor: "bg-red-50",
-          borderColor: "border-red-200",
-          reason: `${cat} 항목 점수 부족`,
+      const criteria = evaluationCriteria[language as keyof typeof evaluationCriteria] as { [key: string]: number }
+      const maxScore = criteria[cat] || 0
+      
+      // 🔥 일본어 Pause 항목: 개별 점수 기준 적용
+      if (language === "japanese" && cat === "Pause") {
+        if (score >= 23) {
+          japanesePauseLevel = 'pass'
+          japanesePauseForGrade = 'A'
+        } else if (score >= 21) {
+          japanesePauseLevel = 'pass'
+          japanesePauseForGrade = 'B'
+        } else {
+          japanesePauseLevel = 'fail'
+          return {
+            grade: "F",
+            color: "text-red-600",
+            bgColor: "bg-red-50",
+            borderColor: "border-red-200",
+            reason: `${cat} 항목 점수 부족 (${score}/25, 최소 21점 필요)`,
+          }
         }
-      } else if (maxScore === 10 && score < 8) {
+        continue // 80% 체크 건너뛰기
+      }
+
+      // 🔥 일본어 Volume 항목: 개별 점수 기준 적용
+      if (language === "japanese" && cat === "Volume") {
+        if (score >= 4) {
+          japaneseVolumeLevel = 'pass'
+          japaneseVolumeForGrade = 'A'
+        } else if (score >= 3) {
+          japaneseVolumeLevel = 'pass'
+          japaneseVolumeForGrade = 'B'
+        } else {
+          japaneseVolumeLevel = 'fail'
+          return {
+            grade: "F",
+            color: "text-red-600",
+            bgColor: "bg-red-50",
+            borderColor: "border-red-200",
+            reason: `${cat} 항목 점수 부족 (${score}/5, 최소 3점 필요)`,
+          }
+        }
+        continue // 80% 체크 건너뛰기
+      }
+
+      // 나머지 항목은 기존대로 80% 기준 적용
+      const minRequired = maxScore * 0.8 // 80% 기준
+      if (score < minRequired) {
         return {
           grade: "F",
           color: "text-red-600",
           bgColor: "bg-red-50",
           borderColor: "border-red-200",
-          reason: `${cat} 항목 점수 부족`,
+          reason: `${cat} 항목 점수 부족 (${score}/${maxScore}, 최소 ${minRequired}점 필요)`,
         }
       }
     }
@@ -217,45 +260,101 @@ export function getGradeInfo(
     // 신규: 90점 이상이면 A, 80점 이상이면 B, 80점 미만이면 F
     // 상위: 90점 이상이면 A, 90점 미만이면 F (기존 로직 유지)
     if (category === "신규") {
-      if (totalScore >= 90) {
-        return {
-          grade: "A",
-          color: "text-green-600",
-          bgColor: "bg-green-50",
-          borderColor: "border-green-200",
-        } // 신규 A등급
-      } else if (totalScore >= 80) {
-        return {
-          grade: "B",
-          color: "text-blue-600",
-          bgColor: "bg-blue-50",
-          borderColor: "border-blue-200",
-        } // 신규 B등급
+      // 🔥 일본어의 경우 Pause/Volume 항목의 개별 기준도 확인
+      if (language === "japanese") {
+        // Pause나 Volume 중 하나라도 B 기준만 충족하면 최대 B등급
+        const hasOnlyBLevel = japanesePauseForGrade === 'B' || japaneseVolumeForGrade === 'B'
+        
+        if (totalScore >= 90 && !hasOnlyBLevel) {
+          return {
+            grade: "A",
+            color: "text-green-600",
+            bgColor: "bg-green-50",
+            borderColor: "border-green-200",
+          } // 신규 A등급
+        } else if (totalScore >= 80) {
+          return {
+            grade: "B",
+            color: "text-blue-600",
+            bgColor: "bg-blue-50",
+            borderColor: "border-blue-200",
+          } // 신규 B등급 (Pause/Volume이 B 기준이거나 총점이 80-89점)
+        } else {
+          return {
+            grade: "F",
+            color: "text-red-600",
+            bgColor: "bg-red-50",
+            borderColor: "border-red-200",
+            reason: "신규 자격 기준 미달",
+          }
+        }
       } else {
-        return {
-          grade: "F",
-          color: "text-red-600",
-          bgColor: "bg-red-50",
-          borderColor: "border-red-200",
-          reason: "신규 자격 기준 미달",
+        // 중국어 등 기존 로직
+        if (totalScore >= 90) {
+          return {
+            grade: "A",
+            color: "text-green-600",
+            bgColor: "bg-green-50",
+            borderColor: "border-green-200",
+          } // 신규 A등급
+        } else if (totalScore >= 80) {
+          return {
+            grade: "B",
+            color: "text-blue-600",
+            bgColor: "bg-blue-50",
+            borderColor: "border-blue-200",
+          } // 신규 B등급
+        } else {
+          return {
+            grade: "F",
+            color: "text-red-600",
+            bgColor: "bg-red-50",
+            borderColor: "border-red-200",
+            reason: "신규 자격 기준 미달",
+          }
         }
       }
     } else {
-      // 상위 자격: 90점 이상이면 A, 90점 미만이면 F
-      if (totalScore >= 90) {
-        return {
-          grade: "A",
-          color: "text-green-600",
-          bgColor: "bg-green-50",
-          borderColor: "border-green-200",
-        } // 상위 A등급
+      // 🔥 상위 자격: 90점 이상이면 A, 90점 미만이면 F
+      // 일본어의 경우 Pause/Volume이 A 기준을 충족해야 함
+      if (language === "japanese") {
+        const hasOnlyBLevel = japanesePauseForGrade === 'B' || japaneseVolumeForGrade === 'B'
+        
+        if (totalScore >= 90 && !hasOnlyBLevel) {
+          return {
+            grade: "A",
+            color: "text-green-600",
+            bgColor: "bg-green-50",
+            borderColor: "border-green-200",
+          } // 상위 A등급
+        } else {
+          return {
+            grade: "F",
+            color: "text-red-600",
+            bgColor: "bg-red-50",
+            borderColor: "border-red-200",
+            reason: hasOnlyBLevel 
+              ? "상위 자격은 Pause 23점 이상, Volume 4점 이상 필요" 
+              : "상위 자격은 90점 이상 필요",
+          }
+        }
       } else {
-        return {
-          grade: "F",
-          color: "text-red-600",
-          bgColor: "bg-red-50",
-          borderColor: "border-red-200",
-          reason: "상위 자격은 90점 이상 필요",
+        // 중국어 등 기존 로직
+        if (totalScore >= 90) {
+          return {
+            grade: "A",
+            color: "text-green-600",
+            bgColor: "bg-green-50",
+            borderColor: "border-green-200",
+          } // 상위 A등급
+        } else {
+          return {
+            grade: "F",
+            color: "text-red-600",
+            bgColor: "bg-red-50",
+            borderColor: "border-red-200",
+            reason: "상위 자격은 90점 이상 필요",
+          }
         }
       }
     }

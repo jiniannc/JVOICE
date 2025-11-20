@@ -129,7 +129,16 @@ export async function GET(
     if (recording.fileData && recording.fileData.length > 0) {
       console.log(`📦 [API] fileData에서 Base64 데이터 발견: ${recording.fileData.length} 문자`);
       try {
-        fileBuffer = Buffer.from(recording.fileData, 'base64');
+        let base64Data = recording.fileData;
+        
+        // data:audio/webm;base64, 형식인지 확인하고 제거
+        if (base64Data.startsWith('data:audio/')) {
+          console.log(`🔄 [API] data URL 접두사 제거 중...`);
+          base64Data = base64Data.split(',')[1];
+          console.log(`✅ [API] data URL 접두사 제거 완료, 새 길이: ${base64Data.length}`);
+        }
+        
+        fileBuffer = Buffer.from(base64Data, 'base64');
         console.log(`✅ [API] fileData Base64 변환 성공: ${fileBuffer.length} bytes`);
       } catch (error) {
         console.error(`❌ [API] fileData Base64 변환 실패:`, error);
@@ -137,7 +146,16 @@ export async function GET(
     } else if (recording.url && recording.url.length > 0) {
       console.log(`📦 [API] url 필드에서 Base64 데이터 발견: ${recording.url.length} 문자`);
       try {
-        fileBuffer = Buffer.from(recording.url, 'base64');
+        let base64Data = recording.url;
+        
+        // data:audio/webm;base64, 형식인지 확인하고 제거
+        if (base64Data.startsWith('data:audio/')) {
+          console.log(`🔄 [API] data URL 접두사 제거 중...`);
+          base64Data = base64Data.split(',')[1];
+          console.log(`✅ [API] data URL 접두사 제거 완료, 새 길이: ${base64Data.length}`);
+        }
+        
+        fileBuffer = Buffer.from(base64Data, 'base64');
         console.log(`✅ [API] url Base64 변환 성공: ${fileBuffer.length} bytes`);
       } catch (error) {
         console.error(`❌ [API] url Base64 변환 실패:`, error);
@@ -195,17 +213,23 @@ export async function GET(
       }
     }
     
-    // 3. 더미 데이터 생성 (테스트용)
-    if (!fileBuffer) {
-      console.log(`⚠️ [API] 실제 파일을 찾을 수 없어 더미 데이터 생성`);
-      const dummyContent = `Dummy recording file data\nFile ID: ${recording.id}\nCreated: ${new Date().toISOString()}`;
-      fileBuffer = Buffer.from(dummyContent, 'utf-8');
-    }
-    
+    // 파일을 찾지 못한 경우 404 반환 (더미 데이터 생성 안 함)
     if (!fileBuffer || fileBuffer.length === 0) {
-      console.error(`❌ [API] 파일 버퍼 생성 실패`);
+      console.error(`❌ [API] 파일을 찾을 수 없음:`, {
+        id: recording.id,
+        fileName: recording.fileName,
+        filePath: recording.filePath,
+        hasFileData: !!recording.fileData,
+        hasUrl: !!recording.url,
+        evaluationId: recording.evaluationId,
+      });
       return NextResponse.json(
-        { success: false, error: "파일을 찾을 수 없습니다." },
+        { 
+          success: false, 
+          error: "파일 데이터를 찾을 수 없습니다. 데이터베이스나 파일 시스템에 파일이 존재하지 않습니다.",
+          recordingId: recording.id,
+          fileName: recording.fileName,
+        },
         { status: 404 }
       );
     }
@@ -226,13 +250,20 @@ export async function GET(
 
     console.log(`📁 [API] 최종 파일명: ${correctedFileName} (MIME: ${detectedType.mimeType})`);
 
-    // 파일 응답
+    // 쿼리 파라미터로 다운로드 모드 확인
+    const download = new URL(request.url).searchParams.get('download') === 'true';
+    
+    // 파일 응답 (다운로드 모드일 때만 attachment, 기본은 inline으로 재생 가능하게)
     return new NextResponse(fileBuffer, {
       status: 200,
       headers: {
         'Content-Type': detectedType.mimeType,
-        'Content-Disposition': `attachment; filename*=UTF-8''${safeFileName}`,
+        'Content-Disposition': download 
+          ? `attachment; filename*=UTF-8''${safeFileName}`
+          : `inline; filename*=UTF-8''${safeFileName}`,
         'Content-Length': fileBuffer.length.toString(),
+        'Accept-Ranges': 'bytes', // 스트리밍 지원
+        'Cache-Control': 'public, max-age=3600', // 1시간 캐싱
       },
     });
 

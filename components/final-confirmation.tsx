@@ -27,6 +27,29 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
   const [audioElements, setAudioElements] = useState<{ [key: string]: HTMLAudioElement }>({})
   const [uploadStatus, setUploadStatus] = useState<string>("")
 
+  // 페이지 이탈 방지 (제출 완료 전까지만)
+  useEffect(() => {
+    // 제출 완료 후에는 이탈 방지 제거
+    if (isSubmitted) {
+      window.onbeforeunload = null
+      console.log("✅ beforeunload 완전 제거됨 (제출 완료)")
+      return
+    }
+
+    // 최종 확인 페이지용 beforeunload 설정
+    window.onbeforeunload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = "녹음 파일을 제출하지 않았습니다. 페이지를 떠나면 데이터가 손실됩니다."
+      return e.returnValue
+    }
+    console.log("🔒 beforeunload 등록됨 (최종 확인 페이지)")
+
+    return () => {
+      window.onbeforeunload = null
+      console.log("🔓 beforeunload 제거됨 (cleanup)")
+    }
+  }, [isSubmitted])
+
   // 컴포넌트 마운트 시 모든 녹음 파일을 미리 로딩
   useEffect(() => {
     const preloadAudios = async () => {
@@ -232,94 +255,158 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
         // localStorage 저장 실패해도 업로드는 성공했으므로 무시
       }
 
+      // 제출 완료 시 beforeunload 제거
+      window.onbeforeunload = null
+      console.log("✅ beforeunload 명시적 제거 (제출 완료)")
+
       setIsSubmitted(true)
-      setTimeout(() => onSubmit(), 2000)
     } catch (error) {
       console.error("업로드 오류:", error)
       setUploadStatus("업로드 중 오류가 발생했습니다.")
       setTimeout(() => {
+        // 에러 발생 시에도 beforeunload 제거
+        window.onbeforeunload = null
+        console.log("✅ beforeunload 명시적 제거 (에러 발생)")
         setIsSubmitted(true)
-        setTimeout(() => onSubmit(), 2000)
       }, 1000)
     } finally {
       setIsUploading(false)
     }
   }
 
+  const handleLogout = async () => {
+    try {
+      // 로그아웃 API 호출
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+
+      if (response.ok) {
+        console.log("✅ 로그아웃 성공")
+      }
+    } catch (error) {
+      console.error("❌ 로그아웃 API 실패:", error)
+    } finally {
+      // API 성공 여부와 관계없이 로컬 스토리지 정리 후 새로고침
+      localStorage.clear()
+      sessionStorage.clear()
+      window.location.href = "/"
+    }
+  }
+
+  // 제출 완료 시 beforeunload 완전 제거 (Hook 규칙 준수)
+  useEffect(() => {
+    if (isSubmitted) {
+      // 모든 beforeunload 리스너 제거
+      const removeAllBeforeUnload = () => {
+        window.onbeforeunload = null
+        // 추가로 모든 이벤트 리스너 제거 시도
+        try {
+          const newWindow: any = window
+          if (newWindow._events && newWindow._events.beforeunload) {
+            delete newWindow._events.beforeunload
+          }
+        } catch (e) {
+          // 무시
+        }
+        console.log("🚫 제출 완료: 모든 beforeunload 완전 제거")
+      }
+      
+      removeAllBeforeUnload()
+      
+      // 여러 번 제거 (타이밍 이슈 대비)
+      const timer1 = setTimeout(removeAllBeforeUnload, 50)
+      const timer2 = setTimeout(removeAllBeforeUnload, 100)
+      const timer3 = setTimeout(removeAllBeforeUnload, 200)
+      
+      return () => {
+        clearTimeout(timer1)
+        clearTimeout(timer2)
+        clearTimeout(timer3)
+        removeAllBeforeUnload()
+      }
+    }
+  }, [isSubmitted])
+
   if (isSubmitted) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-400 via-emerald-500 to-teal-600 relative overflow-hidden">
-        {/* 배경 장식 요소들 */}
-        <div className="absolute inset-0">
-          <div className="absolute top-10 left-10 w-32 h-32 bg-white/10 rounded-full blur-xl animate-pulse"></div>
-          <div className="absolute top-40 right-20 w-24 h-24 bg-white/10 rounded-full blur-xl animate-pulse delay-1000"></div>
-          <div className="absolute bottom-20 left-1/4 w-40 h-40 bg-white/10 rounded-full blur-xl animate-pulse delay-2000"></div>
-          <div className="absolute bottom-40 right-1/3 w-20 h-20 bg-white/10 rounded-full blur-xl animate-pulse delay-1500"></div>
-        </div>
-
-        <div className="relative z-10 flex items-center justify-center min-h-screen p-4">
-          <div className="w-full max-w-lg">
-            {/* 메인 카드 */}
-            <div className="bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl p-8 text-center relative overflow-hidden">
-              {/* 카드 내부 장식 */}
-              <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-green-400 via-emerald-500 to-teal-600"></div>
-              <div className="absolute -top-4 -right-4 w-24 h-24 bg-gradient-to-br from-green-400 to-emerald-500 rounded-full opacity-20"></div>
-              <div className="absolute -bottom-6 -left-6 w-32 h-32 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full opacity-20"></div>
-
-              {/* 성공 아이콘 */}
-              <div className="relative z-10 mb-6">
-                <div className="w-24 h-24 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-lg animate-bounce">
-                  <CheckCircle className="w-12 h-12 text-white" />
-                </div>
+      <div className="min-h-screen bg-gradient-to-br from-green-400 via-emerald-500 to-teal-600 flex items-center justify-center p-6">
+        <div className="w-full max-w-2xl">
+          {/* 메인 카드 */}
+          <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+            {/* 상단 헤더 - 초록색 */}
+            <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-8 text-center">
+              <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CheckCircle className="w-12 h-12 text-white" />
               </div>
-
-              {/* 제목 */}
-              <h1 className="text-4xl font-bold text-gray-900 mb-4 relative z-10">
-                🎉 제출 완료! 🎉
+              <h1 className="text-3xl font-bold text-white mb-2">
+                제출 완료!
               </h1>
-
-              {/* 메인 메시지 */}
-              <div className="space-y-4 mb-8 relative z-10">
-                <p className="text-xl text-gray-700 font-semibold">
-                  수고하셨습니다!
-                </p>
-                <p className="text-lg text-gray-600">
-                  녹음 파일이 성공적으로 제출되었습니다.
-                </p>
-              </div>
-
-              {/* 추가 정보 */}
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-6 mb-6 relative z-10 border border-green-200/50">
-                <div className="flex items-center justify-center gap-3 mb-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
-                    <span className="text-white text-sm font-bold">{Object.values(recordings).filter(Boolean).length}</span>
-                  </div>
-                  <span className="text-green-800 font-semibold">개 파일 업로드 완료</span>
-                </div>
-                <p className="text-sm text-green-700">
-                  {userInfo.name} ({userInfo.employeeId}) - {getLanguageDisplay(userInfo.language)}
-                </p>
-              </div>
-
-              {/* 안내 메시지 */}
-              <div className="space-y-2 relative z-10">
-                <p className="text-sm text-gray-600">
-                  💫 평가 결과는 월 말 공지로 확인해주세요
-                </p>
-                <p className="text-xs text-gray-500">
-                  조용히 방송실습실을 퇴실해주세요
-                </p>
-              </div>
-
-              {/* 하단 장식 */}
-              <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-green-400 to-transparent"></div>
+              <p className="text-green-50 text-lg">
+                수고하셨습니다
+              </p>
             </div>
 
-            {/* 하단 메시지 */}
-            <div className="text-center mt-6">
-              <p className="text-white/80 text-sm font-medium">
-                ✨ 오늘도 좋은 하루 되세요! ✨
-              </p>
+            {/* 본문 내용 */}
+            <div className="p-8 space-y-6">
+              {/* 제출 정보 요약 */}
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border border-green-200">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-gray-700 font-medium">제출자</span>
+                  <span className="text-gray-900 font-bold">{userInfo.name} ({userInfo.employeeId})</span>
+                </div>
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-gray-700 font-medium">구분</span>
+                  <span className="text-gray-900 font-bold">{userInfo.category} - {getLanguageDisplay(userInfo.language)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-700 font-medium">업로드 파일</span>
+                  <span className="text-green-600 font-bold text-lg">{Object.values(recordings).filter(Boolean).length}개</span>
+                </div>
+              </div>
+
+              {/* 로그아웃 안내 - 최우선 강조 */}
+              <div className="bg-gradient-to-r from-red-50 to-orange-50 rounded-xl p-6 border-2 border-red-300">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center shrink-0">
+                    <span className="text-white text-2xl">🚪</span>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-red-900 mb-1">
+                      반드시 로그아웃 해주세요
+                    </h3>
+                    <p className="text-sm text-red-700">
+                      다음 사용자를 위해 로그아웃을 꼭 해주세요
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  onClick={handleLogout}
+                  className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 h-14 text-lg font-bold text-white shadow-lg hover:shadow-xl transition-all duration-200"
+                >
+                  Log out
+                </Button>
+              </div>
+
+              {/* 추가 안내사항 */}
+              <div className="bg-gray-50 rounded-xl p-6 space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="text-blue-600 text-xl shrink-0">💫</span>
+                  <p className="text-sm text-gray-700">
+                    <span className="font-semibold">평가 결과:</span> 월 말 공지 게시 후 JVOICE APP을 통해 확인해주세요.
+                  </p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="text-purple-600 text-xl shrink-0">🤫</span>
+                  <p className="text-sm text-gray-700">
+                    <span className="font-semibold">퇴실 안내:</span> 조용히 방송실습실을 퇴실해주세요.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -327,33 +414,41 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
     )
   }
 
-  // 언어별로 녹음 파일 그룹화
-  const getRecordingsByLanguage = () => {
+  // 문안별로 녹음 파일 그룹화 (한영의 경우 문안별로 묶음)
+  const getRecordingsByScript = () => {
     if (userInfo.language === "korean-english") {
-      return {
-        한국어: availableScripts
-          .map((num) => ({ scriptNum: num, key: `${num}-korean`, blob: recordings[`${num}-korean`] }))
-          .filter((item) => item.blob),
-        영어: availableScripts
-          .map((num) => ({ scriptNum: num, key: `${num}-english`, blob: recordings[`${num}-english`] }))
-          .filter((item) => item.blob),
-      }
+      // 한영: 문안별로 묶어서 각 문안에 한국어/영어 포함
+      return availableScripts.map((scriptNum) => ({
+        scriptNum,
+        recordings: [
+          { 
+            lang: "한국어", 
+            key: `${scriptNum}-korean`, 
+            blob: recordings[`${scriptNum}-korean`] 
+          },
+          { 
+            lang: "English", 
+            key: `${scriptNum}-english`, 
+            blob: recordings[`${scriptNum}-english`] 
+          }
+        ].filter((item) => item.blob)
+      })).filter((item) => item.recordings.length > 0)
     } else {
-      // 일본어, 중국어는 해당 언어 키 사용
-      const languageKey = `${availableScripts[0]}-${userInfo.language}`
-      return {
-        [getLanguageDisplay(userInfo.language)]: availableScripts
-          .map((num) => ({ 
-            scriptNum: num, 
-            key: `${num}-${userInfo.language}`, 
-            blob: recordings[`${num}-${userInfo.language}`] 
-          }))
-          .filter((item) => item.blob),
-      }
+      // 일본어, 중국어: 문안별로 하나씩
+      return availableScripts.map((scriptNum) => ({
+        scriptNum,
+        recordings: [
+          { 
+            lang: getLanguageDisplay(userInfo.language), 
+            key: `${scriptNum}-${userInfo.language}`, 
+            blob: recordings[`${scriptNum}-${userInfo.language}`] 
+          }
+        ].filter((item) => item.blob)
+      })).filter((item) => item.recordings.length > 0)
     }
   }
 
-  const recordingsByLanguage = getRecordingsByLanguage()
+  const recordingsByScript = getRecordingsByScript()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-zinc-100">
@@ -388,7 +483,7 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">녹음 파일 최종 확인</h2>
           <p className="text-gray-600">
-            녹음된 파일들을 확인하고 최종 제출해주세요. (재녹음 불가)
+            녹음된 파일들을 확인하고 최종 제출해주세요. <span className="text-red-600 font-semibold">(재녹음 불가)</span>
           </p>
         </div>
 
@@ -400,42 +495,45 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
                 <span>녹음 파일 확인</span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {Object.entries(recordingsByLanguage).map(([language, recordings]) => (
-                <div key={language} className="space-y-3">
-                  <h3 className="font-semibold text-lg">{language}</h3>
-                  <div className="space-y-3">
-                    {recordings.map(({ scriptNum, key }) => (
-                      <div key={key} className="flex items-center justify-between p-4 bg-gradient-to-r from-slate-50 to-gray-50 rounded-xl border border-gray-200/50 shadow-sm">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white text-sm font-bold">
-                            {scriptNum}
-                          </div>
-                          <span className="font-semibold text-gray-800">{scriptNum}번 문안</span>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => playRecording(key)}
-                          className={`${
-                            currentlyPlaying === key 
-                              ? "bg-red-50 text-red-700 border-red-300 shadow-md hover:bg-red-100" 
-                              : "bg-white text-gray-700 border-gray-300 hover:bg-blue-50 hover:text-blue-600"
-                          } transition-all duration-200`}
-                        >
-                          {currentlyPlaying === key ? (
-                            <>
-                              <Pause className="w-3 h-3 mr-1" />
-                              정지
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-3 h-3 mr-1" />
-                              재생
-                            </>
-                          )}
-                        </Button>
-                      </div>
+            <CardContent className="pt-6 space-y-3">
+              {recordingsByScript.map(({ scriptNum, recordings }) => (
+                <div 
+                  key={scriptNum} 
+                  className="p-4 bg-gradient-to-br from-slate-50 to-gray-50 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
+                >
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white text-sm font-bold shrink-0 shadow-md">
+                      {scriptNum}
+                    </div>
+                    <span className="font-bold text-gray-900">{scriptNum}번 문안</span>
+                  </div>
+                  
+                  {/* 녹음 파일 버튼들 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {recordings.map(({ lang, key }) => (
+                      <Button
+                        key={key}
+                        size="sm"
+                        variant="outline"
+                        onClick={() => playRecording(key)}
+                        className={`h-10 font-semibold transition-all duration-200 ${
+                          currentlyPlaying === key 
+                            ? "bg-gradient-to-r from-red-500 to-pink-500 text-white border-red-400 shadow-lg scale-105" 
+                            : "bg-white text-gray-700 border-gray-300 hover:bg-gradient-to-r hover:from-blue-500 hover:to-indigo-500 hover:text-white hover:border-blue-400 hover:shadow-md hover:scale-105"
+                        }`}
+                      >
+                        {currentlyPlaying === key ? (
+                          <>
+                            <Pause className="w-4 h-4 mr-1.5" />
+                            <span>{lang} 정지</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4 mr-1.5" />
+                            <span>{lang}</span>
+                          </>
+                        )}
+                      </Button>
                     ))}
                   </div>
                 </div>
@@ -450,7 +548,7 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
                 제출 정보
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="pt-6 space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-2.5 bg-gradient-to-r from-slate-50 to-gray-50 rounded-lg border border-gray-200/50">
                   <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">이름</span>
@@ -471,23 +569,15 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
               </div>
 
               {/* 중요 안내사항 */}
-              <div className="space-y-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200/50">
-                <h4 className="font-semibold text-blue-900 text-sm flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4" />
+              <div className="space-y-3 p-4 bg-amber-50 rounded-lg border border-amber-200">
+                <h4 className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600" />
                   중요 안내사항
                 </h4>
-                <div className="space-y-2 text-xs text-blue-800">
+                <div className="space-y-2 text-xs text-gray-700">
                   <div className="flex items-start gap-2">
-                    <span className="text-blue-600 font-medium">•</span>
-                    <span>이 페이지에서 나가면 녹음 데이터가 손실됩니다.</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="text-blue-600 font-medium">•</span>
-                    <span>업로드 완료 후 조용히 방송실습실을 퇴실해주세요.</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="text-blue-600 font-medium">•</span>
-                    <span>평가 결과는 월 말 공지로 확인해주세요.</span>
+                    <span className="text-gray-600 font-medium shrink-0">•</span>
+                    <span>확인 완료 후 <span className="font-semibold">제출 버튼을 꼭 눌러주세요.</span> (미제출 시 데이터 손실)</span>
                   </div>
                 </div>
               </div>
@@ -511,14 +601,46 @@ export function FinalConfirmation({ userInfo, recordings, availableScripts, onSu
                 </div>
               )}
 
-              <Button
-                onClick={handleSubmit}
-                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-12 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-                disabled={isUploading || Object.values(recordings).filter(Boolean).length === 0}
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                {isUploading ? "업로드 중..." : "최종 제출"}
-              </Button>
+              <div className="relative group">
+                {/* 배경 펄스 애니메이션 효과 */}
+                {!isUploading && Object.values(recordings).filter(Boolean).length > 0 && (
+                  <>
+                    <div className="absolute -inset-1 bg-gradient-to-r from-green-400 to-emerald-400 rounded-lg animate-pulse opacity-50 blur"></div>
+                    <div className="absolute inset-0 bg-gradient-to-r from-green-400 to-emerald-400 rounded-lg animate-ping opacity-20"></div>
+                  </>
+                )}
+                
+                <Button
+                  onClick={handleSubmit}
+                  className={`relative w-full h-16 text-xl font-bold text-white shadow-2xl transition-all duration-300 ${
+                    isUploading || Object.values(recordings).filter(Boolean).length === 0
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 hover:scale-[1.02] hover:shadow-[0_20px_60px_-15px_rgba(16,185,129,0.5)] active:scale-95"
+                  }`}
+                  disabled={isUploading || Object.values(recordings).filter(Boolean).length === 0}
+                  style={{
+                    animation: !isUploading && Object.values(recordings).filter(Boolean).length > 0 
+                      ? 'subtle-bounce 2s ease-in-out infinite' 
+                      : 'none'
+                  }}
+                >
+                  <Upload className={`w-5 h-5 mr-2 ${!isUploading ? "animate-pulse" : ""}`} />
+                  <span className="relative">
+                    {isUploading ? "업로드 중..." : "🎯 최종 제출"}
+                  </span>
+                </Button>
+              </div>
+              
+              <style dangerouslySetInnerHTML={{__html: `
+                @keyframes subtle-bounce {
+                  0%, 100% {
+                    transform: translateY(0px);
+                  }
+                  50% {
+                    transform: translateY(-4px);
+                  }
+                }
+              `}} />
 
               {!isUploading && (
                 <div className="text-xs text-gray-500 text-center">

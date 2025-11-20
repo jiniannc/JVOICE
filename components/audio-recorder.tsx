@@ -160,9 +160,16 @@ export function AudioRecorder({ onRecordingComplete, existingRecording, hasExist
             }
           </Button>
         ) : (
-          <Button onClick={stopRecording} variant="destructive" className="flex-1">
-            <Square className="w-4 h-4 mr-2" />
-            녹음 중지 ({formatTime(recordingTime)})
+          <Button 
+            onClick={stopRecording} 
+            variant="destructive" 
+            className="flex-1 relative animate-pulse bg-red-600 hover:bg-red-700"
+          >
+            <div className="flex items-center justify-center w-full">
+              <div className="w-3 h-3 bg-white rounded-full animate-pulse mr-2"></div>
+              <Square className="w-4 h-4 mr-2" />
+              <span className="font-bold">녹음 중... ({formatTime(recordingTime)})</span>
+            </div>
           </Button>
         )}
       </div>
@@ -192,16 +199,6 @@ export function AudioRecorder({ onRecordingComplete, existingRecording, hasExist
             className="w-full"
             controls
           />
-        </div>
-      )}
-
-      {/* 녹음 상태 표시 */}
-      {isRecording && (
-        <div className="flex items-center justify-center p-4 bg-red-50 rounded-lg">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-red-700 font-medium">녹음 중... {formatTime(recordingTime)}</span>
-          </div>
         </div>
       )}
 

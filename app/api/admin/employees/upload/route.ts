@@ -7,7 +7,12 @@ import * as XLSX from "xlsx";
  * POST /api/admin/employees/upload
  * 
  * 최소 필수 컬럼: 사번 (employeeId)
- * 선택 컬럼 (있는 것만 업데이트):
+ * 
+ * 동작 방식:
+ * - DB에 사번이 있으면: 기본 정보 유지, 엑셀에 있는 항목만 업데이트, 자격증 빈 셀은 기존 값 유지
+ * - DB에 사번이 없으면: 신규 사용자 생성 (필수: employeeId, name)
+ * 
+ * 선택 컬럼:
  * - name, email, department, position, lineTeam
  * - 활성/역할, koreanEnglishGrade, koreanEnglishExpiry
  * - japaneseGrade, chineseGrade
@@ -55,6 +60,7 @@ export async function POST(request: NextRequest) {
     const dataRows = rows.slice(1);
 
     // 결과 카운터
+    let createdCount = 0;
     let updatedCount = 0;
     let skippedCount = 0;
     const errors: string[] = [];
@@ -101,13 +107,11 @@ export async function POST(request: NextRequest) {
           where: { employeeId },
         });
 
-        if (!existingUser) {
-          errors.push(`${rowNumber}행: 사번 ${employeeId}에 해당하는 직원을 찾을 수 없습니다`);
-          skippedCount++;
-          continue;
-        }
+        const isNewUser = !existingUser;
 
-        // 업데이트할 데이터 구성 (엑셀에 있는 필드만)
+        // ========== 데이터 구성 시작 ==========
+        
+        // 업데이트/생성할 데이터 구성 (엑셀에 있는 필드만)
         const updateData: any = {};
 
         // ========== 기본 정보 (빈 셀은 무시, DB 값 유지) ==========
@@ -155,7 +159,7 @@ export async function POST(request: NextRequest) {
           updateData.isInstructor = roles.includes("교관") || updateData.isAdmin;
         }
 
-        // ========== 자격 정보 (빈 셀이면 null로 덮어쓰기) ==========
+        // ========== 자격 정보 (빈 셀은 기존 값 유지, "없음"이나 "NONE"만 null로 설정) ==========
 
         // 한/영 자격 (다양한 컬럼명 지원)
         const koreanEnglishGradeKey = headers.find(h => 
@@ -165,20 +169,24 @@ export async function POST(request: NextRequest) {
           const koreanEnglishGrade = rowData[koreanEnglishGradeKey];
           const grade = (koreanEnglishGrade || "").toString().trim().toUpperCase();
           
-          // 빈 셀이면 null로 덮어쓰기
-          if (!grade || grade === "없음" || grade === "NONE") {
-            updateData.koreanEnglishGrade = null;
+          // 값이 있는 경우에만 처리
+          if (grade) {
+            // "없음" 또는 "NONE"이면 명시적으로 null로 설정
+            if (grade === "없음" || grade === "NONE") {
+              updateData.koreanEnglishGrade = null;
+            }
+            // ANNC_S, ANNC_A, ANNC_B 형식으로 변환
+            else if (grade === "ANNC_S" || grade === "ANNC_A" || grade === "ANNC_B") {
+              updateData.koreanEnglishGrade = grade;
+            }
+            // S, A, B만 있으면 ANNC_ 접두사 추가
+            else if (grade === "S") updateData.koreanEnglishGrade = "ANNC_S";
+            else if (grade === "A") updateData.koreanEnglishGrade = "ANNC_A";
+            else if (grade === "B") updateData.koreanEnglishGrade = "ANNC_B";
+            // 그 외는 그대로 저장
+            else updateData.koreanEnglishGrade = grade;
           }
-          // ANNC_S, ANNC_A, ANNC_B 형식으로 변환
-          else if (grade === "ANNC_S" || grade === "ANNC_A" || grade === "ANNC_B") {
-            updateData.koreanEnglishGrade = grade;
-          }
-          // S, A, B만 있으면 ANNC_ 접두사 추가
-          else if (grade === "S") updateData.koreanEnglishGrade = "ANNC_S";
-          else if (grade === "A") updateData.koreanEnglishGrade = "ANNC_A";
-          else if (grade === "B") updateData.koreanEnglishGrade = "ANNC_B";
-          // 그 외는 그대로 저장
-          else updateData.koreanEnglishGrade = grade;
+          // 빈 셀이면 아무것도 하지 않음 (기존 값 유지)
         }
 
         // 한/영 유효기간 (다양한 컬럼명 지원)
@@ -187,20 +195,28 @@ export async function POST(request: NextRequest) {
         );
         if (koreanEnglishExpiryKey !== undefined) {
           const koreanEnglishExpiry = rowData[koreanEnglishExpiryKey];
-          let expiryDate: Date | null = null;
           
-          // 빈 셀이 아니고 "없음"도 아닌 경우만 날짜 파싱
-          if (koreanEnglishExpiry && koreanEnglishExpiry.toString().trim() && koreanEnglishExpiry.toString().trim() !== "없음") {
-            if (typeof koreanEnglishExpiry === "number") {
-              const excelDate = XLSX.SSF.parse_date_code(koreanEnglishExpiry);
-              expiryDate = new Date(excelDate.y, excelDate.m - 1, excelDate.d);
+          // 값이 있는 경우에만 처리
+          if (koreanEnglishExpiry && koreanEnglishExpiry.toString().trim()) {
+            const expiryStr = koreanEnglishExpiry.toString().trim();
+            
+            // "없음"이면 명시적으로 null로 설정
+            if (expiryStr === "없음" || expiryStr === "NONE") {
+              updateData.koreanEnglishExpiry = null;
             } else {
-              expiryDate = new Date(koreanEnglishExpiry);
-              if (isNaN(expiryDate.getTime())) expiryDate = null;
+              // 날짜 파싱
+              let expiryDate: Date | null = null;
+              if (typeof koreanEnglishExpiry === "number") {
+                const excelDate = XLSX.SSF.parse_date_code(koreanEnglishExpiry);
+                expiryDate = new Date(excelDate.y, excelDate.m - 1, excelDate.d);
+              } else {
+                expiryDate = new Date(koreanEnglishExpiry);
+                if (isNaN(expiryDate.getTime())) expiryDate = null;
+              }
+              updateData.koreanEnglishExpiry = expiryDate ? expiryDate.toISOString() : null;
             }
           }
-          // Date 객체를 ISO 문자열로 변환 (빈 셀이면 null로 덮어쓰기)
-          updateData.koreanEnglishExpiry = expiryDate ? expiryDate.toISOString() : null;
+          // 빈 셀이면 아무것도 하지 않음 (기존 값 유지)
         }
 
         // 일본어 자격 (다양한 컬럼명 지원)
@@ -211,19 +227,23 @@ export async function POST(request: NextRequest) {
           const japaneseGrade = rowData[japaneseGradeKey];
           const grade = (japaneseGrade || "").toString().trim().toUpperCase();
           
-          // 빈 셀이면 null로 덮어쓰기
-          if (!grade || grade === "없음" || grade === "NONE") {
-            updateData.japaneseGrade = null;
+          // 값이 있는 경우에만 처리
+          if (grade) {
+            // "없음" 또는 "NONE"이면 명시적으로 null로 설정
+            if (grade === "없음" || grade === "NONE") {
+              updateData.japaneseGrade = null;
+            }
+            // JP_A, JP_B 형식으로 변환
+            else if (grade === "JP_A" || grade === "JP_B") {
+              updateData.japaneseGrade = grade;
+            }
+            // A, B만 있으면 JP_ 접두사 추가
+            else if (grade === "A") updateData.japaneseGrade = "JP_A";
+            else if (grade === "B") updateData.japaneseGrade = "JP_B";
+            // 그 외는 그대로 저장
+            else updateData.japaneseGrade = grade;
           }
-          // JP_A, JP_B 형식으로 변환
-          else if (grade === "JP_A" || grade === "JP_B") {
-            updateData.japaneseGrade = grade;
-          }
-          // A, B만 있으면 JP_ 접두사 추가
-          else if (grade === "A") updateData.japaneseGrade = "JP_A";
-          else if (grade === "B") updateData.japaneseGrade = "JP_B";
-          // 그 외는 그대로 저장
-          else updateData.japaneseGrade = grade;
+          // 빈 셀이면 아무것도 하지 않음 (기존 값 유지)
         }
 
         // 중국어 자격 (다양한 컬럼명 지원)
@@ -234,39 +254,86 @@ export async function POST(request: NextRequest) {
           const chineseGrade = rowData[chineseGradeKey];
           const grade = (chineseGrade || "").toString().trim().toUpperCase();
           
-          // 빈 셀이면 null로 덮어쓰기
-          if (!grade || grade === "없음" || grade === "NONE") {
-            updateData.chineseGrade = null;
+          // 값이 있는 경우에만 처리
+          if (grade) {
+            // "없음" 또는 "NONE"이면 명시적으로 null로 설정
+            if (grade === "없음" || grade === "NONE") {
+              updateData.chineseGrade = null;
+            }
+            // CN_A, CN_B 형식으로 변환
+            else if (grade === "CN_A" || grade === "CN_B") {
+              updateData.chineseGrade = grade;
+            }
+            // A, B만 있으면 CN_ 접두사 추가
+            else if (grade === "A") updateData.chineseGrade = "CN_A";
+            else if (grade === "B") updateData.chineseGrade = "CN_B";
+            // 그 외는 그대로 저장
+            else updateData.chineseGrade = grade;
           }
-          // CN_A, CN_B 형식으로 변환
-          else if (grade === "CN_A" || grade === "CN_B") {
-            updateData.chineseGrade = grade;
-          }
-          // A, B만 있으면 CN_ 접두사 추가
-          else if (grade === "A") updateData.chineseGrade = "CN_A";
-          else if (grade === "B") updateData.chineseGrade = "CN_B";
-          // 그 외는 그대로 저장
-          else updateData.chineseGrade = grade;
+          // 빈 셀이면 아무것도 하지 않음 (기존 값 유지)
         }
 
-        // 업데이트할 내용이 없으면 건너뛰기
-        if (Object.keys(updateData).length === 0) {
-          errors.push(`${rowNumber}행: 업데이트할 내용이 없습니다`);
-          skippedCount++;
-          continue;
+        // ========== 신규 생성 vs 업데이트 분기 ==========
+        
+        if (isNewUser) {
+          // 신규 사용자 생성
+          
+          // 필수 필드 검증
+          const name = rowData["name"] || rowData["이름"];
+          if (!name || !name.toString().trim()) {
+            errors.push(`${rowNumber}행: 신규 사용자는 이름(name)이 필수입니다`);
+            skippedCount++;
+            continue;
+          }
+
+          // 신규 사용자 기본값 설정
+          const createData: any = {
+            employeeId,
+            name: name.toString().trim(),
+            email: updateData.email || `${employeeId}@temp.com`,
+            password: "임시비밀번호", // 실제로는 해시화된 기본 비밀번호
+            department: updateData.department || null,
+            position: updateData.position || null,
+            lineTeam: updateData.lineTeam || null,
+            isActive: updateData.isActive !== undefined ? updateData.isActive : true,
+            isAdmin: updateData.isAdmin || false,
+            isInstructor: updateData.isInstructor || false,
+            roles: updateData.roles || [],
+            koreanEnglishGrade: updateData.koreanEnglishGrade || null,
+            koreanEnglishExpiry: updateData.koreanEnglishExpiry || null,
+            japaneseGrade: updateData.japaneseGrade || null,
+            chineseGrade: updateData.chineseGrade || null,
+          };
+
+          await prisma.user.create({
+            data: createData,
+          });
+
+          createdCount++;
+          console.log(`✅ [API] 신규 사용자 생성: ${employeeId} (${name})`);
+          
+        } else {
+          // 기존 사용자 업데이트
+          
+          // 업데이트할 내용이 없으면 건너뛰기
+          if (Object.keys(updateData).length === 0) {
+            errors.push(`${rowNumber}행: 업데이트할 내용이 없습니다`);
+            skippedCount++;
+            continue;
+          }
+
+          // DB 업데이트
+          await prisma.user.update({
+            where: { id: existingUser.id },
+            data: updateData,
+          });
+
+          updatedCount++;
         }
-
-        // DB 업데이트
-        await prisma.user.update({
-          where: { id: existingUser.id },
-          data: updateData,
-        });
-
-        updatedCount++;
         
         // 100행마다 진행 상황 출력
-        if (updatedCount % 100 === 0) {
-          console.log(`📊 [API] 진행 중: ${updatedCount}/${dataRows.length}행 처리 완료`);
+        if ((createdCount + updatedCount) % 100 === 0) {
+          console.log(`📊 [API] 진행 중: 생성 ${createdCount} + 업데이트 ${updatedCount}/${dataRows.length}행 처리 완료`);
         }
 
       } catch (error: any) {
@@ -276,13 +343,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log(`✅ [API] 엑셀 업로드 완료: 업데이트 ${updatedCount}, 건너뜀 ${skippedCount}`);
+    console.log(`✅ [API] 엑셀 업로드 완료: 생성 ${createdCount}, 업데이트 ${updatedCount}, 건너뜀 ${skippedCount}`);
 
     return NextResponse.json({
       success: true,
       message: "엑셀 파일 업로드가 완료되었습니다",
       summary: {
         total: dataRows.length,
+        created: createdCount,
         updated: updatedCount,
         skipped: skippedCount,
         errors: errors.length,

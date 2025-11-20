@@ -15,33 +15,16 @@ export default function PWAInstallPrompt() {
   const [installStatus, setInstallStatus] = useState<'idle' | 'installing' | 'success' | 'failed' | 'not-supported'>('idle');
 
   useEffect(() => {
-    // PWA 설치 가능 여부 확인
-    const checkPWASupport = async () => {
-      try {
-        // 매니페스트 파일 확인
-        const manifestResponse = await fetch('/manifest.json');
-        if (!manifestResponse.ok) {
-          console.log('❌ PWA: 매니페스트 파일을 찾을 수 없습니다');
-          return;
-        }
-        
-        // 서비스 워커 등록 확인
-        if ('serviceWorker' in navigator) {
-          console.log('✅ PWA: 서비스 워커 지원됨');
-        }
-        
-        // 설치 가능 여부 확인
-        if ('standalone' in window.navigator) {
-          console.log('✅ PWA: standalone 모드 지원됨');
-        }
-        
-        console.log('✅ PWA: 설치 조건 확인 완료');
-      } catch (error) {
-        console.log('❌ PWA: 설치 조건 확인 실패', error);
-      }
-    };
-
-    checkPWASupport();
+    // 이미 standalone 모드로 실행 중인지 확인 (이미 설치된 경우)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                         (window.navigator as any).standalone === true;
+    
+    if (isStandalone) {
+      console.log('✅ PWA: 이미 설치됨 - 프롬프트 표시 안 함');
+      setDismissed(true);
+      localStorage.setItem('pwa-prompt-dismissed', 'installed');
+      return;
+    }
 
     // 로컬 스토리지에서 이전에 닫았는지 확인
     const dismissedTime = localStorage.getItem('pwa-prompt-dismissed');
@@ -61,14 +44,14 @@ export default function PWAInstallPrompt() {
       }
     }
 
-    // 디바이스 및 브라우저 감지 (더 정확한 로직)
+    // 디바이스 및 브라우저 감지
     const userAgent = navigator.userAgent;
     const isIOSDevice = /iPad|iPhone|iPod/.test(userAgent);
     
-    // Chrome 감지: Chrome이 포함되고 Edge가 아닌 경우
+    // Chrome 감지
     const isChromeBrowser = /Chrome/.test(userAgent) && !/Edge|Edg/.test(userAgent);
     
-    // Safari 감지: Safari가 포함되고 Chrome이 없는 경우 (더 엄격한 조건)
+    // Safari 감지
     const isSafariBrowser = /Safari/.test(userAgent) && !/Chrome|Chromium/.test(userAgent) && /Version/.test(userAgent);
 
     setIsIOS(isIOSDevice);
@@ -79,21 +62,9 @@ export default function PWAInstallPrompt() {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
+      // beforeinstallprompt 이벤트가 발생한 경우에만 표시
       setShowInstallPrompt(true);
     };
-
-    // iOS 디바이스에서 설치 안내 표시 (Safari 또는 Chrome)
-    if (isIOSDevice) {
-      setShowInstallPrompt(true);
-    }
-
-    // Android Chrome에서도 강제로 표시 (처음 한 번은 무조건)
-    if (isChromeBrowser && !isIOSDevice) {
-      // 3초 후에 강제로 표시
-      setTimeout(() => {
-        setShowInstallPrompt(true);
-      }, 3000);
-    }
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
@@ -147,22 +118,15 @@ export default function PWAInstallPrompt() {
   const handleDismiss = () => {
     setShowInstallPrompt(false);
     setDismissed(true);
-    // 24시간 동안 다시 표시하지 않음
-    const expiryTime = Date.now() + (24 * 60 * 60 * 1000); // 24시간 후
+    // 7일 동안 다시 표시하지 않음 (24시간 -> 7일로 변경)
+    const expiryTime = Date.now() + (7 * 24 * 60 * 60 * 1000); // 7일 후
     localStorage.setItem('pwa-prompt-dismissed', expiryTime.toString());
   };
 
-  // 이미 닫았거나 설치 완료된 경우 표시하지 않음
-  if (dismissed) {
+  // 이미 닫았거나 설치 완료된 경우, 또는 알림을 표시할 필요가 없는 경우
+  if (dismissed || !showInstallPrompt) {
     return null;
   }
-
-  // 강제로 표시 (처음 한 번은 무조건)
-  if (!showInstallPrompt && !isIOS) {
-    setShowInstallPrompt(true);
-  }
-
-  // 데스크톱에서도 표시 (설치 피드백을 위해)
 
   return (
     <div className="fixed bottom-4 left-4 right-4 z-50 md:left-auto md:right-4 md:w-80">

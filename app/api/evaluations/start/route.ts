@@ -46,12 +46,13 @@ export async function POST(request: NextRequest) {
     // 이미 다른 교관이 평가/검토 중인지 확인 (경고만 표시, 차단하지 않음)
     const isOtherInstructorWorking = (evaluation.status === 'evaluating' || evaluation.status === 'reviewing') 
                                       && evaluation.evaluatedBy 
+                                      && evaluation.evaluatedBy !== instructorName
                                       && evaluation.evaluatedBy !== instructorId;
     
     let warningMessage = null;
     if (isOtherInstructorWorking) {
       const lockMode = evaluation.status === 'reviewing' ? '검토' : '평가';
-      warningMessage = `${evaluation.evaluatedBy} 교관이 현재 ${lockMode} 중입니다.`;
+      warningMessage = `${evaluation.evaluatedBy}님이 현재 ${lockMode} 중입니다.`;
       console.log(`⚠️ [API] ${mode} 중복 진입 경고: ${warningMessage}`);
     }
 
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
       where: { id: evaluationId },
       data: {
         status: targetStatus,
-        evaluatedBy: instructorId,
+        evaluatedBy: instructorName || instructorId, // 교관 이름 저장 (없으면 사번)
         evaluatedAt: new Date() // 평가/검토 시작 시간 기록
       }
     });

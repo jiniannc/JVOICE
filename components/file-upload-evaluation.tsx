@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { employeeDB } from "@/lib/employee-database"
-import { PDFSyncService } from "@/lib/pdf-sync-service"
+import { pdfDatabaseService } from "@/lib/pdf-database-service"
 import { 
   Upload, 
   FileAudio, 
@@ -73,7 +73,6 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
   const [isDragOver, setIsDragOver] = useState(false)
   const [isProcessingLanguage, setIsProcessingLanguage] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const pdfSyncService = useRef(new PDFSyncService())
 
   // 직원정보 스프레드시트에서 이름과 사번 가져오기
   useEffect(() => {
@@ -536,7 +535,7 @@ export function FileUploadEvaluation({ onComplete, onBack, authenticatedUser, hi
                   value={userInfo.language}
                   onValueChange={(value) => {
                     // 언어 변경 시 스크립트 캐시 초기화
-                    pdfSyncService.current.clearScriptCache()
+                    pdfDatabaseService.clearScriptCache()
                     setUserInfo(prev => ({ ...prev, language: value, category: "" }))
                   }}
                 >

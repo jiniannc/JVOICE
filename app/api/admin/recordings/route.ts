@@ -1,40 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "../../../../lib/generated/prisma";
 
-// 파일 시그니처로 실제 파일 형식 감지
-function detectFileType(buffer: Buffer): { mimeType: string; extension: string } {
-  const signature = buffer.slice(0, 12);
-  
-  // WebM 파일 (1A 45 DF A3)
-  if (signature[0] === 0x1A && signature[1] === 0x45 && signature[2] === 0xDF && signature[3] === 0xA3) {
-    return { mimeType: 'audio/webm', extension: '.webm' };
-  }
-  
-  // MP3 파일 (ID3 태그: 49 44 33 또는 MPEG 헤더: FF FB/FF FA)
-  if ((signature[0] === 0x49 && signature[1] === 0x44 && signature[2] === 0x33) ||
-      (signature[0] === 0xFF && (signature[1] === 0xFB || signature[1] === 0xFA))) {
-    return { mimeType: 'audio/mpeg', extension: '.mp3' };
-  }
-  
-  // M4A 파일 (ftyp 박스: 00 00 00 XX 66 74 79 70)
-  if (signature[4] === 0x66 && signature[5] === 0x74 && signature[6] === 0x79 && signature[7] === 0x70) {
-    return { mimeType: 'audio/mp4', extension: '.m4a' };
-  }
-  
-  // WAV 파일 (RIFF 헤더: 52 49 46 46)
-  if (signature[0] === 0x52 && signature[1] === 0x49 && signature[2] === 0x46 && signature[3] === 0x46) {
-    return { mimeType: 'audio/wav', extension: '.wav' };
-  }
-  
-  // OGG 파일 (4F 67 67 53)
-  if (signature[0] === 0x4F && signature[1] === 0x67 && signature[2] === 0x67 && signature[3] === 0x53) {
-    return { mimeType: 'audio/ogg', extension: '.ogg' };
-  }
-  
-  // 기본값 (감지 실패시)
-  return { mimeType: 'audio/webm', extension: '.webm' };
-}
-
 const prisma = new PrismaClient();
 
 interface RecordingFile {
@@ -44,10 +10,11 @@ interface RecordingFile {
   fileSize: number;
   duration?: number;
   submittedAt: string;
+  scriptNumber: number;
+  language: string;
   userId: string;
   userName: string;
   employeeId: string;
-  language: string;
   category: string;
   status: string;
   evaluationId?: string;
@@ -134,8 +101,7 @@ export async function GET(request: NextRequest) {
           fileName: true,
           filePath: true,
           fileSize: true,
-          fileData: true, // 명시적으로 fileData 포함 (크기 확인용)
-          url: true, // Base64 데이터가 url 필드에 저장되어 있을 수 있음
+          // fileData와 url은 대용량 데이터이므로 로드하지 않음 (메모리 이슈 방지)
           evaluationId: true,
           scriptNumber: true,
           language: true,
@@ -165,44 +131,44 @@ export async function GET(request: NextRequest) {
 
     console.log(`📊 [API] 녹음 파일 ${recordings.length}건 조회됨`);
 
-    // 데이터 변환 (파일 형식 감지하여 올바른 확장자로 표시)
+    // 파일 크기 정보만 가져오기 (Base64 데이터는 로드하지 않고 길이만 계산)
+    const recordingIds = recordings.map(r => r.id);
+    const fileSizes = await prisma.$queryRaw<{ id: string; file_size: number }[]>`
+      SELECT id, 
+             COALESCE(
+               LENGTH("fileData"),
+               LENGTH("url"),
+               0
+             ) as file_size
+      FROM recordings 
+      WHERE id = ANY(${recordingIds}::text[])
+    `;
+    
+    // id를 key로 하는 Map 생성
+    const fileSizeMap = new Map(fileSizes.map(fs => [fs.id, Number(fs.file_size)]));
+    
+    console.log(`📊 [API] 파일 크기 정보 ${fileSizes.length}건 조회됨`);
+
+    // 데이터 변환 (대용량 파일 처리를 위해 Base64 데이터 로드 없이 처리)
     const recordingFiles: RecordingFile[] = recordings.map((recording) => {
-      let displayFileName = recording.fileName || `recording_${recording.id}.wav`;
-      let fileSize = recording.fileSize || 0;
-      
-      // Base64 데이터가 있으면 파일 형식 감지하여 올바른 확장자로 표시
-      if (recording.fileData || recording.url) {
-        try {
-          const base64Data = recording.fileData || recording.url;
-          if (base64Data) {
-            const fileBuffer = Buffer.from(base64Data, 'base64');
-            fileSize = fileBuffer.length;
-            
-            // 파일 형식 감지
-            const detectedType = detectFileType(fileBuffer);
-            
-            // 파일명에서 확장자 제거하고 감지된 확장자로 교체
-            const baseFileName = displayFileName.replace(/\.[^/.]+$/, "");
-            displayFileName = baseFileName + detectedType.extension;
-            
-            console.log(`🔍 [API] ${recording.id}: ${detectedType.extension} 감지 → ${displayFileName}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ [API] 파일 형식 감지 실패 (${recording.id}):`, error);
-        }
-      }
+      const displayFileName = recording.fileName || `recording_${recording.id}.wav`;
+      // 실제 파일 크기 사용 (Base64 길이)
+      const base64Length = fileSizeMap.get(recording.id) || 0;
+      // Base64는 원본의 약 1.33배이므로 원본 크기 추정
+      const actualFileSize = base64Length > 0 ? Math.floor(base64Length * 0.75) : (recording.fileSize || 0);
       
       return {
         id: recording.id,
-        fileName: displayFileName, // 올바른 확장자로 표시
+        fileName: displayFileName,
         filePath: recording.filePath || '',
-        fileSize: fileSize,
+        fileSize: actualFileSize,
         duration: recording.evaluation?.duration || 0,
         submittedAt: recording.evaluation?.submittedAt?.toISOString() || recording.createdAt.toISOString(),
+        scriptNumber: recording.scriptNumber || 0,
+        language: recording.language || 'korean',
         userId: recording.evaluation?.userId || '',
         userName: recording.evaluation?.user?.name || '알 수 없음',
         employeeId: recording.evaluation?.user?.employeeId || '',
-        language: recording.evaluation?.language || '',
         category: recording.evaluation?.category || '',
         status: recording.evaluation?.status || 'pending',
         evaluationId: recording.evaluationId,

@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
     });
 
     // 4. 기존 Dropbox 형식과 호환되는 형태로 변환
-    const formattedEvaluations = evaluations.map(evaluation => {
+    const formattedEvaluations = await Promise.all(evaluations.map(async evaluation => {
       // 점수를 기존 형식으로 변환
       const scores: Record<string, number> = {};
       const categoryScores: Record<string, number> = {};
@@ -188,6 +188,35 @@ export async function GET(request: NextRequest) {
           }))
         : []; // 🔥 녹음 데이터 미포함 시 빈 배열
 
+      // 평가자 정보 조회 (최초 평가자, 최종 평가자)
+      let initialEvaluatorName = null;
+      let finalEvaluatorName = null;
+
+      console.log(`🔍 [평가자 조회] 평가 ID: ${evaluation.id}`);
+      console.log(`🔍 [평가자 조회] initialEvaluatedBy: ${evaluation.initialEvaluatedBy}`);
+      console.log(`🔍 [평가자 조회] evaluatedBy: ${evaluation.evaluatedBy}`);
+
+      if (evaluation.initialEvaluatedBy) {
+        const initialEvaluator = await prisma.user.findUnique({
+          where: { employeeId: evaluation.initialEvaluatedBy },
+          select: { name: true, employeeId: true }
+        });
+        initialEvaluatorName = initialEvaluator?.name || null;
+        console.log(`✅ [평가자 조회] 최초 평가자 조회: ${evaluation.initialEvaluatedBy} -> ${initialEvaluatorName}`);
+      }
+
+      if (evaluation.evaluatedBy) {
+        const finalEvaluator = await prisma.user.findUnique({
+          where: { employeeId: evaluation.evaluatedBy },
+          select: { name: true, employeeId: true }
+        });
+        finalEvaluatorName = finalEvaluator?.name || null;
+        console.log(`✅ [평가자 조회] 최종 평가자 조회: ${evaluation.evaluatedBy} -> ${finalEvaluatorName}`);
+      }
+
+      console.log(`📊 [평가자 결과] initialEvaluatedBy: ${evaluation.initialEvaluatedBy}, Name: ${initialEvaluatorName}`);
+      console.log(`📊 [평가자 결과] evaluatedBy: ${evaluation.evaluatedBy}, Name: ${finalEvaluatorName}`);
+
       return {
         id: evaluation.id,
         candidateInfo: {
@@ -200,7 +229,12 @@ export async function GET(request: NextRequest) {
           recordingCount: includeRecordings && evaluation.recordings ? evaluation.recordings.length : evaluation.recordingCount || 0, // 🔥 조건부 녹음 파일 수
           scriptNumbers: evaluation.scriptNumbers,
           comment: evaluation.comment,
-          duration: evaluation.duration
+          duration: evaluation.duration,
+          // 자격 정보 추가
+          koreanEnglishGrade: evaluation.user.koreanEnglishGrade,
+          koreanEnglishExpiry: evaluation.user.koreanEnglishExpiry,
+          japaneseGrade: evaluation.user.japaneseGrade,
+          chineseGrade: evaluation.user.chineseGrade
         },
         scores,
         categoryScores,
@@ -210,7 +244,11 @@ export async function GET(request: NextRequest) {
         grade: evaluation.grade,
         comments: evaluation.comments as Record<string, string>,
         evaluatedAt: evaluation.evaluatedAt?.toISOString(),
-        evaluatedBy: evaluation.evaluatedBy,
+        evaluatedBy: evaluation.evaluatedBy, // 최종 평가자 (사번)
+        evaluatedByName: finalEvaluatorName, // 최종 평가자 (이름)
+        initialEvaluatedBy: evaluation.initialEvaluatedBy, // 최초 평가자 (사번)
+        initialEvaluatedByName: initialEvaluatorName, // 최초 평가자 (이름)
+        initialEvaluatedAt: evaluation.initialEvaluatedAt?.toISOString(), // 최초 평가 시간 추가
         status: evaluation.status === 'completed' ? 'submitted' : evaluation.status, // completed만 submitted로 매핑, review_requested는 그대로 유지
         reviewRequestedBy: evaluation.reviewRequestedBy,
         reviewRequestedAt: evaluation.reviewRequestedAt?.toISOString(),
@@ -219,7 +257,7 @@ export async function GET(request: NextRequest) {
         approved: evaluation.approved,
         isFileUpload: evaluation.isFileUpload
       };
-    });
+    }));
 
     const hasNextPage = offset + limit < totalCount;
 

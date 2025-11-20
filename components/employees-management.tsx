@@ -273,7 +273,7 @@ export function EmployeesManagement({ showBackButton = false }: EmployeesManagem
       return
     }
 
-    if (!confirm(`"${file.name}" 파일을 업로드하시겠습니까?\n\n기존 직원 정보는 업데이트되고, 새로운 직원은 추가됩니다.`)) {
+    if (!confirm(`"${file.name}" 파일을 업로드하시겠습니까?\n\n• 기존 직원: 엑셀에 있는 정보만 업데이트 (자격증 빈 셀은 기존 값 유지)\n• 신규 직원: DB에 새로 추가`)) {
       event.target.value = ""
       return
     }
@@ -297,6 +297,7 @@ export function EmployeesManagement({ showBackButton = false }: EmployeesManagem
         let message = 
           `✅ 업로드 완료!\n\n` +
           `• 총 처리: ${data.summary.total}행\n` +
+          `• 신규 생성: ${data.summary.created}명\n` +
           `• 업데이트: ${data.summary.updated}명\n` +
           `• 건너뜀: ${data.summary.skipped}명\n` +
           (data.summary.errors > 0 ? `• 오류: ${data.summary.errors}건\n` : "")

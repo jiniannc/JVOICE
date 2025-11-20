@@ -131,10 +131,54 @@ export function EvaluationResultReport({ evaluation, onBack, mode }: EvaluationR
                   <span className="font-semibold">{formatDate(evaluation.evaluatedAt)}</span>
                 </div>
                 {mode !== "review" && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">평가자:</span>
-                    <span className="font-semibold">{evaluation.evaluatedBy}</span>
-                  </div>
+                  <>
+                    {/* 디버깅 로그 */}
+                    {(() => {
+                      console.log('🔍 [EvaluationResultReport] 평가자 데이터:', {
+                        initialEvaluatedBy: evaluation.initialEvaluatedBy,
+                        initialEvaluatedByName: evaluation.initialEvaluatedByName,
+                        evaluatedBy: evaluation.evaluatedBy,
+                        evaluatedByName: evaluation.evaluatedByName,
+                      });
+                      return null;
+                    })()}
+                    
+                    {/* 최초 평가자와 최종 평가자가 다른 경우 둘 다 표시 */}
+                    {evaluation.initialEvaluatedBy && evaluation.evaluatedBy && 
+                     evaluation.initialEvaluatedBy !== evaluation.evaluatedBy ? (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">최초 평가자:</span>
+                          <span className="font-semibold">
+                            {evaluation.initialEvaluatedByName || evaluation.initialEvaluatedBy}
+                            {evaluation.initialEvaluatedByName && (
+                              <span className="text-gray-500 ml-1">({evaluation.initialEvaluatedBy})</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">최종 평가자:</span>
+                          <span className="font-semibold">
+                            {evaluation.evaluatedByName || evaluation.evaluatedBy}
+                            {evaluation.evaluatedByName && (
+                              <span className="text-gray-500 ml-1">({evaluation.evaluatedBy})</span>
+                            )}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      /* 같은 평가자이거나 하나만 있는 경우 */
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">평가자:</span>
+                        <span className="font-semibold">
+                          {evaluation.evaluatedByName || evaluation.initialEvaluatedByName || evaluation.evaluatedBy || evaluation.initialEvaluatedBy}
+                          {(evaluation.evaluatedByName || evaluation.initialEvaluatedByName) && (
+                            <span className="text-gray-500 ml-1">({evaluation.evaluatedBy || evaluation.initialEvaluatedBy})</span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
                 <div className="flex justify-between">
                   <span className="text-gray-600">평가 기준:</span>

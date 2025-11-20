@@ -137,7 +137,7 @@ export default function EmployeesPage() {
       return
     }
 
-    if (!confirm(`"${file.name}" 파일을 업로드하시겠습니까?\n\n기존 직원 정보는 업데이트되고, 새로운 직원은 추가됩니다.`)) {
+    if (!confirm(`"${file.name}" 파일을 업로드하시겠습니까?\n\n• 기존 직원: 엑셀에 있는 정보만 업데이트 (자격증 빈 셀은 기존 값 유지)\n• 신규 직원: DB에 새로 추가`)) {
       event.target.value = "" // 파일 선택 초기화
       return
     }

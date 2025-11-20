@@ -3,12 +3,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Send, Award, User, FileText, Calendar, Type, UserSquare, Star, MessageSquare, CheckCircle, ListChecks, BarChart2, Pencil, RefreshCw, AlertTriangle, AlertCircle } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ArrowLeft, Send, Award, User, FileText, Calendar, Type, UserSquare, Star, MessageSquare, CheckCircle, ListChecks, BarChart2, Pencil, RefreshCw, AlertTriangle, AlertCircle, Play, Pause, Volume2, Square } from "lucide-react"
 import { getGradeInfo, evaluationCriteria } from "@/lib/evaluation-criteria"
 import { RadarChart } from "@/components/radar-chart"
 // WeaknessChart import 제거됨
 // WeaknessChart 컴포넌트 사용 부분은 이미 순위 리스트로 대체됨
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // admin/page.tsx에서 정의한 Submission 타입을 가져오거나 여기에 다시 정의
 interface Submission {
@@ -46,6 +47,7 @@ interface EvaluationSummaryProps {
   showPdfButton?: boolean; // 관리자 모드에서만 PDF 다운로드 노출
   isReviewMode?: boolean; // 리뷰 모드 여부
   hideHeader?: boolean; // 모바일에서 헤더 숨기기
+  recordings?: any[]; // 녹음 파일 목록
 }
 
 export function EvaluationSummary({
@@ -59,8 +61,9 @@ export function EvaluationSummary({
   showPdfButton = false,
   isReviewMode = false,
   hideHeader = false,
+  recordings = [],
 }: EvaluationSummaryProps) {
-  console.log("🔍 EvaluationSummary 렌더링 시작:", { isOpen, evaluationResult })
+  console.log("🔍 EvaluationSummary 렌더링 시작:", { isOpen, evaluationResult, recordings })
   
   if (!isOpen) {
     console.log("❌ isOpen이 false이므로 null 반환")
@@ -88,28 +91,301 @@ export function EvaluationSummary({
     englishTotalScore = 0, // 누락된 속성 추가
   } = evaluationResult;
 
+  // 녹음 파일 재생 상태 관리
+  const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null);
+  const [loadingAllRecordings, setLoadingAllRecordings] = useState<boolean>(true);
+  const [selectedScriptNumber, setSelectedScriptNumber] = useState<number | null>(null);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+  const audioElementsRef = useRef<{ [key: string]: HTMLAudioElement }>({});
+
+  // 컴포넌트 마운트 시 모든 녹음 파일 로딩 - 한 번의 API 호출로 모든 파일 가져오기
+  useEffect(() => {
+    const loadAllRecordings = async () => {
+      if (!recordings || recordings.length === 0) {
+        setLoadingAllRecordings(false);
+        return;
+      }
+
+      // evaluationId 추출
+      const evaluationId = evaluationResult.id;
+      if (!evaluationId) {
+        console.error("❌ [EvaluationSummary] evaluationId가 없습니다");
+        setLoadingAllRecordings(false);
+        return;
+      }
+
+      console.log("🎵 [EvaluationSummary] 녹음 파일 일괄 로딩 시작:", evaluationId);
+      setLoadingAllRecordings(true);
+
+      try {
+        // 한 번의 API 호출로 모든 녹음 파일 Base64 데이터 가져오기
+        const response = await fetch(`/api/evaluations/load-recordings?evaluationId=${evaluationId}`);
+        
+        if (!response.ok) {
+          console.error(`❌ [EvaluationSummary] API 호출 실패:`, response.status);
+          setLoadingAllRecordings(false);
+          return;
+        }
+
+        const result = await response.json();
+        
+        if (!result.success || !result.recordings) {
+          console.error(`❌ [EvaluationSummary] 녹음 데이터 없음`);
+          setLoadingAllRecordings(false);
+          return;
+        }
+
+        console.log(`✅ [EvaluationSummary] API 응답 성공:`, Object.keys(result.recordings).length, "개 파일");
+
+        // Base64 데이터를 Audio 객체로 변환
+        for (const recording of recordings) {
+          try {
+            const key = `${recording.scriptNumber}-${recording.language}`;
+            let base64Data = result.recordings[key];
+
+            if (!base64Data) {
+              console.warn(`⚠️ [EvaluationSummary] 녹음 데이터 없음: ${key}`);
+              continue;
+            }
+
+            // data:audio/webm;base64, 접두사 제거
+            if (base64Data.startsWith('data:audio/')) {
+              base64Data = base64Data.split(',')[1];
+            }
+
+            // Base64를 Blob으로 변환
+            const binaryString = atob(base64Data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'audio/webm' });
+            
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+
+            audio.onended = () => {
+              console.log("🎵 [EvaluationSummary] 재생 완료:", recording.id);
+              setCurrentlyPlaying(null);
+              setCurrentTime(0);
+              setDuration(0);
+            };
+
+            audio.onerror = (e) => {
+              console.error("❌ [EvaluationSummary] 오디오 오류:", recording.id, e);
+            };
+
+            audio.ontimeupdate = () => {
+              setCurrentTime(audio.currentTime);
+            };
+
+            audio.onloadedmetadata = () => {
+              setDuration(audio.duration);
+            };
+
+            audioElementsRef.current[recording.id] = audio;
+            console.log(`✅ [EvaluationSummary] Audio 생성 완료: ${recording.id}`);
+          } catch (error) {
+            console.error(`❌ [EvaluationSummary] Audio 생성 실패: ${recording.id}`, error);
+          }
+        }
+
+        setLoadingAllRecordings(false);
+        console.log("✅ [EvaluationSummary] 모든 녹음 파일 로딩 완료");
+
+      } catch (error) {
+        console.error("❌ [EvaluationSummary] 녹음 파일 로딩 실패:", error);
+        setLoadingAllRecordings(false);
+      }
+    };
+
+    loadAllRecordings();
+
+    // 클린업
+    return () => {
+      Object.values(audioElementsRef.current).forEach(audio => {
+        audio.pause();
+        URL.revokeObjectURL(audio.src);
+      });
+      audioElementsRef.current = {};
+    };
+  }, [recordings, evaluationResult.id]);
+
+  // 녹음 파일 재생 함수
+  const playRecording = async (recordingId: string) => {
+    console.log(`🎵 [EvaluationSummary] 재생 버튼 클릭: ${recordingId}`);
+
+    const audio = audioElementsRef.current[recordingId];
+    if (!audio) {
+      console.warn(`🎵 [EvaluationSummary] 오디오가 로딩되지 않음: ${recordingId}`);
+      return;
+    }
+
+    try {
+      // 현재 재생 중인 오디오 정지
+      if (currentlyPlaying && audioElementsRef.current[currentlyPlaying]) {
+        audioElementsRef.current[currentlyPlaying].pause();
+        audioElementsRef.current[currentlyPlaying].currentTime = 0;
+      }
+
+      // 같은 녹음이 재생 중이면 정지
+      if (currentlyPlaying === recordingId) {
+        setCurrentlyPlaying(null);
+        setCurrentTime(0);
+        setDuration(0);
+        return;
+      }
+
+      // 재생 시작
+      audio.currentTime = 0;
+      setDuration(audio.duration || 0);
+      await audio.play();
+      setCurrentlyPlaying(recordingId);
+      console.log(`✅ [EvaluationSummary] 재생 시작: ${recordingId}`);
+    } catch (error) {
+      console.error(`🎵 [EvaluationSummary] 재생 실패: ${recordingId}`, error);
+      setCurrentlyPlaying(null);
+    }
+  };
+
+  // 일시정지/재개
+  const togglePlayPause = () => {
+    if (!currentlyPlaying) return;
+    
+    const audio = audioElementsRef.current[currentlyPlaying];
+    if (!audio) return;
+
+    if (audio.paused) {
+      audio.play();
+    } else {
+      audio.pause();
+    }
+  };
+
+  // 정지
+  const stopRecording = () => {
+    if (!currentlyPlaying) return;
+    
+    const audio = audioElementsRef.current[currentlyPlaying];
+    if (!audio) return;
+
+    audio.pause();
+    audio.currentTime = 0;
+    setCurrentlyPlaying(null);
+    setCurrentTime(0);
+    setDuration(0);
+  };
+
+  // 플레이헤드 이동
+  const seekTo = (time: number) => {
+    if (!currentlyPlaying) return;
+    
+    const audio = audioElementsRef.current[currentlyPlaying];
+    if (!audio) return;
+
+    audio.currentTime = time;
+    setCurrentTime(time);
+  };
+
+  // 언어별 녹음 파일 그룹화
+  const getRecordingsByScript = () => {
+    if (!recordings || recordings.length === 0) return [];
+    
+    const grouped = new Map<number, any[]>();
+    
+    recordings.forEach(recording => {
+      const scriptNum = recording.scriptNumber;
+      if (!grouped.has(scriptNum)) {
+        grouped.set(scriptNum, []);
+      }
+      grouped.get(scriptNum)!.push(recording);
+    });
+    
+    // 언어 우선순위: 한국어 -> 영어 -> 일본어 -> 중국어
+    const languageOrder: { [key: string]: number } = {
+      "korean": 1,
+      "english": 2,
+      "japanese": 3,
+      "chinese": 4,
+    };
+    
+    return Array.from(grouped.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([scriptNum, recs]) => ({
+        scriptNum,
+        recordings: recs.sort((a, b) => {
+          const orderA = languageOrder[a.language] || 999;
+          const orderB = languageOrder[b.language] || 999;
+          return orderA - orderB;
+        })
+      }));
+  };
+
+  const getLanguageDisplay = (lang: string) => {
+    const displays: { [key: string]: string } = {
+      "korean": "한국어",
+      "english": "영어",
+      "japanese": "일본어",
+      "chinese": "중국어",
+    }
+    return displays[lang] || lang;
+  };
+
+  const formatTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds)) return "0:00";
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const recordingsByScript = getRecordingsByScript();
+
   // 한영 소규모 체크인 기록 확인 (상세 평가 결과 표시 권한)
   const hasDetailedReviewAccess = (() => {
     if (!isReviewMode || language !== 'korean-english') return false;
     
     try {
+      // employeeId를 여러 경로에서 찾기 (fallback 처리)
+      const targetEmployeeId = employeeId || 
+                               (evaluationResult as any).candidateInfo?.employeeId ||
+                               (evaluationResult as any).user?.employeeId;
+      
+      if (!targetEmployeeId) {
+        console.warn('⚠️ [EvaluationSummary] employeeId를 찾을 수 없음:', evaluationResult);
+        return false;
+      }
+      
       const checkinRecords = JSON.parse(localStorage.getItem('koreanEnglishSmallCheckins') || '[]')
-      const hasCheckin = checkinRecords.some((record: any) => record.employeeId === employeeId)
+      
+      // 대소문자 무시, 공백 제거하여 비교
+      const normalizedTargetId = String(targetEmployeeId).trim().toLowerCase();
+      const hasCheckin = checkinRecords.some((record: any) => {
+        const normalizedRecordId = String(record.employeeId || '').trim().toLowerCase();
+        return normalizedRecordId === normalizedTargetId;
+      });
+      
       console.log('🔍 [EvaluationSummary] 한영 소규모 체크인 기록 확인:', {
-        employeeId,
+        targetEmployeeId,
+        normalizedTargetId,
         hasCheckin,
-        checkinRecords: checkinRecords.length
+        checkinRecords: checkinRecords.map((r: any) => ({
+          employeeId: r.employeeId,
+          normalized: String(r.employeeId || '').trim().toLowerCase(),
+          checkinTime: r.checkinTime
+        })),
+        totalRecords: checkinRecords.length
       })
       return hasCheckin
     } catch (error) {
-      console.error('체크인 기록 확인 오류:', error)
+      console.error('❌ [EvaluationSummary] 체크인 기록 확인 오류:', error)
       return false
     }
   })()
 
   const gradeInfo = getGradeInfo(totalScore, categoryScores, language, category);
 
-  const getLanguageDisplay = (language: string) => {
+  const getLanguageDisplayForCriteria = (language: string) => {
     const displays: { [key: string]: string } = {
       "korean-english": "한/영",
       japanese: "일본어",
@@ -480,21 +756,30 @@ export function EvaluationSummary({
       <div id="pdf-page1" className="max-w-4xl mx-auto">
         {/* 헤더 */}
         {!hideHeader && (
-          <div className="relative flex items-center justify-between mb-6">
-              <Button onClick={onClose} variant="outline">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-              돌아가기
-              </Button>
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          <div className="relative flex items-center justify-between mb-8">
+            {/* 왼쪽: 돌아가기 버튼 - admin/showPdfButton 모드에서는 숨김 */}
+            <div className="flex-1">
+              {!showPdfButton && (
+                <Button onClick={onClose} variant="outline">
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  돌아가기
+                </Button>
+              )}
+            </div>
+            
+            {/* 중앙: 제목 */}
+            <div className="flex-1 flex justify-center">
               <h1 className="text-3xl font-bold text-gray-900 whitespace-nowrap">상세 평가 리포트</h1>
             </div>
-            <div>
-            {showPdfButton && (
-              <Button onClick={generatePDF} className="bg-blue-600 hover:bg-blue-700">
-                <FileText className="w-4 h-4 mr-2" />
-                PDF 다운로드
-              </Button>
-            )}
+            
+            {/* 오른쪽: PDF 다운로드 버튼 */}
+            <div className="flex-1 flex justify-end">
+              {showPdfButton && (
+                <Button onClick={generatePDF} className="bg-blue-600 hover:bg-blue-700">
+                  <FileText className="w-4 h-4 mr-2" />
+                  PDF 다운로드
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -522,15 +807,61 @@ export function EvaluationSummary({
                 <div className="flex items-center">
                   <Star className="w-4 h-4 mr-3 text-gray-400" />
                   <span className="font-medium text-gray-500 w-20">언어</span>
-                  <Badge variant="outline" className="text-purple-700 border-purple-200 bg-purple-50">{getLanguageDisplay(language)}</Badge>
+                  <Badge variant="outline" className="text-purple-700 border-purple-200 bg-purple-50">{getLanguageDisplayForCriteria(language)}</Badge>
                 </div>
                 <hr className="my-4 border-gray-200"/>
                 {!isReviewMode && (
-                  <div className="flex items-center">
-                    <CheckCircle className="w-4 h-4 mr-3 text-gray-400" />
-                    <span className="font-medium text-gray-500 w-20">평가자</span>
-                    <span className="font-semibold text-gray-900">{evaluatedBy || authenticatedUser?.name || authenticatedUser?.email || "Unknown"}</span>
-                  </div>
+                  <>
+                    {/* 디버깅 로그 */}
+                    {(() => {
+                      console.log('🔍 [EvaluationSummary] 평가자 데이터:', {
+                        initialEvaluatedBy: (evaluationResult as any).initialEvaluatedBy,
+                        initialEvaluatedByName: (evaluationResult as any).initialEvaluatedByName,
+                        evaluatedBy: (evaluationResult as any).evaluatedBy,
+                        evaluatedByName: (evaluationResult as any).evaluatedByName,
+                      });
+                      return null;
+                    })()}
+                    
+                    {/* 최초 평가자와 최종 평가자가 다른 경우 둘 다 표시 */}
+                    {(evaluationResult as any).initialEvaluatedBy && (evaluationResult as any).evaluatedBy && 
+                     (evaluationResult as any).initialEvaluatedBy !== (evaluationResult as any).evaluatedBy ? (
+                      <>
+                        <div className="flex items-center">
+                          <CheckCircle className="w-4 h-4 mr-3 text-gray-400" />
+                          <span className="font-medium text-gray-500 w-20">최초 평가자</span>
+                          <span className="font-semibold text-gray-900">
+                            {(evaluationResult as any).initialEvaluatedByName || (evaluationResult as any).initialEvaluatedBy}
+                            {(evaluationResult as any).initialEvaluatedByName && (
+                              <span className="text-gray-500 ml-1">({(evaluationResult as any).initialEvaluatedBy})</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center">
+                          <CheckCircle className="w-4 h-4 mr-3 text-gray-400" />
+                          <span className="font-medium text-gray-500 w-20">최종 평가자</span>
+                          <span className="font-semibold text-gray-900">
+                            {(evaluationResult as any).evaluatedByName || evaluatedBy || authenticatedUser?.name}
+                            {(evaluationResult as any).evaluatedByName && (
+                              <span className="text-gray-500 ml-1">({evaluatedBy})</span>
+                            )}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      /* 같은 평가자이거나 하나만 있는 경우 */
+                      <div className="flex items-center">
+                        <CheckCircle className="w-4 h-4 mr-3 text-gray-400" />
+                        <span className="font-medium text-gray-500 w-20">평가자</span>
+                        <span className="font-semibold text-gray-900">
+                          {(evaluationResult as any).evaluatedByName || (evaluationResult as any).initialEvaluatedByName || evaluatedBy || authenticatedUser?.name || authenticatedUser?.email || "Unknown"}
+                          {((evaluationResult as any).evaluatedByName || (evaluationResult as any).initialEvaluatedByName) && (
+                            <span className="text-gray-500 ml-1">({evaluatedBy || (evaluationResult as any).initialEvaluatedBy})</span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
                 <div className="flex items-center">
                   <Calendar className="w-4 h-4 mr-3 text-gray-400" />
@@ -677,8 +1008,18 @@ export function EvaluationSummary({
             <CardContent className="p-4 md:p-6">
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
                 {(radarData.japaneseData || radarData.chineseData || []).map((item) => {
-                  const percentage = (item.value / item.maxValue) * 100;
-                  const isFail = percentage < 80;
+                  // 🔥 일본어 Pause/Volume 항목에 대한 특수 기준 적용
+                  let isFail = false;
+                  if (language === "japanese" && item.label === "Pause") {
+                    isFail = item.value < 21; // 21점 미만이면 FAIL
+                  } else if (language === "japanese" && item.label === "Volume") {
+                    isFail = item.value < 3; // 3점 미만이면 FAIL
+                  } else {
+                    // 나머지 항목은 80% 기준
+                    const percentage = (item.value / item.maxValue) * 100;
+                    isFail = percentage < 80;
+                  }
+                  
                   return (
                     <div
                       key={item.label}
@@ -865,6 +1206,188 @@ export function EvaluationSummary({
             )}
           </CardContent>
         </Card>
+
+        {/* 녹음 파일 재생 카드 (admin 모드에서만 표시) */}
+        {!isReviewMode && recordingsByScript.length > 0 && (
+          <Card className="mb-6 bg-white shadow-lg rounded-2xl overflow-hidden border-purple-100">
+            <CardHeader className="bg-gray-50/80">
+              <CardTitle className="flex items-center gap-3">
+                <Volume2 className="w-6 h-6 text-purple-600" />
+                <span className="text-xl font-bold text-gray-800">녹음 파일 재생</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              {loadingAllRecordings ? (
+                <div className="flex flex-col items-center justify-center py-10 bg-gray-50 rounded-xl">
+                  <RefreshCw className="w-8 h-8 text-purple-600 animate-spin mb-2" />
+                  <p className="text-gray-700 font-medium text-sm">녹음 파일을 불러오는 중...</p>
+                  <p className="text-gray-500 text-xs mt-1">{recordings.length}개 파일</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* 문안 선택 안내 */}
+                  <div className="flex items-center gap-2 text-sm text-gray-600 bg-purple-50 px-3 py-2 rounded-lg border border-purple-100">
+                    <span className="font-semibold text-purple-700">문안 선택</span>
+                    <span className="text-gray-500">→</span>
+                    <span className="text-gray-600">재생할 문안 번호를 선택하세요</span>
+                  </div>
+
+                  {/* 문안별 버튼들 - 작고 오밀조밀하게 */}
+                  <div className="grid grid-cols-10 gap-2">
+                    {recordingsByScript.map(({ scriptNum }) => (
+                      <Button
+                        key={scriptNum}
+                        variant={selectedScriptNumber === scriptNum ? "default" : "outline"}
+                        onClick={() => {
+                          setSelectedScriptNumber(scriptNum);
+                          if (currentlyPlaying) stopRecording();
+                        }}
+                        className={`h-9 text-sm font-medium ${
+                          selectedScriptNumber === scriptNum
+                            ? "bg-purple-600 hover:bg-purple-700 text-white"
+                            : "bg-white hover:bg-purple-50 text-gray-700 border-gray-300"
+                        }`}
+                      >
+                        {scriptNum}번
+                      </Button>
+                    ))}
+                  </div>
+
+                  {/* 선택된 문안의 언어별 재생 버튼 */}
+                  {selectedScriptNumber && (() => {
+                    const selectedScript = recordingsByScript.find(s => s.scriptNum === selectedScriptNumber);
+                    if (!selectedScript) return null;
+
+                    const currentRecording = selectedScript.recordings.find(r => r.id === currentlyPlaying);
+
+                    return (
+                      <div className="space-y-3">
+                        {/* 언어 선택 버튼 - 작고 깔끔하게 */}
+                        <div className="grid grid-cols-2 gap-2">
+                          {selectedScript.recordings.map((rec) => {
+                            const isKorean = rec.language === 'korean';
+                            const isSelected = currentlyPlaying === rec.id;
+                            
+                            return (
+                              <Button
+                                key={rec.id}
+                                onClick={() => playRecording(rec.id)}
+                                className={`h-10 text-sm font-medium rounded-lg transition-all ${
+                                  isSelected
+                                    ? isKorean
+                                      ? "bg-green-600 hover:bg-green-700 text-white"
+                                      : "bg-purple-600 hover:bg-purple-700 text-white"
+                                    : isKorean
+                                      ? "bg-green-50 hover:bg-green-100 text-green-700 border border-green-200"
+                                      : "bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200"
+                                }`}
+                              >
+                                <Play className="w-3.5 h-3.5 mr-1.5" />
+                                <span>{getLanguageDisplay(rec.language)}</span>
+                              </Button>
+                            );
+                          })}
+                        </div>
+
+                        {/* 플레이어 컨트롤 - 항상 표시 */}
+                        <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-200 sticky top-4 z-10 shadow-sm">
+                          {/* 현재 상태 표시 */}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              {currentlyPlaying && currentRecording ? (
+                                <>
+                                  <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                                    currentRecording.language === 'korean' ? 'bg-green-500' : 'bg-purple-500'
+                                  }`}></div>
+                                  <span className="text-xs font-medium text-gray-700">
+                                    {selectedScriptNumber}번 문안 - {getLanguageDisplay(currentRecording.language)} 재생 중
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
+                                  <span className="text-xs font-medium text-gray-500">
+                                    {selectedScriptNumber}번 문안 - 언어를 선택하세요
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 text-xs text-gray-600">
+                              <span className="font-mono">{formatTime(currentTime)}</span>
+                              <span className="text-gray-400">/</span>
+                              <span className="font-mono text-gray-500">{formatTime(duration)}</span>
+                            </div>
+                          </div>
+
+                          {/* 플레이헤드 - 작고 세련되게 */}
+                          <input
+                            type="range"
+                            min="0"
+                            max={duration || 100}
+                            value={currentTime}
+                            onChange={(e) => seekTo(Number(e.target.value))}
+                            disabled={!currentlyPlaying}
+                            className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer mb-3 slider disabled:cursor-not-allowed disabled:opacity-50"
+                            style={{
+                              background: currentlyPlaying && currentRecording
+                                ? `linear-gradient(to right, ${currentRecording.language === 'korean' ? '#16a34a' : '#9333ea'} 0%, ${currentRecording.language === 'korean' ? '#16a34a' : '#9333ea'} ${(currentTime / duration) * 100}%, #e5e7eb ${(currentTime / duration) * 100}%, #e5e7eb 100%)`
+                                : '#e5e7eb'
+                            }}
+                          />
+
+                          {/* 컨트롤 버튼들 - 작고 미니멀하게 */}
+                          <div className="flex items-center justify-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={togglePlayPause}
+                              disabled={!currentlyPlaying}
+                              className="h-8 px-4 text-xs bg-white hover:bg-gray-50 border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {currentlyPlaying && audioElementsRef.current[currentlyPlaying]?.paused ? (
+                                <>
+                                  <Play className="w-3 h-3 mr-1" />
+                                  재생
+                                </>
+                              ) : currentlyPlaying ? (
+                                <>
+                                  <Pause className="w-3 h-3 mr-1" />
+                                  일시정지
+                                </>
+                              ) : (
+                                <>
+                                  <Play className="w-3 h-3 mr-1" />
+                                  재생
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={stopRecording}
+                              disabled={!currentlyPlaying}
+                              className="h-8 px-4 text-xs bg-white hover:bg-red-50 border-gray-300 hover:border-red-300 text-red-600 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+                            >
+                              <Square className="w-3 h-3 mr-1 fill-current" />
+                              정지
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {!selectedScriptNumber && (
+                    <div className="text-center py-6 text-gray-500 bg-gray-50 rounded-xl">
+                      <Volume2 className="w-10 h-10 mx-auto mb-2 text-gray-400" />
+                      <p className="text-xs">재생할 문안을 선택해주세요</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
       )}
 

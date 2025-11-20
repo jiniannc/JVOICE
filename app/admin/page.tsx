@@ -76,7 +76,11 @@ interface Submission {
   grade?: string;
   comments?: { korean: string; english: string } | string;
   evaluatedAt?: string;
-  evaluatedBy?: string;
+  evaluatedBy?: string; // 최종 평가자 (사번)
+  evaluatedByName?: string; // 최종 평가자 (이름)
+  initialEvaluatedBy?: string; // 최초 평가자 (사번)
+  initialEvaluatedByName?: string; // 최초 평가자 (이름)
+  initialEvaluatedAt?: string; // 최초 평가 시간
   reviewRequestedBy?: string;
   dropboxPath?: string;
   approved?: boolean;
@@ -104,11 +108,38 @@ function isFullyEvaluated(submission: Submission): submission is Submission & {
 export default function AdminDashboard() {
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [selectedResult, setSelectedResult] = useState<Submission | null>(null)
+  const [selectedResultRecordings, setSelectedResultRecordings] = useState<any[]>([])
   const [selectedMonth, setSelectedMonth] = useState<string>("")
   const [listMonth, setListMonth] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<string>("")
   // (관리자) 응시 목록 상태 제거됨
+
+  // 진행 바 애니메이션을 위한 스타일
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes shimmer {
+        0%, 100% { background-position: 200% 0; }
+        50% { background-position: 0 0; }
+      }
+      @keyframes shimmerTwice {
+        0% { background-position: 200% 0; }
+        25% { background-position: 0 0; }
+        50% { background-position: 200% 0; }
+        75% { background-position: 0 0; }
+        100% { background-position: 200% 0; }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.8); }
+        to { opacity: 1; transform: scale(1); }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
 
   // 실제 데이터에서 사용 가능한 월들을 추출하여 드롭다운 생성
   const monthOptions = useMemo(() => {
@@ -166,15 +197,12 @@ export default function AdminDashboard() {
   // 시간 제한 토글 상태
   const [timeRestrictionsDisabled, setTimeRestrictionsDisabled] = useState(false)
   const [timeRestrictionsLoading, setTimeRestrictionsLoading] = useState(false)
-  const [showRequestManager, setShowRequestManager] = useState(false)
-  const [showEducationJournalManager, setShowEducationJournalManager] = useState(false)
-  const [showInstructorStats, setShowInstructorStats] = useState(false)
-  const [showRecordingManager, setShowRecordingManager] = useState(false)
   const [showMonthlyStats, setShowMonthlyStats] = useState(false)
   const [searchMode, setSearchMode] = useState<"all" | "monthly">("monthly")
   const [languageFilter, setLanguageFilter] = useState<string>("all")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [gradeFilter, setGradeFilter] = useState<string>("all")
   
   // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1)
@@ -362,7 +390,11 @@ export default function AdminDashboard() {
             grade, // 등급 반영 (중복 제거)
             comments: ev.comments,
             evaluatedAt: ev.evaluatedAt,
-            evaluatedBy: ev.evaluatedBy,
+            evaluatedBy: ev.evaluatedBy, // 최종 평가자 (사번)
+            evaluatedByName: ev.evaluatedByName, // 최종 평가자 (이름) ✅ 추가
+            initialEvaluatedBy: ev.initialEvaluatedBy, // 최초 평가자 (사번) ✅ 추가
+            initialEvaluatedByName: ev.initialEvaluatedByName, // 최초 평가자 (이름) ✅ 추가
+            initialEvaluatedAt: ev.initialEvaluatedAt, // 최초 평가 시간 ✅ 추가
             reviewRequestedBy: ev.reviewRequestedBy,
             reviewRequestedAt: ev.reviewRequestedAt,
             dropboxPath: ev.dropboxPath,
@@ -371,6 +403,20 @@ export default function AdminDashboard() {
         });
 
       console.log(`✅ [관리자] 필터링 후 유효한 데이터: ${formattedSubmissions.length}개`);
+      
+      // 평가자 정보 디버깅 (첫 3건만)
+      if (formattedSubmissions.length > 0) {
+        console.log('🔍 [관리자] 평가자 정보 샘플 (첫 3건):');
+        formattedSubmissions.slice(0, 3).forEach((sub, idx) => {
+          console.log(`  ${idx + 1}. ${sub.name}:`, {
+            evaluatedBy: sub.evaluatedBy,
+            evaluatedByName: sub.evaluatedByName,
+            initialEvaluatedBy: sub.initialEvaluatedBy,
+            initialEvaluatedByName: sub.initialEvaluatedByName,
+          });
+        });
+      }
+      
       setSubmissions(prev => mode === "append" ? [...prev, ...formattedSubmissions] : formattedSubmissions);
       const totalMerged = validMerged.length
       setTotalCountServer(totalMerged)
@@ -434,35 +480,55 @@ export default function AdminDashboard() {
   }
 
   // 평가 결과 확인 함수 - selectedResult를 설정
-  const viewEvaluationResult = (submissionId: string) => {
+  const viewEvaluationResult = async (submissionId: string) => {
     const result = submissions.find((sub) => sub.id === submissionId);
-    console.log("🔥🔥🔥 [ADMIN DEBUG] viewEvaluationResult 호출 🔥🔥🔥")
-    console.log("🔥 [ADMIN] submissionId:", submissionId)
-    console.log("🔥 [ADMIN] 찾은 result:", result)
+    console.log("📋 [viewEvaluationResult] 평가 결과 조회:", submissionId);
     
     if (result) {
-      console.log("🔥 [ADMIN] result.categoryScores:", result.categoryScores)
-      console.log("🔥 [ADMIN] result.scores:", result.scores)
-      console.log("🔥 [ADMIN] result.language:", result.language)
-      
-      // 한/영 평가일 경우, 각 언어별 총점 계산
-      if (result.language === "korean-english" && result.categoryScores) {
-        const koreanTotalScore = result.categoryScores["korean"] || 0;
-        const englishTotalScore = result.categoryScores["english"] || 0;
+      // 녹음 파일 목록 로드
+      try {
+        const recordingsResponse = await fetch(`/api/admin/recordings/by-evaluation/${submissionId}`);
+        const recordingsData = await recordingsResponse.json();
         
-        const finalResult = {
-          ...result,
-          koreanTotalScore,
-          englishTotalScore,
-        };
-        console.log("🔥 [ADMIN] 한/영 최종 결과:", finalResult)
-        setSelectedResult(finalResult);
-      } else {
-        console.log("🔥 [ADMIN] 일본어/중국어 최종 결과:", result)
-        setSelectedResult(result);
+        const recordings = recordingsData.success ? recordingsData.recordings : [];
+        console.log("✅ [viewEvaluationResult] 녹음 파일:", recordings.length, "개");
+        
+        // 한/영 평가일 경우, 각 언어별 총점 계산
+        let finalResult = result;
+        if (result.language === "korean-english" && result.categoryScores) {
+          const koreanTotalScore = result.categoryScores["korean"] || 0;
+          const englishTotalScore = result.categoryScores["english"] || 0;
+          
+          finalResult = {
+            ...result,
+            koreanTotalScore,
+            englishTotalScore,
+          };
+        }
+        
+        // 부모 창에 postMessage 전송
+        window.parent.postMessage({
+          type: 'OPEN_EVALUATION_MODAL',
+          payload: {
+            selectedResult: finalResult,
+            recordings: recordings
+          }
+        }, window.location.origin);
+        
+      } catch (error) {
+        console.error("❌ [viewEvaluationResult] 녹음 파일 로드 오류:", error);
+        
+        // 에러 시에도 모달 표시 (녹음 파일 없이)
+        window.parent.postMessage({
+          type: 'OPEN_EVALUATION_MODAL',
+          payload: {
+            selectedResult: result,
+            recordings: []
+          }
+        }, window.location.origin);
       }
     } else {
-      console.log("🔥 [ADMIN] ERROR: result를 찾을 수 없음!")
+      console.error("❌ [viewEvaluationResult] result를 찾을 수 없음!");
     }
   };
 
@@ -577,6 +643,34 @@ export default function AdminDashboard() {
           }
         }
 
+        // 등급 필터 추가
+        if (gradeFilter !== "all") {
+          // 평가 완료되지 않은 항목은 필터에서 제외
+          if (!(sub.status === 'submitted' || sub.status === 'completed' || sub.approved)) {
+            return false;
+          }
+          
+          const gradeInfo = getGradeInfo(
+            typeof sub.totalScore === 'number' ? sub.totalScore : 0,
+            sub.categoryScores || {},
+            sub.language,
+            sub.category
+          );
+          
+          // gradeFilter 형식: "korean-english:S등급", "japanese:A" 등
+          const [filterLang, filterGrade] = gradeFilter.split(":");
+          
+          if (sub.language !== filterLang) return false;
+          
+          // 등급 매칭 (S등급 = S, A등급 = A, FAIL = F 등)
+          const normalizedGrade = gradeInfo.grade.replace(/등급$/, '');
+          const normalizedFilterGrade = filterGrade.replace(/등급$/, '');
+          
+          if (normalizedGrade !== normalizedFilterGrade && !(normalizedGrade === 'FAIL' && normalizedFilterGrade === 'F') && !(normalizedGrade === 'F' && normalizedFilterGrade === 'FAIL')) {
+            return false;
+          }
+        }
+
         return true
       })
     
@@ -621,16 +715,64 @@ export default function AdminDashboard() {
             bValue = b.approved ? statusOrder.approved : (statusOrder[b.status] || 0)
             break
           case "grade":
-            // 등급 우선순위
+            // 등급 우선순위 - 실시간 계산된 등급 사용 (테이블 표시와 동일)
             const gradeOrder: Record<string, number> = {
-              'S등급': 4, 'S': 4,
-              'A등급': 3, 'A': 3,
-              'B등급': 2, 'B': 2,
-              'FAIL': 1, 'F': 1,
-              'N/A': 0
+              'S등급': 5, 'S': 5,
+              'A등급': 4, 'A': 4,
+              'B등급': 3, 'B': 3,
+              'FAIL': 2, 'F': 2,
+              'N/A': 0  // 대기 상태
             }
-            aValue = gradeOrder[a.grade || 'N/A'] || 0
-            bValue = gradeOrder[b.grade || 'N/A'] || 0
+            
+            // getGradeInfo로 실시간 계산된 등급 사용
+            const aGradeInfo = getGradeInfo(
+              a.totalScore ?? 0,
+              a.categoryScores || {},
+              a.language,
+              a.category
+            )
+            const bGradeInfo = getGradeInfo(
+              b.totalScore ?? 0,
+              b.categoryScores || {},
+              b.language,
+              b.category
+            )
+            
+            // 등급이 없는 경우 (대기 상태) 처리
+            const aHasGrade = a.status === 'submitted' || a.status === 'completed' || a.approved;
+            const bHasGrade = b.status === 'submitted' || b.status === 'completed' || b.approved;
+            
+            const aGradeValue = aHasGrade ? (gradeOrder[aGradeInfo.grade] || 0) : 0;
+            const bGradeValue = bHasGrade ? (gradeOrder[bGradeInfo.grade] || 0) : 0;
+            
+            // 등급이 같으면 점수로 비교
+            if (aGradeValue === bGradeValue) {
+              // 한/영은 총합점수 (korean + english), 일/중은 totalScore
+              let aScore = 0;
+              let bScore = 0;
+              
+              if (a.language === 'korean-english') {
+                aScore = (a.koreanTotalScore ?? 0) + (a.englishTotalScore ?? 0);
+              } else {
+                aScore = a.totalScore ?? 0;
+              }
+              
+              if (b.language === 'korean-english') {
+                bScore = (b.koreanTotalScore ?? 0) + (b.englishTotalScore ?? 0);
+              } else {
+                bScore = b.totalScore ?? 0;
+              }
+              
+              // 점수 비교 (등급이 같을 때)
+              if (sortOrder === "asc") {
+                return aScore - bScore;
+              } else {
+                return bScore - aScore;
+              }
+            }
+            
+            aValue = aGradeValue;
+            bValue = bGradeValue;
             break
           default:
             return 0
@@ -648,7 +790,7 @@ export default function AdminDashboard() {
     }
     
     return filtered
-  }, [submissions, listMonth, searchTerm, searchMode, languageFilter, categoryFilter, statusFilter, sortField, sortOrder]);
+  }, [submissions, listMonth, searchTerm, searchMode, languageFilter, categoryFilter, statusFilter, gradeFilter, sortField, sortOrder]);
 
   // 페이지네이션된 데이터
   // 페이지네이션 제거: 필터 결과 전체 표시
@@ -708,62 +850,54 @@ export default function AdminDashboard() {
       if (lang === "korean-english") {
         const gradeStats = { S등급: 0, A등급: 0, B등급: 0, FAIL: 0 };
         for (const evaluationResult of monthEvaluationResults) {
-          let actualGrade = evaluationResult.grade;
+          // 항상 getGradeInfo로 실시간 계산된 등급을 사용 (테이블 표시와 동일)
+          const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
+          const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
           
-          // grade가 N/A이거나 없으면 계산 시도
-          if (!actualGrade || actualGrade === "N/A") {
-            const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
-            const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
+          if (hasScores && hasValidScore) {
+            const gradeInfo = getGradeInfo(
+              evaluationResult.totalScore!,
+              evaluationResult.categoryScores!,
+              lang,
+              evaluationResult.category || "신규"
+            );
+            const actualGrade = gradeInfo.grade;
+            console.log(`🔍 [통계] 한/영 등급 계산 - ID: ${evaluationResult.id}, 총점: ${evaluationResult.totalScore}, 계산된 등급: ${actualGrade}`);
             
-            if (hasScores && hasValidScore) {
-              const gradeInfo = getGradeInfo(
-                evaluationResult.totalScore,
-                evaluationResult.categoryScores,
-                lang,
-                evaluationResult.category || "신규"
-              );
-              actualGrade = gradeInfo.grade;
-              console.log(`🔍 [통계] 한/영 등급 계산 - ID: ${evaluationResult.id}, 총점: ${evaluationResult.totalScore}, 계산된 등급: ${actualGrade}`);
-            } else {
-              console.warn(`⚠️ [통계] 한/영 등급 계산 불가 - ID: ${evaluationResult.id}, hasScores: ${hasScores}, hasValidScore: ${hasValidScore}`);
-              continue; // 통계에서 제외
-            }
+            if (actualGrade === "S등급" || actualGrade === "S") gradeStats.S등급++;
+            else if (actualGrade === "A등급" || actualGrade === "A") gradeStats.A등급++;
+            else if (actualGrade === "B등급" || actualGrade === "B") gradeStats.B등급++;
+            else if (actualGrade === "FAIL" || actualGrade === "F") gradeStats.FAIL++;
+          } else {
+            console.warn(`⚠️ [통계] 한/영 등급 계산 불가 - ID: ${evaluationResult.id}, hasScores: ${hasScores}, hasValidScore: ${hasValidScore}`);
+            continue; // 통계에서 제외
           }
-          
-          if (actualGrade === "S등급" || actualGrade === "S") gradeStats.S등급++;
-          else if (actualGrade === "A등급" || actualGrade === "A") gradeStats.A등급++;
-          else if (actualGrade === "B등급" || actualGrade === "B") gradeStats.B등급++;
-          else if (actualGrade === "FAIL" || actualGrade === "F") gradeStats.FAIL++;
         }
         result.byGrade[lang] = gradeStats;
       } else if (lang === "japanese" || lang === "chinese") {
         const gradeStats = { A: 0, B: 0, F: 0 };
         for (const evaluationResult of monthEvaluationResults) {
-          let actualGrade = evaluationResult.grade;
+          // 항상 getGradeInfo로 실시간 계산된 등급을 사용 (테이블 표시와 동일)
+          const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
+          const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
           
-          // grade가 N/A이거나 없으면 계산 시도
-          if (!actualGrade || actualGrade === "N/A") {
-            const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
-            const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
+          if (hasScores && hasValidScore) {
+            const gradeInfo = getGradeInfo(
+              evaluationResult.totalScore!,
+              evaluationResult.categoryScores!,
+              lang,
+              evaluationResult.category || "신규"
+            );
+            const actualGrade = gradeInfo.grade;
+            console.log(`🔍 [통계] ${lang} 등급 계산 - ID: ${evaluationResult.id}, 총점: ${evaluationResult.totalScore}, 계산된 등급: ${actualGrade}`);
             
-            if (hasScores && hasValidScore) {
-              const gradeInfo = getGradeInfo(
-                evaluationResult.totalScore,
-                evaluationResult.categoryScores,
-                lang,
-                evaluationResult.category || "신규"
-              );
-              actualGrade = gradeInfo.grade;
-              console.log(`🔍 [통계] ${lang} 등급 계산 - ID: ${evaluationResult.id}, 총점: ${evaluationResult.totalScore}, 계산된 등급: ${actualGrade}`);
-            } else {
-              console.warn(`⚠️ [통계] ${lang} 등급 계산 불가 - ID: ${evaluationResult.id}, hasScores: ${hasScores}, hasValidScore: ${hasValidScore}`);
-              continue; // 통계에서 제외
-            }
+            if (actualGrade === "A" || actualGrade === "A등급") gradeStats.A++;
+            else if (actualGrade === "B" || actualGrade === "B등급") gradeStats.B++;
+            else if (actualGrade === "F" || actualGrade === "FAIL") gradeStats.F++;
+          } else {
+            console.warn(`⚠️ [통계] ${lang} 등급 계산 불가 - ID: ${evaluationResult.id}, hasScores: ${hasScores}, hasValidScore: ${hasValidScore}`);
+            continue; // 통계에서 제외
           }
-          
-          if (actualGrade === "A" || actualGrade === "A등급") gradeStats.A++;
-          else if (actualGrade === "B" || actualGrade === "B등급") gradeStats.B++;
-          else if (actualGrade === "F" || actualGrade === "FAIL") gradeStats.F++;
         }
         result.byGrade[lang] = gradeStats;
       }
@@ -1208,10 +1342,52 @@ export default function AdminDashboard() {
 
   const deleteMany = async () => {
     const targets = filteredSubmissions.filter((s) => selectedIds.has(s.id));
-    for (const t of targets) {
-      await handleDelete(t.id);
+    
+    if (targets.length === 0) {
+      alert('삭제할 항목을 선택해주세요.');
+      return;
     }
-    setSelectedIds(new Set());
+
+    // 한 번만 확인
+    const confirmed = window.confirm(
+      `선택한 ${targets.length}개의 녹음 제출을 삭제하시겠습니까?\n\n삭제할 대상:\n${targets.map(t => `- ${t.name} (${t.employeeId})`).join('\n')}\n\n삭제된 데이터는 복구할 수 없습니다.`
+    );
+    
+    if (!confirmed) return;
+
+    try {
+      // 병렬로 삭제 처리
+      const deletePromises = targets.map(async (submission) => {
+        const response = await fetch('/api/evaluations/delete-database', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            evaluationId: submission.id,
+            deletedBy: 'Admin',
+          }),
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+          throw new Error(`삭제 실패 (${submission.name}): ${result.error}`);
+        }
+        return result;
+      });
+
+      await Promise.all(deletePromises);
+      
+      alert(`${targets.length}개 항목이 성공적으로 삭제되었습니다.`);
+      
+      // 목록 새로고침
+      await loadData();
+      setSelectedIds(new Set());
+      
+    } catch (error) {
+      console.error('삭제 처리 중 오류:', error);
+      alert(`삭제 처리 중 오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
   };
 
   const reevaluateMany = async () => {
@@ -1473,21 +1649,39 @@ export default function AdminDashboard() {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => setShowRequestManager(true)}
+                  onClick={() => {
+                    if (window.parent) {
+                      window.parent.postMessage({
+                        type: 'OPEN_REQUEST_MANAGER_MODAL',
+                      }, '*');
+                    }
+                  }}
                   className="cursor-pointer"
                 >
                   <Users className="w-4 h-4 mr-2" />
                   <span>신청 내역 관리</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setShowEducationJournalManager(true)}
+                  onClick={() => {
+                    if (window.parent) {
+                      window.parent.postMessage({
+                        type: 'OPEN_EDUCATION_JOURNAL_MODAL',
+                      }, '*');
+                    }
+                  }}
                   className="cursor-pointer"
                 >
                   <FileSpreadsheet className="w-4 h-4 mr-2" />
                   <span>교육 기록 관리</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setShowRecordingManager(true)}
+                  onClick={() => {
+                    if (window.parent) {
+                      window.parent.postMessage({
+                        type: 'OPEN_RECORDING_MANAGER_MODAL',
+                      }, '*');
+                    }
+                  }}
                   className="cursor-pointer"
                 >
                   <FileAudio className="w-4 h-4 mr-2" />
@@ -1495,7 +1689,13 @@ export default function AdminDashboard() {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => setShowInstructorStats(true)}
+                  onClick={() => {
+                    if (window.parent) {
+                      window.parent.postMessage({
+                        type: 'OPEN_INSTRUCTOR_STATS_MODAL',
+                      }, '*');
+                    }
+                  }}
                   className="cursor-pointer"
                 >
                   <Activity className="w-4 h-4 mr-2" />
@@ -1622,46 +1822,210 @@ export default function AdminDashboard() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className={`text-3xl font-bold ${numColor} mb-3`}>
-                  {monthlyStats.byLanguage[lang]?.total || 0}<span className="text-lg ml-1">건</span>
+                <div className={`text-3xl font-bold ${numColor} mb-3 flex items-baseline min-h-[44px]`}>
+                  {isLoading ? (
+                    <div className={`animate-spin rounded-full h-8 w-8 border-b-2 ${
+                      lang === "korean-english" 
+                        ? "border-blue-600" 
+                        : lang === "japanese" 
+                        ? "border-purple-600" 
+                        : "border-red-600"
+                    }`}></div>
+                  ) : (
+                    <>{monthlyStats.byLanguage[lang]?.total || 0}</>
+                  )}
+                  <span className="text-lg ml-1">건</span>
                 </div>
-                <p className="text-xs text-gray-600 mb-3">
-                  완료: {monthlyStats.byLanguage[lang]?.completed || 0}건
+                <p className="text-xs text-gray-600 mb-2 min-h-[18px]">
+                  완료: {isLoading ? (
+                    <span className={`inline-block animate-spin rounded-full h-3 w-3 border border-gray-400 border-t-transparent ml-1`}></span>
+                  ) : (
+                    <>{monthlyStats.byLanguage[lang]?.completed || 0}</>
+                  )}건
                 </p>
+                
+                {/* 진행 바 */}
+                {(() => {
+                  const total = monthlyStats.byLanguage[lang]?.total || 0;
+                  const completed = monthlyStats.byLanguage[lang]?.completed || 0;
+                  const percentage = total > 0 ? (completed / total) * 100 : 0;
+                  const isComplete = percentage === 100;
+                  
+                  const progressColor = lang === "korean-english" 
+                    ? "bg-blue-300" 
+                    : lang === "japanese" 
+                    ? "bg-purple-300" 
+                    : "bg-red-300";
+                  
+                  const completeColor = lang === "korean-english"
+                    ? "from-blue-400 via-blue-300 to-blue-400"
+                    : lang === "japanese"
+                    ? "from-purple-400 via-purple-300 to-purple-400"
+                    : "from-red-400 via-red-300 to-red-400";
+                  
+                  return (
+                    <div className="mb-3">
+                      <div className="relative w-full h-2 bg-white/60 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-700 ease-out ${
+                            isComplete 
+                              ? `bg-gradient-to-r ${completeColor}` 
+                              : progressColor
+                          }`}
+                          style={{ 
+                            width: `${percentage}%`,
+                            backgroundSize: isComplete ? '200% 100%' : '100% 100%',
+                            animation: isComplete ? 'shimmerTwice 4s ease-in-out 1' : 'none'
+                          }}
+                        />
+                      </div>
+                      <p className={`text-[10px] text-right mt-1 transition-colors ${
+                        isComplete ? 'text-green-600 font-semibold' : 'text-gray-500'
+                      }`}>
+                        {percentage.toFixed(0)}% 완료
+                      </p>
+                    </div>
+                  );
+                })()}
                 
                 {/* 등급별 통계 */}
                 <div className="grid grid-cols-4 gap-2 text-xs mt-3 pt-3 border-t border-gray-300">
                   {lang === "korean-english" ? (
                     <>
-                      <div className="text-center p-2 bg-white/50 rounded-md">
-                        <div className="font-bold text-green-700">{monthlyStats.byGrade[lang]?.["S등급"] || 0}</div>
+                      <div 
+                        className={`text-center p-2 rounded-md cursor-pointer transition-all ${
+                          gradeFilter === `${lang}:S등급` 
+                            ? 'bg-green-200 ring-2 ring-green-500 shadow-lg scale-105' 
+                            : 'bg-white/50 hover:bg-white/80 hover:scale-102'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (gradeFilter === `${lang}:S등급`) {
+                            setGradeFilter("all");
+                          } else {
+                            setLanguageFilter(lang);
+                            setGradeFilter(`${lang}:S등급`);
+                          }
+                        }}
+                      >
+                        <div className="font-bold text-green-700">{isLoading ? '-' : (monthlyStats.byGrade[lang]?.["S등급"] || 0)}</div>
                         <div className="text-green-600">S</div>
                       </div>
-                      <div className="text-center p-2 bg-white/50 rounded-md">
-                        <div className="font-bold text-blue-700">{monthlyStats.byGrade[lang]?.["A등급"] || 0}</div>
+                      <div 
+                        className={`text-center p-2 rounded-md cursor-pointer transition-all ${
+                          gradeFilter === `${lang}:A등급` 
+                            ? 'bg-blue-200 ring-2 ring-blue-500 shadow-lg scale-105' 
+                            : 'bg-white/50 hover:bg-white/80 hover:scale-102'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (gradeFilter === `${lang}:A등급`) {
+                            setGradeFilter("all");
+                          } else {
+                            setLanguageFilter(lang);
+                            setGradeFilter(`${lang}:A등급`);
+                          }
+                        }}
+                      >
+                        <div className="font-bold text-blue-700">{isLoading ? '-' : (monthlyStats.byGrade[lang]?.["A등급"] || 0)}</div>
                         <div className="text-blue-600">A</div>
                       </div>
-                      <div className="text-center p-2 bg-white/50 rounded-md">
-                        <div className="font-bold text-yellow-700">{monthlyStats.byGrade[lang]?.["B등급"] || 0}</div>
+                      <div 
+                        className={`text-center p-2 rounded-md cursor-pointer transition-all ${
+                          gradeFilter === `${lang}:B등급` 
+                            ? 'bg-yellow-200 ring-2 ring-yellow-500 shadow-lg scale-105' 
+                            : 'bg-white/50 hover:bg-white/80 hover:scale-102'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (gradeFilter === `${lang}:B등급`) {
+                            setGradeFilter("all");
+                          } else {
+                            setLanguageFilter(lang);
+                            setGradeFilter(`${lang}:B등급`);
+                          }
+                        }}
+                      >
+                        <div className="font-bold text-yellow-700">{isLoading ? '-' : (monthlyStats.byGrade[lang]?.["B등급"] || 0)}</div>
                         <div className="text-yellow-600">B</div>
                       </div>
-                      <div className="text-center p-2 bg-white/50 rounded-md">
-                        <div className="font-bold text-red-700">{monthlyStats.byGrade[lang]?.["FAIL"] || 0}</div>
+                      <div 
+                        className={`text-center p-2 rounded-md cursor-pointer transition-all ${
+                          gradeFilter === `${lang}:FAIL` 
+                            ? 'bg-red-200 ring-2 ring-red-500 shadow-lg scale-105' 
+                            : 'bg-white/50 hover:bg-white/80 hover:scale-102'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (gradeFilter === `${lang}:FAIL`) {
+                            setGradeFilter("all");
+                          } else {
+                            setLanguageFilter(lang);
+                            setGradeFilter(`${lang}:FAIL`);
+                          }
+                        }}
+                      >
+                        <div className="font-bold text-red-700">{isLoading ? '-' : (monthlyStats.byGrade[lang]?.["FAIL"] || 0)}</div>
                         <div className="text-red-600">F</div>
                       </div>
                     </>
                   ) : (
                     <>
-                      <div className="text-center p-2 bg-white/50 rounded-md">
-                        <div className="font-bold text-green-700">{monthlyStats.byGrade[lang]?.["A"] || 0}</div>
+                      <div 
+                        className={`text-center p-2 rounded-md cursor-pointer transition-all ${
+                          gradeFilter === `${lang}:A` 
+                            ? 'bg-green-200 ring-2 ring-green-500 shadow-lg scale-105' 
+                            : 'bg-white/50 hover:bg-white/80 hover:scale-102'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (gradeFilter === `${lang}:A`) {
+                            setGradeFilter("all");
+                          } else {
+                            setLanguageFilter(lang);
+                            setGradeFilter(`${lang}:A`);
+                          }
+                        }}
+                      >
+                        <div className="font-bold text-green-700">{isLoading ? '-' : (monthlyStats.byGrade[lang]?.["A"] || 0)}</div>
                         <div className="text-green-600">A</div>
                       </div>
-                      <div className="text-center p-2 bg-white/50 rounded-md">
-                        <div className="font-bold text-blue-700">{monthlyStats.byGrade[lang]?.["B"] || 0}</div>
+                      <div 
+                        className={`text-center p-2 rounded-md cursor-pointer transition-all ${
+                          gradeFilter === `${lang}:B` 
+                            ? 'bg-blue-200 ring-2 ring-blue-500 shadow-lg scale-105' 
+                            : 'bg-white/50 hover:bg-white/80 hover:scale-102'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (gradeFilter === `${lang}:B`) {
+                            setGradeFilter("all");
+                          } else {
+                            setLanguageFilter(lang);
+                            setGradeFilter(`${lang}:B`);
+                          }
+                        }}
+                      >
+                        <div className="font-bold text-blue-700">{isLoading ? '-' : (monthlyStats.byGrade[lang]?.["B"] || 0)}</div>
                         <div className="text-blue-600">B</div>
                       </div>
-                      <div className="text-center p-2 bg-white/50 rounded-md">
-                        <div className="font-bold text-red-700">{monthlyStats.byGrade[lang]?.["F"] || 0}</div>
+                      <div 
+                        className={`text-center p-2 rounded-md cursor-pointer transition-all ${
+                          gradeFilter === `${lang}:F` 
+                            ? 'bg-red-200 ring-2 ring-red-500 shadow-lg scale-105' 
+                            : 'bg-white/50 hover:bg-white/80 hover:scale-102'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (gradeFilter === `${lang}:F`) {
+                            setGradeFilter("all");
+                          } else {
+                            setLanguageFilter(lang);
+                            setGradeFilter(`${lang}:F`);
+                          }
+                        }}
+                      >
+                        <div className="font-bold text-red-700">{isLoading ? '-' : (monthlyStats.byGrade[lang]?.["F"] || 0)}</div>
                         <div className="text-red-600">F</div>
                       </div>
                       <div className="text-center p-2 bg-white/50 rounded-md invisible">
@@ -1814,6 +2178,7 @@ export default function AdminDashboard() {
                       setLanguageFilter("all"); 
                       setCategoryFilter("all"); 
                       setStatusFilter("all"); 
+                      setGradeFilter("all");
                       setSearchTerm("");
                       setSortField(null);
                       setSortOrder(null);
@@ -1824,6 +2189,24 @@ export default function AdminDashboard() {
                   </Button>
                 </div>
               </div>
+              
+              {/* 등급 필터 표시 */}
+              {gradeFilter !== "all" && (
+                <div className="flex items-center gap-2 pt-2 border-t border-gray-200">
+                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">
+                    등급 필터: {gradeFilter.split(":")[1]}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setGradeFilter("all")}
+                    className="h-6 px-2 text-xs hover:bg-red-50"
+                  >
+                    <X className="w-3 h-3 mr-1" />
+                    해제
+                  </Button>
+                </div>
+              )}
             </div>
             {isLoading ? (
               <div className="text-center py-8">
@@ -1833,7 +2216,7 @@ export default function AdminDashboard() {
             ) : filteredSubmissions.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                {searchTerm || languageFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all"
+                {searchTerm || languageFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all" || gradeFilter !== "all"
                   ? "검색 조건에 맞는 데이터가 없습니다."
                   : "제출된 녹음이 없습니다."}
               </div>
@@ -1951,7 +2334,7 @@ export default function AdminDashboard() {
                             {(sub.status === 'submitted' || sub.status === 'completed' || sub.approved) ? (
                               (<>{(() => {
                                 const gradeInfo = getGradeInfo(
-                                  typeof sub.totalScore === 'number' ? sub.totalScore : 0,
+                                  sub.totalScore ?? 0,
                                   sub.categoryScores || {},
                                   sub.language,
                                   sub.category
@@ -1984,11 +2367,11 @@ export default function AdminDashboard() {
                                     </span>
                                     {sub.language === 'korean-english' ? (
                                       <span className="text-[10px] text-gray-500">
-                                        ({typeof sub.koreanTotalScore === 'number' ? sub.koreanTotalScore.toFixed(1) : '0.0'} / {typeof sub.englishTotalScore === 'number' ? sub.englishTotalScore.toFixed(1) : '0.0'})
+                                        ({(sub.koreanTotalScore ?? 0).toFixed(1)} / {(sub.englishTotalScore ?? 0).toFixed(1)})
                                       </span>
                                     ) : (
                                       <span className="text-[10px] text-gray-500">
-                                        ({typeof sub.totalScore === 'number' ? sub.totalScore.toFixed(1) : '0.0'})
+                                        ({(sub.totalScore ?? 0).toFixed(1)})
                                       </span>
                                     )}
                                   </div>
@@ -2191,32 +2574,6 @@ export default function AdminDashboard() {
         </Card>
 
 
-        {/* 평가 결과 모달 */}
-        {selectedResult && (
-          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex justify-between items-center">
-                <h2 className="text-xl font-bold text-gray-900">평가 결과 상세</h2>
-                <button 
-                  onClick={() => setSelectedResult(null)}
-                  className="p-2 hover:bg-gray-100 rounded-lg"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="p-4">
-                <EvaluationSummary
-                  isOpen={true}
-                  onClose={() => setSelectedResult(null)}
-                  evaluationResult={selectedResult as any}
-                  authenticatedUser={{ name: "Admin" }}
-                  showPdfButton={true}
-                  isReviewMode={false}
-                />
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* 파일 업로드 모달 */}
         {showFileUpload && (
@@ -2382,31 +2739,7 @@ export default function AdminDashboard() {
       </Tabs>
 
       {/* 모달들 - Tabs 밖에 위치 */}
-      {/* 신청 내역 관리 모달 */}
-      <AdminRequestManagerModal
-        isOpen={showRequestManager}
-        onClose={() => setShowRequestManager(false)}
-      />
-
-      {/* 교육 일지 관리 모달 */}
-      <AdminEducationJournalModal
-        isOpen={showEducationJournalManager}
-        onClose={() => setShowEducationJournalManager(false)}
-      />
-
-      {/* 교관 통계 모달 */}
-      <InstructorStatsModal
-        isOpen={showInstructorStats}
-        onClose={() => setShowInstructorStats(false)}
-      />
-
-      {/* 녹음 파일 관리 모달 */}
-      <RecordingManagementModal
-        isOpen={showRecordingManager}
-        onClose={() => setShowRecordingManager(false)}
-      />
-
-      {/* 월별 통계 모달 */}
+      {/* 월별 통계 모달 - iframe 내부에서만 렌더링 */}
       <MonthlyStatsModal
         isOpen={showMonthlyStats}
         onClose={() => setShowMonthlyStats(false)}

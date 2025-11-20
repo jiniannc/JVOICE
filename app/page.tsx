@@ -30,6 +30,9 @@ import {
   Menu,
   Calendar,
   GraduationCap,
+  BookOpen,
+  Clock,
+  AlertCircle,
 } from "lucide-react"
 import { PDFViewer } from "@/components/pdf-viewer"
 import { AudioRecorder } from "@/components/audio-recorder"
@@ -42,12 +45,17 @@ import HeroLottie from "@/components/hero-lottie"
 import ScrollDownLottie from "@/components/scroll-down-lottie"
 import { RecordingWaitingPage } from "@/components/recording-waiting-page"
 import { FileUploadEvaluation } from "@/components/file-upload-evaluation"
-import { pdfSyncService } from "@/lib/pdf-sync-service"
+import { pdfDatabaseService } from "@/lib/pdf-database-service"
 import { employeeDB } from "@/lib/employee-database"
 import { FullscreenLoadingOverlay } from "@/components/fullscreen-loading-overlay"
 import Image from "next/image"
 import dynamic from "next/dynamic";
 import MyRecordingsTable from "@/components/my-recordings-table"
+import ProductTour from "@/components/product-tour"
+import { AdminRequestManagerModal } from "@/components/admin-request-manager-modal"
+import { AdminEducationJournalModal } from "@/components/admin-education-journal-modal"
+import { RecordingManagementModal } from "@/components/recording-management-modal"
+import { InstructorStatsModal } from "@/components/instructor-stats-modal"
 
 // Typography2Lottie 컴포넌트 추가
 const Typography2Lottie = dynamic(
@@ -142,7 +150,6 @@ export default function HomePage() {
   const [userInfo, setUserInfo] = useState<UserInfo>({ name: "", employeeId: "", language: "", category: "" })
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null | undefined>(undefined)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
-  const [isAutoSyncing, setIsAutoSyncing] = useState(false)
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showAdminAuth, setShowAdminAuth] = useState(false)
   const [showEvaluationAuth, setShowEvaluationAuth] = useState(false)
@@ -229,30 +236,7 @@ export default function HomePage() {
     }
   }, [isLoggingOut])
 
-  // 🔥 앱 시작시 자동 문안 동기화
-  useEffect(() => {
-    const autoSyncPDFs = async () => {
-      const lastSync = pdfSyncService.getLastSyncTime()
-      const now = new Date()
-      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-
-      if (!lastSync || new Date(lastSync) < oneDayAgo) {
-        console.log("🔄 자동 문안 동기화 시작...")
-        setIsAutoSyncing(true)
-
-        try {
-          await pdfSyncService.syncPDFFiles()
-          console.log("✅ 자동 문안 동기화 완료")
-        } catch (error) {
-          console.error("❌ 자동 문안 동기화 실패:", error)
-        } finally {
-          setIsAutoSyncing(false)
-        }
-      }
-    }
-
-    autoSyncPDFs()
-  }, [])
+  // 데이터베이스 기반으로 변경되어 자동 동기화 불필요
 
   // 모바일 감지
   useEffect(() => {
@@ -603,12 +587,8 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="bg-white rounded-2xl shadow-lg w-full max-w-md p-8 text-center">
-          {isAutoSyncing && (
-            <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-              <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-2 text-blue-600" />
-              <p className="text-xs text-blue-700 font-medium">최신 문안 동기화 중...</p>
-            </div>
-          )}
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-200 border-t-blue-600 mx-auto mb-3"></div>
+          <p className="text-sm text-gray-600">로딩 중...</p>
         </div>
       </div>
     )
@@ -749,6 +729,7 @@ export default function HomePage() {
             <button
               onClick={() => handleNavigation("recording")}
               className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+              data-tour="record"
             >
               <Mic className="w-4 h-4" />
               Record
@@ -838,6 +819,7 @@ export default function HomePage() {
             <button
               onClick={() => setShowLoginModal(true)}
               className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-blue-600 hover:bg-blue-50 transition-colors"
+              data-tour="login"
             >
               <LogIn className="w-4 h-4" />
               Login
@@ -997,14 +979,15 @@ export default function HomePage() {
                 <video
                   muted
                   playsInline
-                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-500"
+                  preload="auto"
+                  className="w-full object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => {
                     console.log("Video failed to load:", e)
                     // 동영상 로드 실패시 플레이스홀더 이미지로 대체
                     const target = e.target as HTMLVideoElement
                     target.style.display = "none"
                     const placeholder = document.createElement("div")
-                    placeholder.className = "w-full h-84 bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center"
+                    placeholder.className = "w-full h-56 bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center"
                     placeholder.innerHTML =
                       '<div class="text-blue-600 text-center"><div class="text-4xl mb-2">🎤</div><div class="text-sm font-medium">Record Video</div></div>'
                     target.parentNode?.appendChild(placeholder)
@@ -1084,13 +1067,14 @@ export default function HomePage() {
                 <video
                   muted
                   playsInline
-                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-500"
+                  preload="auto"
+                  className="w-full object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => {
                     console.log("Video failed to load:", e)
                     const target = e.target as HTMLVideoElement
                     target.style.display = "none"
                     const placeholder = document.createElement("div")
-                    placeholder.className = "w-full h-84 bg-gradient-to-br from-emerald-50 to-teal-100 flex items-center justify-center"
+                    placeholder.className = "w-full h-56 bg-gradient-to-br from-emerald-50 to-teal-100 flex items-center justify-center"
                     placeholder.innerHTML =
                       '<div class="text-emerald-600 text-center"><div class="text-4xl mb-2">👁️</div><div class="text-sm font-medium">Review Video</div></div>'
                     target.parentNode?.appendChild(placeholder)
@@ -1142,13 +1126,14 @@ export default function HomePage() {
                 <video
                   muted
                   playsInline
-                  className="w-full h-84 object-cover group-hover:scale-105 transition-transform duration-500"
+                  preload="auto"
+                  className="w-full object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => {
                     console.log("Video failed to load:", e)
                     const target = e.target as HTMLVideoElement
                     target.style.display = "none"
                     const placeholder = document.createElement("div")
-                    placeholder.className = "w-full h-84 bg-gradient-to-br from-violet-50 to-purple-100 flex items-center justify-center"
+                    placeholder.className = "w-full h-56 bg-gradient-to-br from-violet-50 to-purple-100 flex items-center justify-center"
                     placeholder.innerHTML =
                       '<div class="text-violet-600 text-center"><div class="text-4xl mb-2">📋</div><div class="text-sm font-medium">Evaluate Video</div></div>'
                     target.parentNode?.appendChild(placeholder)
@@ -1279,8 +1264,8 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* 사용자 정보 - 상단 우측 */}
-      {authenticatedUser && (
+      {/* 사용자 정보 - 상단 우측 (admin, review, evaluation 모드에서는 숨김) */}
+      {authenticatedUser && mode !== "admin" && mode !== "review" && mode !== "evaluation" && (
         <div
           style={{ position: "fixed", top: 20, right: 32, zIndex: 50, opacity: 0.5 }}
           className="flex items-center gap-3 bg-white/80 shadow px-3 py-2 rounded-full border border-gray-200 backdrop-blur-sm"
@@ -1320,6 +1305,15 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* 프로덕트 투어 */}
+      <ProductTour 
+        userId={authenticatedUser?.email || null}
+        isLoggedIn={!!authenticatedUser}
+        onComplete={() => {
+          console.log("프로덕트 투어 완료")
+        }}
+      />
     </div>
   )
 }
@@ -2458,8 +2452,8 @@ ${guidance}`)
             </button>
 
             <button
-              onClick={() => onNavigate("recording")}
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+              disabled
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-400 cursor-not-allowed opacity-50"
             >
               <Mic className="w-4 h-4" />
               Record
@@ -2727,65 +2721,104 @@ ${guidance}`)
 
       {/* 내 신청 내역 모달 */}
       {showMyRequests && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-            <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-4 text-white flex items-center justify-between">
-              <h2 className="text-xl font-bold">내 신청 내역</h2>
-              <button
-                onClick={() => setShowMyRequests(false)}
-                className="text-white hover:text-gray-200 transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden animate-scale-up">
+            {/* 헤더 - 더 모던한 디자인 */}
+            <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-8 py-6 text-white relative overflow-hidden">
+              <div className="relative z-10 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center">
+                    <Calendar className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold">내 신청 내역</h2>
+                    <p className="text-blue-100 text-sm mt-0.5">총 {myRequests.length}건의 신청</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowMyRequests(false)}
+                  className="w-10 h-10 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-xl flex items-center justify-center transition-all duration-200 hover:rotate-90"
+                >
+                  <X className="w-5 h-5 text-white" />
+                </button>
+              </div>
             </div>
             
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+            <div className="p-8 overflow-y-auto max-h-[calc(90vh-140px)]">
               {myRequestsLoading ? (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-gradient-to-br from-green-100 to-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                <div className="text-center py-16">
+                  <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-6 animate-pulse">
+                    <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">신청 내역을 불러오는 중...</h3>
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">신청 내역을 불러오는 중...</h3>
                   <p className="text-gray-600">잠시만 기다려주세요.</p>
                 </div>
               ) : myRequests.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <User className="w-8 h-8 text-gray-400" />
+                <div className="text-center py-16">
+                  <div className="w-20 h-20 bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                    <User className="w-10 h-10 text-gray-400" />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">신청 내역이 없습니다</h3>
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">신청 내역이 없습니다</h3>
                   <p className="text-gray-600">교육이나 녹음을 신청해보세요.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2">
+                <div className="space-y-6">
+                  {/* 필터 버튼 - 개선된 디자인 */}
+                  <div className="flex items-center gap-3 pb-4 border-b border-gray-200">
+                    <span className="text-sm font-semibold text-gray-700 mr-2">필터:</span>
                     <button
                       onClick={() => setMyRequestsFilter('all')}
-                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                      className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 transform hover:scale-105 ${
+                        myRequestsFilter === 'all' 
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/30' 
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
                     >
-                      전체
+                      <span className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-current"></div>
+                        전체 ({myRequests.length})
+                      </span>
                     </button>
                     <button
                       onClick={() => setMyRequestsFilter('recording')}
-                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'recording' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                      className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 transform hover:scale-105 ${
+                        myRequestsFilter === 'recording' 
+                          ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/30' 
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
                     >
-                      녹음
+                      <span className="flex items-center gap-2">
+                        <Mic className="w-4 h-4" />
+                        녹음 ({myRequests.filter(r => r.type === 'recording').length})
+                      </span>
                     </button>
                     <button
                       onClick={() => setMyRequestsFilter('education')}
-                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${myRequestsFilter === 'education' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+                      className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 transform hover:scale-105 ${
+                        myRequestsFilter === 'education' 
+                          ? 'bg-gradient-to-r from-emerald-600 to-green-600 text-white shadow-lg shadow-emerald-500/30' 
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
                     >
-                      교육
+                      <span className="flex items-center gap-2">
+                        <BookOpen className="w-4 h-4" />
+                        교육 ({myRequests.filter(r => r.type === 'education').length})
+                      </span>
                     </button>
                   </div>
 
                   {filteredMyRequests.length === 0 ? (
-                    <div className="text-center py-12 text-gray-500">해당 필터의 신청 내역이 없습니다.</div>
-                  ) : filteredMyRequests.map((request) => {
+                    <div className="text-center py-12">
+                      <div className="w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <AlertCircle className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <p className="text-gray-600 font-medium">해당 필터의 신청 내역이 없습니다.</p>
+                    </div>
+                  ) : filteredMyRequests.map((request, index) => {
                     const canCancel = () => {
                       if (request.status !== 'ACTIVE') return false
                       
-                      // 취소 가능 시간: 해당 날짜 기준  오후 2시까지
+                      // 취소 가능 시간: 해당 날짜 기준 2일 전 오후 2시까지
                       const scheduleDate = new Date(request.date)
                       const twoDaysBefore = new Date(scheduleDate)
                       twoDaysBefore.setDate(twoDaysBefore.getDate() - 2)
@@ -2797,70 +2830,134 @@ ${guidance}`)
                     }
 
                     return (
-                      <div key={request.id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
-                        <div className="flex items-start justify-between">
+                      <div 
+                        key={request.id} 
+                        className="group relative bg-gradient-to-br from-white to-gray-50 border-2 border-gray-200 rounded-2xl p-6 hover:border-blue-300 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1"
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        {/* 배경 그라데이션 효과 */}
+                        <div className={`absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-10 transition-opacity duration-300 ${
+                          request.type === 'education' 
+                            ? 'bg-gradient-to-br from-emerald-400 to-green-500' 
+                            : 'bg-gradient-to-br from-purple-400 to-pink-500'
+                        }`}></div>
+                        
+                        <div className="relative z-10 flex items-start justify-between gap-4">
                           <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <Badge className={`${
+                            {/* 상단: 타입 & 상태 배지 */}
+                            <div className="flex items-center gap-3 mb-4">
+                              <Badge className={`px-3 py-1.5 text-sm font-bold ${
                                 request.type === 'education' 
-                                  ? 'bg-indigo-100 text-indigo-800' 
-                                  : 'bg-blue-100 text-blue-800'
+                                  ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-lg shadow-emerald-500/30' 
+                                  : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30'
                               }`}>
-                                {request.type === 'education' ? '교육' : '녹음'}
-                              </Badge>
-                              <Badge className={`${
-                                request.status === 'ACTIVE' 
-                                  ? 'bg-green-100 text-green-800' 
-                                  : 'bg-gray-100 text-gray-800'
-                              }`}>
-                                {request.status === 'ACTIVE' ? '활성' : '취소됨'}
-                              </Badge>
-                            </div>
-                            
-                            <h3 className="font-semibold text-gray-900 mb-2">
-                              {request.date} - {request.slot}차수 ({getSlotTimeInfo(request.type, request.slot, request.details?.mode)})
-                            </h3>
-                            
-                            <div className="text-gray-600 mb-2">
-                              {getRequestDetailLabel(request, classroomInfoMap)}
-                            </div>
-                            
-                            {request.type === 'education' && (
-                              <div className="text-sm text-gray-600 space-y-1">
-                                <p>언어: {
-                                  request.details.language === 'korean-english' ? '한/영' :
-                                  request.details.language === 'japanese' ? '일본어' :
-                                  request.details.language === 'chinese' ? '중국어' : request.details.language
-                                }</p>
-                                <p>유형: {request.details.mode === '1:1' ? '1:1' : '소규모'}</p>
-                                {request.details.category && (
-                                  <p>분류: {request.details.category}</p>
+                                {request.type === 'education' ? (
+                                  <span className="flex items-center gap-1.5">
+                                    <BookOpen className="w-4 h-4" />
+                                    교육
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-1.5">
+                                    <Mic className="w-4 h-4" />
+                                    녹음
+                                  </span>
                                 )}
-                              </div>
-                            )}
+                              </Badge>
+                              <Badge className={`px-3 py-1.5 text-sm font-bold ${
+                                request.status === 'ACTIVE' 
+                                  ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white' 
+                                  : 'bg-gray-300 text-gray-700'
+                              }`}>
+                                {request.status === 'ACTIVE' ? '✓ 활성' : '✗ 취소됨'}
+                              </Badge>
+                            </div>
                             
-                            {request.type === 'recording' && (
-                              <div className="text-sm text-gray-600">
-                                <p>언어: {
-                                  request.details.recordingLanguage === 'korean-english' ? '한/영' :
-                                  request.details.recordingLanguage === 'japanese' ? '일본어' :
-                                  request.details.recordingLanguage === 'chinese' ? '중국어' : request.details.recordingLanguage
-                                }</p>
+                            {/* 날짜 & 차수 정보 - 더 강조 */}
+                            <div className="mb-4 p-4 bg-white rounded-xl border border-gray-200 shadow-sm">
+                              <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
+                                  <Calendar className="w-6 h-6 text-white" />
+                                </div>
+                                <div className="flex-1">
+                                  <h3 className="font-bold text-gray-900 text-lg mb-1">
+                                    {new Date(request.date).toLocaleDateString('ko-KR', { 
+                                      year: 'numeric',
+                                      month: 'long', 
+                                      day: 'numeric',
+                                      weekday: 'short' 
+                                    })}
+                                  </h3>
+                                  <p className="text-gray-600 text-sm font-medium">
+                                    {request.slot}차수 • {getSlotTimeInfo(request.type, request.slot, request.details?.mode)}
+                                  </p>
+                                </div>
                               </div>
-                            )}
+                            </div>
                             
-                            <p className="text-xs text-gray-500 mt-2">
-                              신청일: {new Date(request.applicationTime).toLocaleDateString('ko-KR')} {new Date(request.applicationTime).toLocaleTimeString('ko-KR')}
-                            </p>
+                            {/* 세부 정보 */}
+                            <div className="space-y-3 mb-4">
+                              <div className="text-sm text-gray-700 bg-blue-50 rounded-lg p-3 border border-blue-100">
+                                <p className="font-semibold mb-1">📋 {getRequestDetailLabel(request, classroomInfoMap)}</p>
+                              </div>
+                              
+                              {request.type === 'education' && (
+                                <div className="grid grid-cols-2 gap-2 text-sm">
+                                  <div className="bg-indigo-50 rounded-lg p-3 border border-indigo-100">
+                                    <span className="text-indigo-600 font-medium">언어:</span>
+                                    <p className="text-gray-900 font-semibold mt-1">
+                                      {request.details.language === 'korean-english' ? '🇰🇷🇺🇸 한/영' :
+                                       request.details.language === 'japanese' ? '🇯🇵 일본어' :
+                                       request.details.language === 'chinese' ? '🇨🇳 중국어' : request.details.language}
+                                    </p>
+                                  </div>
+                                  <div className="bg-purple-50 rounded-lg p-3 border border-purple-100">
+                                    <span className="text-purple-600 font-medium">유형:</span>
+                                    <p className="text-gray-900 font-semibold mt-1">
+                                      {request.details.mode === '1:1' ? '👤 1:1' : '👥 소규모'}
+                                    </p>
+                                  </div>
+                                  {request.details.category && (
+                                    <div className="col-span-2 bg-pink-50 rounded-lg p-3 border border-pink-100">
+                                      <span className="text-pink-600 font-medium">분류:</span>
+                                      <p className="text-gray-900 font-semibold mt-1">{request.details.category}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              
+                              {request.type === 'recording' && (
+                                <div className="bg-purple-50 rounded-lg p-3 border border-purple-100">
+                                  <span className="text-purple-600 font-medium text-sm">언어:</span>
+                                  <p className="text-gray-900 font-semibold mt-1">
+                                    {request.details.recordingLanguage === 'korean-english' ? '🇰🇷🇺🇸 한/영' :
+                                     request.details.recordingLanguage === 'japanese' ? '🇯🇵 일본어' :
+                                     request.details.recordingLanguage === 'chinese' ? '🇨🇳 중국어' : request.details.recordingLanguage}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                            
+                            {/* 신청일 */}
+                            <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 rounded-lg p-2 border border-gray-100">
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>신청일: {new Date(request.applicationTime).toLocaleDateString('ko-KR', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}</span>
+                            </div>
                             
                             {request.notes && (
-                              <p className="text-xs text-gray-500 mt-1">
-                                {request.notes}
+                              <p className="text-xs text-gray-500 mt-2 italic bg-yellow-50 p-2 rounded border border-yellow-100">
+                                💡 {request.notes}
                               </p>
                             )}
                           </div>
                           
-                          <div className="ml-4 flex flex-col items-end gap-1">
+                          {/* 우측: 액션 버튼 영역 */}
+                          <div className="flex flex-col items-end gap-3 min-w-[140px]">
                             {/* Google Meet 링크 버튼 (1:1 교육, 24시간 전부터 표시) */}
                             {request.type === 'education' && 
                              request.details?.mode === '1:1' && 
@@ -2886,13 +2983,13 @@ ${guidance}`)
                              })() && (
                               <Button
                                 onClick={() => window.open(request.details.googleMeetLink, '_blank')}
-                                className="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 h-7 mb-1"
+                                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-xs font-bold px-4 py-2.5 h-auto shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
                               >
-                                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 24 24">
                                   <path d="M15 12h2c0-1.1.9-2 2-2V8c0-1.1-.9-2-2-2h-2v6zM9 12V6H7c-1.1 0-2 .9-2 2v2c1.1 0 2 .9 2 2z"/>
                                   <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
                                 </svg>
-                                Google Meet 참가
+                                Google Meet
                               </Button>
                             )}
                             
@@ -2907,39 +3004,45 @@ ${guidance}`)
                               
                               if (isExpired) {
                                 return (
-                                  <div className="text-xs text-gray-500 text-right">
-                                    <div>교육/녹음 종료</div>
+                                  <div className="w-full bg-gray-100 text-gray-600 text-center rounded-xl px-4 py-2.5 border border-gray-200">
+                                    <div className="text-xs font-semibold">✓ 완료됨</div>
                                   </div>
                                 )
                               }
                               
                               if (canCancel()) {
                                 return (
-                                  <>
-                                    <div className="text-xs text-green-600 text-right">
-                                      취소 가능 ({Math.floor(hoursDiff)}시간 남음)
+                                  <div className="w-full space-y-2">
+                                    <div className="text-xs text-green-600 font-semibold text-center bg-green-50 rounded-lg px-3 py-1.5 border border-green-200">
+                                      ✓ 취소 가능
+                                      <div className="text-[10px] text-gray-600 mt-0.5">
+                                        {Math.floor(hoursDiff)}시간 남음
+                                      </div>
                                     </div>
                                     <button
                                       onClick={() => handleCancelRequest(request.id)}
-                                      className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
+                                      className="w-full px-4 py-2.5 text-sm font-bold bg-gradient-to-r from-red-500 to-pink-500 text-white rounded-xl hover:from-red-600 hover:to-pink-600 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105"
                                     >
-                                      취소
+                                      취소하기
                                     </button>
-                                  </>
+                                  </div>
                                 )
                               } else {
                                 return (
-                                  <>
-                                    <div className="text-xs text-red-600 text-right">
-                                      취소 불가 (2일 전 14:00 이후)
+                                  <div className="w-full space-y-2">
+                                    <div className="text-xs text-red-600 font-semibold text-center bg-red-50 rounded-lg px-3 py-1.5 border border-red-200">
+                                      ✗ 취소 불가
+                                      <div className="text-[10px] text-gray-600 mt-0.5">
+                                        기한 경과
+                                      </div>
                                     </div>
                                     <button
                                       onClick={() => alert('교육/녹음일 기준 2일 전 오후 2시까지만 취소할 수 있습니다.\n취소가 필요한 경우 담당자에게 연락해주세요.')}
-                                      className="px-3 py-1 text-sm bg-gray-100 text-gray-500 rounded cursor-not-allowed"
+                                      className="w-full px-4 py-2.5 text-sm font-bold bg-gray-200 text-gray-500 rounded-xl cursor-not-allowed"
                                     >
                                       취소 불가
                                     </button>
-                                  </>
+                                  </div>
                                 )
                               }
                             })()}
@@ -2954,6 +3057,37 @@ ${guidance}`)
           </div>
         </div>
       )}
+      
+      {/* 애니메이션 스타일 추가 */}
+      <style jsx>{`
+        @keyframes fade-in {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+        
+        @keyframes scale-up {
+          from {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        
+        .animate-fade-in {
+          animation: fade-in 0.2s ease-out;
+        }
+        
+        .animate-scale-up {
+          animation: scale-up 0.3s ease-out;
+        }
+      `}</style>
 
       {/* 언어 선택 팝업 */}
       {showLanguageSelection && selectedRecordingSlot && (
@@ -3895,8 +4029,13 @@ function RecordingSetup({
     broadcastGrade: authenticatedUser?.broadcastGrade,
   })
   const [isCheckingIn, setIsCheckingIn] = useState(false)
+  const [employeeQualifications, setEmployeeQualifications] = useState<{
+    koreanEnglishGrade?: string
+    japaneseGrade?: string
+    chineseGrade?: string
+  }>({})
 
-  // authenticatedUser가 있으면 스프레드시트에서 이름/사번 자동 입력
+  // authenticatedUser가 있으면 스프레드시트에서 이름/사번 및 자격 정보 자동 입력
   useEffect(() => {
     const fetchEmployeeInfo = async () => {
       if (authenticatedUser?.email) {
@@ -3907,11 +4046,67 @@ function RecordingSetup({
             name: employeeInfo.name,
             employeeId: employeeInfo.employeeId,
           }))
+          // 자격 정보 저장
+          console.log("🔍 [RecordingSetup] DB에서 가져온 자격 정보:", {
+            koreanEnglishGrade: employeeInfo.koreanEnglishGrade,
+            japaneseGrade: employeeInfo.japaneseGrade,
+            chineseGrade: employeeInfo.chineseGrade,
+          })
+          setEmployeeQualifications({
+            koreanEnglishGrade: employeeInfo.koreanEnglishGrade,
+            japaneseGrade: employeeInfo.japaneseGrade,
+            chineseGrade: employeeInfo.chineseGrade,
+          })
         }
       }
     }
     fetchEmployeeInfo()
   }, [authenticatedUser])
+
+  // 평가 구분 자동 계산 함수
+  const calculateCategory = (language: string) => {
+    let autoCategory = ""
+    
+    console.log(`🔍 [calculateCategory] 입력 - 언어: ${language}, 자격정보:`, employeeQualifications)
+    
+    if (language === "korean-english") {
+      // 한영: 한영 자격(ANNC_S, ANNC_A, ANNC_B 등) 있으면 '재자격', 없으면 '신규'
+      autoCategory = employeeQualifications.koreanEnglishGrade ? "재자격" : "신규"
+    } else if (language === "japanese") {
+      // 일본어: 일본어 자격 없으면 '신규', 'B' 포함하면 '상위' (JP_B, B 등)
+      console.log(`🔍 [일본어] japaneseGrade 값: "${employeeQualifications.japaneseGrade}"`)
+      if (!employeeQualifications.japaneseGrade) {
+        console.log("   → 자격 없음: 신규")
+        autoCategory = "신규"
+      } else if (employeeQualifications.japaneseGrade.includes("B")) {
+        console.log("   → B 자격 포함: 상위")
+        autoCategory = "상위"
+      } else {
+        console.log(`   → 기타 자격 (${employeeQualifications.japaneseGrade}): 신규`)
+        autoCategory = "신규" // A 등급이거나 다른 경우 (JP_A 등)
+      }
+    } else if (language === "chinese") {
+      // 중국어: 중국어 자격 없으면 '신규', 'B' 포함하면 '상위' (CN_B, B 등)
+      if (!employeeQualifications.chineseGrade) {
+        autoCategory = "신규"
+      } else if (employeeQualifications.chineseGrade.includes("B")) {
+        autoCategory = "상위"
+      } else {
+        autoCategory = "신규" // A 등급이거나 다른 경우 (CN_A 등)
+      }
+    }
+    
+    console.log(`🔍 [RecordingSetup] 최종 결과 - 언어: ${language}, 평가 구분: ${autoCategory}`)
+    return autoCategory
+  }
+
+  // 언어 선택 시 자격 정보 기반으로 평가 구분 자동 설정
+  useEffect(() => {
+    if (userInfo.language) {
+      const autoCategory = calculateCategory(userInfo.language)
+      setUserInfo((prev) => ({ ...prev, category: autoCategory }))
+    }
+  }, [userInfo.language, employeeQualifications.koreanEnglishGrade, employeeQualifications.japaneseGrade, employeeQualifications.chineseGrade])
 
   const getCategoryOptions = (language: string) => {
     if (language === "korean-english") {
@@ -4011,7 +4206,10 @@ function RecordingSetup({
         </Label>
         <Select
           value={userInfo.language}
-          onValueChange={(value) => setUserInfo((prev) => ({ ...prev, language: value, category: "" }))}
+          onValueChange={(value) => {
+            const autoCategory = calculateCategory(value)
+            setUserInfo((prev) => ({ ...prev, language: value, category: autoCategory }))
+          }}
           required
         >
           <SelectTrigger className="border-blue-200 focus:border-blue-400">
@@ -4033,9 +4231,10 @@ function RecordingSetup({
           <Select
             value={userInfo.category}
             onValueChange={(value) => setUserInfo((prev) => ({ ...prev, category: value }))}
+            disabled
             required
           >
-            <SelectTrigger className="border-blue-200 focus:border-blue-400">
+            <SelectTrigger className="border-blue-200 focus:border-blue-400 bg-gray-100">
               <SelectValue placeholder="평가 유형을 선택하세요" />
             </SelectTrigger>
             <SelectContent>
@@ -4046,6 +4245,7 @@ function RecordingSetup({
               ))}
             </SelectContent>
           </Select>
+          <p className="text-xs text-green-600 mt-1">✓ 자격 정보에 따라 자동으로 설정되었습니다</p>
         </div>
       )}
 
@@ -4094,6 +4294,8 @@ function MyPageModal({
   const [loading, setLoading] = useState(false)
   const [requests, setRequests] = useState<any[]>([])
   const [loadingReq, setLoadingReq] = useState(false)
+  const [requestsFilter, setRequestsFilter] = useState<'all' | 'recording' | 'education'>('all')
+  const filteredRequests = requests.filter(r => requestsFilter === 'all' || r.type === requestsFilter)
 
   // 직원 자격 정보 불러오기
   useEffect(() => {
@@ -4468,32 +4670,128 @@ function MyPageModal({
               <div className="max-w-3xl w-full mx-auto">
                 <div className="text-center mb-6">
                   <h3 className="text-2xl font-bold text-gray-900 mb-2">신청 내역</h3>
-                  <p className="text-gray-600">교육/녹음 신청을 확인하고 당일 기준 2일 전 오후 2시까지 취소할 수 있습니다.</p>
                 </div>
+                
+                {/* 필터 탭 */}
+                <div className="flex items-center justify-center gap-2 mb-6">
+                  <button
+                    onClick={() => setRequestsFilter('all')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                      requestsFilter === 'all'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    전체 ({requests.length})
+                  </button>
+                  <button
+                    onClick={() => setRequestsFilter('education')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
+                      requestsFilter === 'education'
+                        ? 'bg-emerald-600 text-white shadow-md'
+                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    교육 ({requests.filter(r => r.type === 'education').length})
+                  </button>
+                  <button
+                    onClick={() => setRequestsFilter('recording')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
+                      requestsFilter === 'recording'
+                        ? 'bg-purple-600 text-white shadow-md'
+                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Mic className="w-4 h-4" />
+                    녹음 ({requests.filter(r => r.type === 'recording').length})
+                  </button>
+                </div>
+                
                 {/* 목록 */}
                 {/* 본문에서 상태 관리됨: requests, loadingReq */}
                 {/* @ts-ignore-next-line */}
                 {loadingReq ? (
-                  <div className="text-center py-12">불러오는 중...</div>
-                ) : requests.length === 0 ? (
-                  <div className="text-center py-12 text-gray-500">신청 내역이 없습니다.</div>
+                  <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                    <p className="text-gray-600">신청 내역을 불러오는 중입니다...</p>
+                  </div>
+                ) : filteredRequests.length === 0 ? (
+                  <div className="bg-white rounded-lg shadow-lg border border-gray-100 p-12 text-center">
+                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Calendar className="w-8 h-8 text-gray-400" />
+                    </div>
+                    <p className="text-gray-600 font-medium">
+                      {requestsFilter === 'all' 
+                        ? '신청 내역이 없습니다'
+                        : `${requestsFilter === 'education' ? '교육' : '녹음'} 신청 내역이 없습니다`
+                      }
+                    </p>
+                  </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     {/* @ts-ignore-next-line */}
-                    {requests.map((it: any, idx: number)=> (
-                      <div key={idx} className="flex items-center justify-between bg-white rounded-lg border p-4">
-                        <div className="text-sm">
-                          <div className="font-semibold">
-                            {new Date(it.date).toLocaleDateString('ko-KR',{month:'long', day:'numeric', weekday:'short'})} · {it.slot}차수
+                    {filteredRequests.map((it: any, idx: number)=> {
+                      const typeColor = it.type === 'education' 
+                        ? 'from-emerald-500 to-green-600'
+                        : 'from-purple-500 to-pink-600'
+                      const typeIcon = it.type === 'education' ? BookOpen : Mic
+                      const TypeIcon = typeIcon
+                      
+                      return (
+                        <div 
+                          key={idx} 
+                          className="bg-white rounded-lg shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300 overflow-hidden group"
+                        >
+                          {/* 상단 헤더 */}
+                          <div className={`bg-gradient-to-r ${typeColor} p-4`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                                  <TypeIcon className="w-5 h-5 text-white" />
+                                </div>
+                                <div>
+                                  <div className="text-white font-bold text-lg">
+                                    {it.type === 'education' ? '교육' : '녹음'}
+                                  </div>
+                                  <div className="text-white/90 text-sm">
+                                    {it.type === 'education' ? `교육: ${it.detail}` : `녹음: ${langLabel(it.detail)}`}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-white font-bold text-xl">
+                                  {it.slot}차수
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-gray-600">
-                            {it.type === 'education' ? `교육: ${it.detail}` : `녹음: ${langLabel(it.detail)}`}
+                          
+                          {/* 본문 - 날짜 정보 */}
+                          <div className="p-5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+                                  <Calendar className="w-5 h-5 text-white" />
+                                </div>
+                                <div>
+                                  <div className="font-bold text-gray-900">
+                                    {new Date(it.date).toLocaleDateString('ko-KR', {
+                                      year: 'numeric',
+                                      month: 'long', 
+                                      day: 'numeric', 
+                                      weekday: 'short'
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+                              {/* @ts-ignore-next-line */}
+                              <CancelButton employeeId={userInfo.employeeId} item={it} />
+                            </div>
                           </div>
                         </div>
-                        {/* @ts-ignore-next-line */}
-                        <CancelButton employeeId={userInfo.employeeId} item={it} />
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -4694,8 +4992,8 @@ function ReviewMode({
 
   return (
     <div className="min-h-screen">
-      {/* 사용자 정보 - 상단 우측 */}
-      {authenticatedUser && (
+      {/* 사용자 정보 - 상단 우측 (review 모드에서는 숨김) */}
+      {/* {authenticatedUser && (
         <div
           style={{ position: "fixed", top: 20, right: 32, zIndex: 50, opacity: 0.5 }}
           className="flex items-center gap-3 bg-white/80 shadow px-3 py-2 rounded-full border border-gray-200 backdrop-blur-sm"
@@ -4721,7 +5019,7 @@ function ReviewMode({
             <span className="text-[11px] text-gray-500 leading-tight">{authenticatedUser.email}</span>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* 사이드바 네비게이션 */}
       <div className="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col">
@@ -4751,8 +5049,8 @@ function ReviewMode({
             </button>
 
             <button
-              onClick={() => handleNavigation("recording")}
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+              disabled
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-gray-400 cursor-not-allowed opacity-50"
             >
               <Mic className="w-4 h-4" />
               Record
@@ -5020,20 +5318,19 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
   const [showFinalConfirmation, setShowFinalConfirmation] = useState(false)
   const [availableScripts, setAvailableScripts] = useState<number[]>([])
   const [currentLanguageMode, setCurrentLanguageMode] = useState<"korean" | "english">("korean")
+  const [isLoadingScripts, setIsLoadingScripts] = useState(true)
   // const [isLoadingScript, setIsLoadingScript] = useState(true)
 
-  // 녹음 중 페이지 이탈 방지
+  // 녹음 중 페이지 이탈 방지 (window.onbeforeunload 사용)
   useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+    window.onbeforeunload = (e: BeforeUnloadEvent) => {
       e.preventDefault()
       e.returnValue = "녹음을 완료하세요. 페이지를 떠나면 녹음 데이터가 손실될 수 있습니다."
       return e.returnValue
     }
 
-    window.addEventListener("beforeunload", handleBeforeUnload)
-
     return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload)
+      window.onbeforeunload = null
     }
   }, [])
 
@@ -5075,13 +5372,32 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
   }, [elapsedTime, showFinalConfirmation])
 
   useEffect(() => {
-    const scripts = pdfSyncService.getRandomScripts(userInfo.language, 5)
-    setAvailableScripts(scripts)
-    if (scripts.length > 0) {
-      setCurrentScript(scripts[0])
+    const loadScripts = async () => {
+      setIsLoadingScripts(true)
+      try {
+        console.log(`🔍 ${userInfo.language} 언어의 문안 로딩 시작`)
+        const scripts = await pdfDatabaseService.getRandomScripts(userInfo.language, 5)
+        
+        if (scripts.length > 0) {
+          setAvailableScripts(scripts)
+          setCurrentScript(scripts[0])
+          console.log(`✅ 선택된 문안들: ${scripts.join(', ')} (총 ${scripts.length}개)`)
+        } else {
+          console.warn(`⚠️ ${userInfo.language} 언어의 문안이 없습니다. 기본값 사용.`)
+          setAvailableScripts([1, 2, 3, 4, 5])
+          setCurrentScript(1)
+        }
+      } catch (error) {
+        console.error('문안 로딩 실패:', error)
+        // 오류 시 기본값 사용
+        setAvailableScripts([1, 2, 3, 4, 5])
+        setCurrentScript(1)
+      } finally {
+        setIsLoadingScripts(false)
+      }
     }
-    // 문안 로딩 완료
-    // setIsLoadingScript(false)
+    
+    loadScripts()
   }, [userInfo.language])
 
   const getCurrentScriptIndex = () => {
@@ -5089,6 +5405,12 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
   }
 
   const nextScript = () => {
+    // 다음 문안으로 넘어가기 전 확인
+    const confirmed = window.confirm("다음 문안으로 넘어가시겠습니까? 다시 돌아올 수 없습니다.")
+    if (!confirmed) {
+      return
+    }
+    
     const currentIndex = getCurrentScriptIndex()
     if (currentIndex < availableScripts.length - 1) {
       // setIsLoadingScript(true) // 새 문안 로딩 시작
@@ -5148,6 +5470,22 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
     )
   }
 
+  // 로딩 중일 때 로딩 화면 표시
+  if (isLoadingScripts) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-zinc-100 flex items-center justify-center">
+        <div className="bg-white rounded-2xl shadow-lg w-full max-w-md p-8 text-center">
+          <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <Mic className="w-8 h-8 text-blue-600" />
+          </div>
+          <p className="text-gray-800 font-semibold mb-2">문안을 불러오는 중입니다...</p>
+          <p className="text-sm text-gray-500">{getLanguageDisplay(userInfo.language)} 문안</p>
+        </div>
+      </div>
+    )
+  }
+
+  // 로딩 완료 후 문안이 없을 때만 에러 표시
   if (availableScripts.length === 0) {
     return (
       <div className="min-h-screen bg-blue-50 flex items-center justify-center">
@@ -5173,8 +5511,8 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
         message="문안을 불러오는 중입니다..."
         subMessage={`${userInfo.language} ${currentScript}번 문안`}
       /> */}
-      {/* 헤더 */}
-      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60 p-6 shadow-sm">
+      {/* 헤더 - 화면 상단에 고정 */}
+      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm border-b border-gray-200/60 p-6 shadow-sm">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
@@ -5291,7 +5629,35 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
                   언어 모드
                 </CardTitle>
                 </CardHeader>
-                <CardContent className="p-4">
+                <CardContent className="p-4 space-y-3">
+                  {/* 진행바 */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-gray-600 mb-1">
+                      <span>한국어</span>
+                      <span>English</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className={`h-2 rounded-full transition-all duration-500 ${
+                          recordings[getRecordingKey(currentScript, "korean")] && recordings[getRecordingKey(currentScript, "english")]
+                            ? "bg-green-500 w-full"
+                            : recordings[getRecordingKey(currentScript, "korean")]
+                              ? "bg-blue-500 w-1/2"
+                              : "bg-gray-300 w-0"
+                        }`}
+                      />
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className={recordings[getRecordingKey(currentScript, "korean")] ? "text-blue-600 font-semibold" : "text-gray-400"}>
+                        {recordings[getRecordingKey(currentScript, "korean")] ? "✓ 완료" : "대기 중"}
+                      </span>
+                      <span className={recordings[getRecordingKey(currentScript, "english")] ? "text-green-600 font-semibold" : "text-gray-400"}>
+                        {recordings[getRecordingKey(currentScript, "english")] ? "✓ 완료" : "대기 중"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 언어 선택 버튼 */}
                   <div className="flex gap-2">
                     <Button
                       onClick={() => setCurrentLanguageMode("korean")}
@@ -5340,7 +5706,11 @@ function RecordingMode({ userInfo }: { userInfo: UserInfo }) {
                     console.log("📌 녹음 키 생성:", recordingKey, "언어:", userInfo.language)
                     setRecordings((prev) => ({ ...prev, [recordingKey]: blob }))
                   }}
-                  existingRecording={recordings[getRecordingKey(currentScript, currentLanguageMode)]}
+                  existingRecording={
+                    userInfo.language === "korean-english"
+                      ? recordings[getRecordingKey(currentScript, currentLanguageMode)]
+                      : recordings[getRecordingKey(currentScript, userInfo.language as "japanese" | "chinese")]
+                  }
                 />
               </CardContent>
             </Card>
@@ -5431,6 +5801,13 @@ function AdminMode({
   const [showAdminAuth, setShowAdminAuth] = useState(false)
   const [showEvaluationAuth, setShowEvaluationAuth] = useState(false)
   const [showRecordingSetup, setShowRecordingSetup] = useState(false)
+  const [evaluationModalData, setEvaluationModalData] = useState<any>(null)
+  
+  // 관리 모달 state
+  const [showRequestManager, setShowRequestManager] = useState(false)
+  const [showEducationJournal, setShowEducationJournal] = useState(false)
+  const [showRecordingManager, setShowRecordingManager] = useState(false)
+  const [showInstructorStats, setShowInstructorStats] = useState(false)
 
   const handleNavigation = (newMode: string) => {
     if (newMode === "admin") {
@@ -5478,6 +5855,11 @@ function AdminMode({
         if (showRecordingSetup) setShowRecordingSetup(false);
         if (showEvaluationAuth) setShowEvaluationAuth(false);
         if (showMyPage) setShowMyPage(false);
+        if (evaluationModalData) setEvaluationModalData(null);
+        if (showRequestManager) setShowRequestManager(false);
+        if (showEducationJournal) setShowEducationJournal(false);
+        if (showRecordingManager) setShowRecordingManager(false);
+        if (showInstructorStats) setShowInstructorStats(false);
       }
     };
 
@@ -5485,39 +5867,43 @@ function AdminMode({
     return () => {
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [showRecordingSetup, showEvaluationAuth, showMyPage]);
+  }, [showRecordingSetup, showEvaluationAuth, showMyPage, evaluationModalData, showRequestManager, showEducationJournal, showRecordingManager, showInstructorStats]);
+
+  // postMessage 리스너 추가 - iframe에서 모달 오픈 요청 수신
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // 보안: origin 확인 (같은 origin인지)
+      if (event.origin !== window.location.origin) return;
+
+      if (event.data.type === 'OPEN_EVALUATION_MODAL') {
+        console.log('📨 [AdminMode] 모달 오픈 요청 수신:', event.data.payload);
+        setEvaluationModalData(event.data.payload);
+      } else if (event.data.type === 'CLOSE_EVALUATION_MODAL') {
+        console.log('📨 [AdminMode] 모달 닫기 요청 수신');
+        setEvaluationModalData(null);
+      } else if (event.data.type === 'OPEN_REQUEST_MANAGER_MODAL') {
+        console.log('📨 [AdminMode] 신청 내역 관리 모달 오픈');
+        setShowRequestManager(true);
+      } else if (event.data.type === 'OPEN_EDUCATION_JOURNAL_MODAL') {
+        console.log('📨 [AdminMode] 교육 기록 관리 모달 오픈');
+        setShowEducationJournal(true);
+      } else if (event.data.type === 'OPEN_RECORDING_MANAGER_MODAL') {
+        console.log('📨 [AdminMode] 녹음 파일 관리 모달 오픈');
+        setShowRecordingManager(true);
+      } else if (event.data.type === 'OPEN_INSTRUCTOR_STATS_MODAL') {
+        console.log('📨 [AdminMode] 교관 관리 모달 오픈');
+        setShowInstructorStats(true);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen">
-      {/* 사용자 정보 - 상단 우측 */}
-      {authenticatedUser && (
-        <div
-          style={{ position: "fixed", top: 20, right: 32, zIndex: 50, opacity: 0.5 }}
-          className="flex items-center gap-3 bg-white/80 shadow px-3 py-2 rounded-full border border-gray-200 backdrop-blur-sm"
-        >
-          <img
-            src={authenticatedUser.picture || "/placeholder.svg?height=32&width=32&text=User"}
-            alt={authenticatedUser.name}
-            className="w-8 h-8 rounded-full object-cover border border-gray-300"
-          />
-          <div className="flex flex-col text-right">
-            <div className="flex items-center gap-2 justify-end">
-              <span className="text-xs font-semibold text-gray-800 leading-tight">{authenticatedUser.name}</span>
-              {getUserMainRole() && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                  getUserMainRole() === "관리자" 
-                    ? "bg-orange-100 text-orange-700" 
-                    : "bg-purple-100 text-purple-700"
-                }`}>
-                  {getUserMainRole()}
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-gray-500 leading-tight">{authenticatedUser.email}</span>
-          </div>
-        </div>
-      )}
-
       {/* 사이드바 네비게이션 */}
       <div className="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col">
         {/* JVOICE 브랜드명 */}
@@ -5675,6 +6061,59 @@ function AdminMode({
         />
         </div>
       )}
+
+      {/* 평가 결과 상세 모달 - iframe에서 postMessage로 요청 */}
+      {evaluationModalData && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[99999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-[85%] max-w-6xl max-h-[90vh] overflow-hidden border border-gray-200/50 relative">
+            {/* 닫기 버튼 */}
+            <button 
+              onClick={() => setEvaluationModalData(null)}
+              className="absolute top-4 right-4 z-[100000] p-2.5 bg-white/95 hover:bg-gray-100 rounded-full shadow-lg border border-gray-200 transition-all hover:scale-110"
+            >
+              <X className="w-5 h-5 text-gray-700" />
+            </button>
+            
+            {/* 모달 컨텐츠 - 스크롤 가능 */}
+            <div className="overflow-y-auto max-h-[90vh] p-8">
+              <EvaluationSummary
+                isOpen={true}
+                onClose={() => setEvaluationModalData(null)}
+                evaluationResult={evaluationModalData.selectedResult}
+                authenticatedUser={{ name: "Admin" }}
+                showPdfButton={true}
+                isReviewMode={false}
+                hideHeader={false}
+                recordings={evaluationModalData.recordings || []}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 신청 내역 관리 모달 */}
+      <AdminRequestManagerModal
+        isOpen={showRequestManager}
+        onClose={() => setShowRequestManager(false)}
+      />
+
+      {/* 교육 기록 관리 모달 */}
+      <AdminEducationJournalModal
+        isOpen={showEducationJournal}
+        onClose={() => setShowEducationJournal(false)}
+      />
+
+      {/* 녹음 파일 관리 모달 */}
+      <RecordingManagementModal
+        isOpen={showRecordingManager}
+        onClose={() => setShowRecordingManager(false)}
+      />
+
+      {/* 교관 관리 모달 */}
+      <InstructorStatsModal
+        isOpen={showInstructorStats}
+        onClose={() => setShowInstructorStats(false)}
+      />
 
     </div>
   )

@@ -1,29 +1,30 @@
 "use client"
 
-import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect, useMemo, useRef } from "react"
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import { 
   FileAudio, 
   Download, 
   Archive, 
   Search, 
   Calendar,
-  User,
-  Clock,
   HardDrive,
   Filter,
   RefreshCw,
-  X,
+  ChevronDown,
+  ChevronRight,
   Play,
   Pause,
-  Volume2
+  Square,
+  Volume2,
+  CheckSquare
 } from "lucide-react"
 
 interface RecordingFile {
@@ -33,13 +34,26 @@ interface RecordingFile {
   fileSize: number
   duration?: number
   submittedAt: string
+  scriptNumber: number
+  language: string
   userId: string
+  userName: string
+  employeeId: string
+  category: string
+  status: string
+  evaluationId: string
+}
+
+interface EvaluationGroup {
+  evaluationId: string
   userName: string
   employeeId: string
   language: string
   category: string
   status: string
-  evaluationId?: string
+  submittedAt: string
+  recordings: RecordingFile[]
+  totalSize: number
 }
 
 interface RecordingManagementModalProps {
@@ -55,45 +69,31 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
   const [languageFilter, setLanguageFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [monthOptions, setMonthOptions] = useState<{ value: string; label: string }[]>([])
-  const [isDownloading, setIsDownloading] = useState<string | null>(null)
-  const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null)
-  const [audioElement, setAudioElement] = useState<HTMLAudioElement | HTMLVideoElement | null>(null)
-  const [currentTime, setCurrentTime] = useState(0)
-  const [audioDuration, setAudioDuration] = useState(0)
-  const [isLoadingAudio, setIsLoadingAudio] = useState(false)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set())
+  const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null)
+  const [currentTime, setCurrentTime] = useState<number>(0)
+  const [duration, setDuration] = useState<number>(0)
+  const audioElementsRef = useRef<{ [key: string]: HTMLAudioElement }>({})
 
   // 월 옵션 생성
   useEffect(() => {
     const currentDate = new Date()
     const options = []
     
-    console.log(`🗓️ [녹음관리] 현재 날짜: ${currentDate.toISOString()}`)
-    
-    // 최근 12개월 옵션 생성 (현재 월부터 과거로)
     for (let i = 0; i < 12; i++) {
       const year = currentDate.getFullYear()
       const month = currentDate.getMonth() - i
-      
-      // 월이 음수가 되면 이전 연도로 조정
       const adjustedYear = month < 0 ? year - 1 : year
       const adjustedMonth = month < 0 ? 12 + month : month
-      
-      const value = `${adjustedYear}-${String(adjustedMonth + 1).padStart(2, '0')}` // YYYY-MM
+      const value = `${adjustedYear}-${String(adjustedMonth + 1).padStart(2, '0')}`
       const date = new Date(adjustedYear, adjustedMonth, 1)
       const label = date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })
       options.push({ value, label })
-      console.log(`📅 [녹음관리] 월 옵션 ${i}: ${value} (${label})`)
     }
     
     setMonthOptions(options)
-    
-    // 9월 데이터가 있으므로 2025-09를 기본값으로 설정
-    const septemberOption = options.find(opt => opt.value === "2025-09")
-    if (septemberOption) {
-      console.log(`✅ [녹음관리] 9월 데이터가 있어 기본 선택: 2025-09`)
-      setSelectedMonth("2025-09")
-    } else if (options.length > 0) {
-      console.log(`✅ [녹음관리] 기본 선택 월: ${options[0].value}`)
+    if (options.length > 0) {
       setSelectedMonth(options[0].value)
     }
   }, [])
@@ -124,28 +124,203 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
     }
   }
 
-  // 월 변경 시 데이터 로드
   useEffect(() => {
     if (selectedMonth && isOpen) {
-      console.log(`🔄 [녹음관리] 선택된 월 변경: ${selectedMonth}`)
       loadRecordings()
     }
   }, [selectedMonth, isOpen])
 
-  // 필터링된 데이터
-  const filteredRecordings = useMemo(() => {
-    return recordings.filter(recording => {
-      const matchesSearch = searchTerm === "" || 
-        recording.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        recording.employeeId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        recording.fileName.toLowerCase().includes(searchTerm.toLowerCase())
+  // 평가별로 그룹화
+  const evaluationGroups = useMemo(() => {
+    const groupMap = new Map<string, EvaluationGroup>()
+    
+    recordings.forEach(recording => {
+      if (!recording.evaluationId) return
       
-      const matchesLanguage = languageFilter === "all" || recording.language === languageFilter
-      const matchesStatus = statusFilter === "all" || recording.status === statusFilter
+      if (!groupMap.has(recording.evaluationId)) {
+        groupMap.set(recording.evaluationId, {
+          evaluationId: recording.evaluationId,
+          userName: recording.userName,
+          employeeId: recording.employeeId,
+          language: recording.language,
+          category: recording.category,
+          status: recording.status,
+          submittedAt: recording.submittedAt,
+          recordings: [],
+          totalSize: 0
+        })
+      }
       
-      return matchesSearch && matchesLanguage && matchesStatus
+      const group = groupMap.get(recording.evaluationId)!
+      group.recordings.push(recording)
+      group.totalSize += recording.fileSize
     })
+    
+    return Array.from(groupMap.values())
+      .filter(group => {
+        const matchesSearch = searchTerm === "" || 
+          group.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          group.employeeId.toLowerCase().includes(searchTerm.toLowerCase())
+        
+        const matchesLanguage = languageFilter === "all" || group.language === languageFilter
+        const matchesStatus = statusFilter === "all" || group.status === statusFilter
+        
+        return matchesSearch && matchesLanguage && matchesStatus
+      })
+      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
   }, [recordings, searchTerm, languageFilter, statusFilter])
+
+  // 녹음 파일 로딩
+  useEffect(() => {
+    const loadAllRecordings = async () => {
+      console.log("🎵 [RecordingManagement] 녹음 파일 일괄 로딩 시작");
+      console.log(`🎵 [RecordingManagement] 평가 그룹 개수: ${evaluationGroups.length}`);
+
+      for (const group of evaluationGroups) {
+        if (!group.evaluationId) continue;
+
+        try {
+          console.log(`📡 [API 요청] Evaluation ID: ${group.evaluationId}`);
+          const response = await fetch(`/api/evaluations/load-recordings?evaluationId=${group.evaluationId}`);
+          if (!response.ok) {
+            console.error(`❌ [API 실패] ${group.evaluationId}: ${response.status}`);
+            continue;
+          }
+
+          const result = await response.json();
+          if (!result.success || !result.recordings) {
+            console.error(`❌ [API 응답 실패] ${group.evaluationId}:`, result);
+            continue;
+          }
+
+          console.log(`✅ [API 성공] ${group.evaluationId}:`, result.recordings);
+          console.log(`📦 [녹음 키 목록]`, Object.keys(result.recordings));
+
+          for (const recording of group.recordings) {
+            try {
+              const key = `${recording.scriptNumber}-${recording.language}`;
+              console.log(`🔑 [키 매칭] Recording ID: ${recording.id}, Key: ${key}`);
+              
+              let base64Data = result.recordings[key];
+              if (!base64Data) {
+                console.error(`❌ [키 없음] ${key}는 API 응답에 없음`);
+                continue;
+              }
+
+              if (base64Data.startsWith('data:audio/')) {
+                base64Data = base64Data.split(',')[1];
+              }
+
+              const binaryString = atob(base64Data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const blob = new Blob([bytes], { type: 'audio/webm' });
+              const audioUrl = URL.createObjectURL(blob);
+              const audio = new Audio(audioUrl);
+
+              audio.onended = () => {
+                setCurrentlyPlaying(null);
+                setCurrentTime(0);
+                setDuration(0);
+              };
+
+              audio.ontimeupdate = () => {
+                setCurrentTime(audio.currentTime);
+              };
+
+              audio.onloadedmetadata = () => {
+                setDuration(audio.duration);
+              };
+
+              audioElementsRef.current[recording.id] = audio;
+              console.log(`✅ [Audio 생성] ${recording.id} → ${key}`);
+            } catch (error) {
+              console.error(`❌ [Audio 생성 실패] ${recording.id}:`, error);
+            }
+          }
+        } catch (error) {
+          console.error(`❌ [평가 로딩 실패] ${group.evaluationId}:`, error);
+        }
+      }
+
+      console.log("✅ [RecordingManagement] 모든 녹음 파일 로딩 완료");
+      console.log(`📊 [최종 통계] 총 Audio 객체: ${Object.keys(audioElementsRef.current).length}`);
+    };
+
+    if (evaluationGroups.length > 0 && isOpen) {
+      loadAllRecordings();
+    }
+
+    return () => {
+      Object.values(audioElementsRef.current).forEach(audio => {
+        audio.pause();
+        URL.revokeObjectURL(audio.src);
+      });
+      audioElementsRef.current = {};
+    };
+  }, [evaluationGroups, isOpen])
+
+  // 재생 함수
+  const playRecording = async (recordingId: string) => {
+    console.log(`🎵 [재생 요청] Recording ID: ${recordingId}`);
+    console.log(`🎵 [Audio Elements] 로딩된 Audio 개수: ${Object.keys(audioElementsRef.current).length}`);
+    console.log(`🎵 [Audio Elements] 로딩된 ID 목록:`, Object.keys(audioElementsRef.current));
+    
+    const audio = audioElementsRef.current[recordingId];
+    if (!audio) {
+      console.error(`❌ [재생 실패] Audio 객체를 찾을 수 없음: ${recordingId}`);
+      return;
+    }
+
+    console.log(`✅ [재생] Audio 객체 발견, src: ${audio.src}`);
+
+    try {
+      if (currentlyPlaying && audioElementsRef.current[currentlyPlaying]) {
+        audioElementsRef.current[currentlyPlaying].pause();
+        audioElementsRef.current[currentlyPlaying].currentTime = 0;
+      }
+
+      if (currentlyPlaying === recordingId) {
+        setCurrentlyPlaying(null);
+        setCurrentTime(0);
+        setDuration(0);
+        return;
+      }
+
+      audio.currentTime = 0;
+      setDuration(audio.duration || 0);
+      await audio.play();
+      setCurrentlyPlaying(recordingId);
+      console.log(`✅ [재생 성공] ${recordingId}`);
+    } catch (error) {
+      console.error(`❌ [재생 실패] ${recordingId}`, error);
+      setCurrentlyPlaying(null);
+    }
+  };
+
+  const togglePlayPause = () => {
+    if (!currentlyPlaying) return;
+    const audio = audioElementsRef.current[currentlyPlaying];
+    if (!audio) return;
+    if (audio.paused) {
+      audio.play();
+    } else {
+      audio.pause();
+    }
+  };
+
+  const stopRecording = () => {
+    if (!currentlyPlaying) return;
+    const audio = audioElementsRef.current[currentlyPlaying];
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    setCurrentlyPlaying(null);
+    setCurrentTime(0);
+    setDuration(0);
+  };
 
   // 파일 크기 포맷팅
   const formatFileSize = (bytes: number) => {
@@ -156,186 +331,110 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  // 시간 포맷팅 (초를 mm:ss 형식으로)
   const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
+    if (!seconds || isNaN(seconds)) return "0:00";
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // 그룹 펼치기/접기
+  const toggleGroup = (evaluationId: string) => {
+    setExpandedGroups(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(evaluationId)) {
+        newSet.delete(evaluationId)
+      } else {
+        newSet.add(evaluationId)
+      }
+      return newSet
+    })
   }
 
-  // 개별 파일 다운로드
-  const downloadFile = async (recording: RecordingFile) => {
-    setIsDownloading(recording.id)
-    try {
-      const response = await fetch(`/api/admin/recordings/download/${recording.id}`)
-      if (response.ok) {
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = recording.fileName
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
+  // 그룹 선택/해제
+  const toggleSelectGroup = (evaluationId: string) => {
+    setSelectedGroups(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(evaluationId)) {
+        newSet.delete(evaluationId)
       } else {
-        alert('파일 다운로드에 실패했습니다.')
+        newSet.add(evaluationId)
       }
-    } catch (error) {
-      console.error('파일 다운로드 오류:', error)
-      alert('파일 다운로드 중 오류가 발생했습니다.')
-    } finally {
-      setIsDownloading(null)
+      return newSet
+    })
+  }
+
+  // 전체 선택/해제
+  const toggleSelectAll = () => {
+    if (selectedGroups.size === evaluationGroups.length) {
+      setSelectedGroups(new Set())
+    } else {
+      setSelectedGroups(new Set(evaluationGroups.map(g => g.evaluationId)))
     }
   }
 
-  // 월별 ZIP 다운로드
-  const downloadMonthlyZip = async () => {
-    if (!selectedMonth) return
+  // 선택된 그룹 다운로드
+  const downloadSelectedGroups = async () => {
+    if (selectedGroups.size === 0) {
+      alert('다운로드할 평가를 선택해주세요.');
+      return;
+    }
+
+    const selectedEvaluationIds = Array.from(selectedGroups);
+    console.log('📦 선택된 평가 다운로드:', selectedEvaluationIds);
+
+    try {
+      const response = await fetch(`/api/admin/recordings/download-evaluation?evaluationIds=${selectedEvaluationIds.join(',')}`);
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `평가_${selectedGroups.size}건.zip`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+        console.log(`✅ ${selectedGroups.size}개 평가 다운로드 완료`);
+      } else {
+        alert('다운로드에 실패했습니다.');
+      }
+    } catch (error) {
+      console.error('다운로드 오류:', error);
+      alert('다운로드 중 오류가 발생했습니다.');
+    }
+  }
+
+  // 그룹별 다운로드
+  const downloadGroup = async (group: EvaluationGroup) => {
+    console.log('📦 그룹 다운로드:', group.evaluationId);
     
-    setIsDownloading('zip')
     try {
-      const response = await fetch(`/api/admin/recordings/download-zip?month=${selectedMonth}`)
+      const response = await fetch(`/api/admin/recordings/download-evaluation?evaluationIds=${group.evaluationId}`);
+      
       if (response.ok) {
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `recordings_${selectedMonth}.zip`
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `평가_${group.employeeId}_${group.userName}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+        console.log(`✅ ${group.userName} 평가 다운로드 완료`);
       } else {
-        alert('ZIP 파일 다운로드에 실패했습니다.')
+        alert('다운로드에 실패했습니다.');
       }
     } catch (error) {
-      console.error('ZIP 다운로드 오류:', error)
-      alert('ZIP 파일 다운로드 중 오류가 발생했습니다.')
-    } finally {
-      setIsDownloading(null)
+      console.error('다운로드 오류:', error);
+      alert('다운로드 중 오류가 발생했습니다.');
     }
   }
 
-  // 오디오 재생/일시정지
-  const togglePlayPause = async (recording: RecordingFile) => {
-    try {
-      // 현재 재생 중인 파일을 일시정지
-      if (playingRecordingId === recording.id) {
-        if (audioElement) {
-          audioElement.pause()
-          setPlayingRecordingId(null)
-        }
-        return
-      }
-
-      // 기존 오디오 정지
-      if (audioElement) {
-        audioElement.pause()
-        audioElement.src = ''
-      }
-
-      setIsLoadingAudio(true)
-      setPlayingRecordingId(recording.id)
-
-      // 새로운 오디오 로드 및 재생
-      const response = await fetch(`/api/admin/recordings/download/${recording.id}`)
-      if (response.ok) {
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        
-        // 파일 확장자 확인
-        const fileExtension = recording.fileName.split('.').pop()?.toLowerCase()
-        const isWebm = fileExtension === 'webm'
-        
-        console.log(`🎵 [재생] 파일: ${recording.fileName}, 확장자: ${fileExtension}, WebM: ${isWebm}`)
-        
-        // WebM 파일은 video 엘리먼트 사용, 나머지는 audio 엘리먼트 사용
-        let mediaElement: HTMLAudioElement | HTMLVideoElement
-        
-        if (isWebm) {
-          mediaElement = document.createElement('video')
-          mediaElement.src = url
-          // WebM의 경우 명시적으로 타입 지정
-          const source = document.createElement('source')
-          source.src = url
-          source.type = 'audio/webm'
-          mediaElement.appendChild(source)
-        } else {
-          mediaElement = new Audio(url)
-        }
-        
-        mediaElement.addEventListener('loadedmetadata', () => {
-          console.log(`✅ [재생] 메타데이터 로드 완료, 길이: ${mediaElement.duration}초`)
-          setAudioDuration(mediaElement.duration)
-          setIsLoadingAudio(false)
-        })
-
-        mediaElement.addEventListener('timeupdate', () => {
-          setCurrentTime(mediaElement.currentTime)
-        })
-
-        mediaElement.addEventListener('ended', () => {
-          console.log('✅ [재생] 재생 완료')
-          setPlayingRecordingId(null)
-          setCurrentTime(0)
-          window.URL.revokeObjectURL(url)
-        })
-
-        mediaElement.addEventListener('error', (e) => {
-          console.error('❌ [재생] 오류:', e)
-          if (mediaElement.error) {
-            console.error('❌ [재생] 에러 코드:', mediaElement.error.code)
-            console.error('❌ [재생] 에러 메시지:', mediaElement.error.message)
-          }
-          alert(`오디오 파일을 재생할 수 없습니다.\n파일 형식: ${fileExtension}\n브라우저가 이 형식을 지원하지 않을 수 있습니다.`)
-          setPlayingRecordingId(null)
-          setIsLoadingAudio(false)
-          window.URL.revokeObjectURL(url)
-        })
-
-        mediaElement.addEventListener('canplay', () => {
-          console.log('✅ [재생] 재생 가능 상태')
-        })
-
-        console.log(`▶️ [재생] 재생 시작 시도: ${recording.fileName}`)
-        await mediaElement.play()
-        setAudioElement(mediaElement)
-        console.log(`✅ [재생] 재생 시작 성공`)
-      } else {
-        alert('오디오 파일을 불러올 수 없습니다.')
-        setPlayingRecordingId(null)
-        setIsLoadingAudio(false)
-      }
-    } catch (error) {
-      console.error('❌ [재생] 오류:', error)
-      alert(`오디오 재생 중 오류가 발생했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류'}`)
-      setPlayingRecordingId(null)
-      setIsLoadingAudio(false)
-    }
-  }
-
-  // 오디오 정리
-  useEffect(() => {
-    return () => {
-      if (audioElement) {
-        audioElement.pause()
-        audioElement.src = ''
-      }
-    }
-  }, [audioElement])
-
-  // 모달이 닫힐 때 오디오 정지
-  useEffect(() => {
-    if (!isOpen && audioElement) {
-      audioElement.pause()
-      audioElement.src = ''
-      setPlayingRecordingId(null)
-      setAudioElement(null)
-    }
-  }, [isOpen])
-
-  // 언어 표시명
   const getLanguageDisplay = (language: string) => {
     switch (language) {
       case 'korean-english': return '한영'
@@ -345,7 +444,6 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
     }
   }
 
-  // 상태 표시명 및 색상
   const getStatusDisplay = (status: string) => {
     switch (status) {
       case 'pending': return { label: '대기중', color: 'bg-yellow-100 text-yellow-800' }
@@ -357,30 +455,29 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
     }
   }
 
-  // 총 파일 크기 계산
   const totalSize = useMemo(() => {
-    return filteredRecordings.reduce((sum, recording) => sum + recording.fileSize, 0)
-  }, [filteredRecordings])
+    return evaluationGroups.reduce((sum, group) => sum + group.totalSize, 0)
+  }, [evaluationGroups])
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-7xl max-h-[90vh] overflow-hidden flex flex-col z-[99999]">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <FileAudio className="w-5 h-5" />
-            녹음 파일 관리
+            녹음 파일 관리 (평가별)
           </DialogTitle>
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden flex flex-col space-y-4">
           {/* 필터 및 컨트롤 */}
           <div className="flex-shrink-0 bg-gray-50 rounded-lg p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
               {/* 월 선택 */}
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-gray-500" />
                 <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                  <SelectTrigger className="text-xs">
+                  <SelectTrigger className="text-xs h-9">
                     <SelectValue placeholder="월 선택" />
                   </SelectTrigger>
                   <SelectContent>
@@ -397,82 +494,86 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
               <div className="flex items-center gap-2">
                 <Search className="w-4 h-4 text-gray-500" />
                 <Input
-                  placeholder="이름, 사번, 파일명 검색"
+                  placeholder="이름, 사번 검색"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="text-xs"
+                  className="text-xs h-9"
                 />
               </div>
 
               {/* 언어 필터 */}
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-gray-500" />
-                <Select value={languageFilter} onValueChange={setLanguageFilter}>
-                  <SelectTrigger className="text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">모든 언어</SelectItem>
-                    <SelectItem value="korean-english">한영</SelectItem>
-                    <SelectItem value="japanese">일본어</SelectItem>
-                    <SelectItem value="chinese">중국어</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <Select value={languageFilter} onValueChange={setLanguageFilter}>
+                <SelectTrigger className="text-xs h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">모든 언어</SelectItem>
+                  <SelectItem value="korean-english">한영</SelectItem>
+                  <SelectItem value="japanese">일본어</SelectItem>
+                  <SelectItem value="chinese">중국어</SelectItem>
+                </SelectContent>
+              </Select>
 
               {/* 상태 필터 */}
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-gray-500" />
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">모든 상태</SelectItem>
-                    <SelectItem value="pending">대기중</SelectItem>
-                    <SelectItem value="review_requested">검토요청</SelectItem>
-                    <SelectItem value="submitted">제출완료</SelectItem>
-                    <SelectItem value="completed">평가완료</SelectItem>
-                    <SelectItem value="approved">승인완료</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="text-xs h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">모든 상태</SelectItem>
+                  <SelectItem value="submitted">제출완료</SelectItem>
+                  <SelectItem value="completed">평가완료</SelectItem>
+                  <SelectItem value="approved">승인완료</SelectItem>
+                </SelectContent>
+              </Select>
 
-              {/* 액션 버튼 */}
-              <div className="flex gap-2">
-                <Button
-                  onClick={loadRecordings}
-                  disabled={isLoading}
-                  variant="outline"
-                  size="sm"
-                  className="text-xs"
-                >
-                  <RefreshCw className={`w-3 h-3 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
-                  새로고침
-                </Button>
-                <Button
-                  onClick={downloadMonthlyZip}
-                  disabled={isDownloading === 'zip' || filteredRecordings.length === 0}
-                  size="sm"
-                  className="text-xs bg-blue-600 hover:bg-blue-700"
-                >
-                  <Archive className="w-3 h-3 mr-1" />
-                  {isDownloading === 'zip' ? '압축중...' : 'ZIP 다운로드'}
-                </Button>
-              </div>
+              {/* 새로고침 */}
+              <Button
+                onClick={loadRecordings}
+                disabled={isLoading}
+                variant="outline"
+                size="sm"
+                className="text-xs h-9"
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
+                새로고침
+              </Button>
+
+              {/* 선택 다운로드 */}
+              <Button
+                onClick={downloadSelectedGroups}
+                disabled={selectedGroups.size === 0}
+                size="sm"
+                className="text-xs h-9 bg-blue-600 hover:bg-blue-700"
+              >
+                <Download className="w-3 h-3 mr-1" />
+                선택 다운로드 ({selectedGroups.size})
+              </Button>
             </div>
           </div>
 
-          {/* 통계 카드 */}
-          <div className="flex-shrink-0 grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* 통계 */}
+          <div className="flex-shrink-0 grid grid-cols-4 gap-3">
             <Card>
               <CardContent className="p-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs text-gray-600">총 파일 수</p>
-                    <p className="text-lg font-bold">{filteredRecordings.length}</p>
+                    <p className="text-xs text-gray-600">총 평가</p>
+                    <p className="text-lg font-bold">{evaluationGroups.length}</p>
                   </div>
-                  <FileAudio className="w-8 h-8 text-blue-500" />
+                  <FileAudio className="w-7 h-7 text-blue-500" />
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-gray-600">총 파일</p>
+                    <p className="text-lg font-bold">{recordings.length}</p>
+                  </div>
+                  <Archive className="w-7 h-7 text-green-500" />
                 </div>
               </CardContent>
             </Card>
@@ -484,7 +585,7 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
                     <p className="text-xs text-gray-600">총 용량</p>
                     <p className="text-lg font-bold">{formatFileSize(totalSize)}</p>
                   </div>
-                  <HardDrive className="w-8 h-8 text-green-500" />
+                  <HardDrive className="w-7 h-7 text-purple-500" />
                 </div>
               </CardContent>
             </Card>
@@ -493,186 +594,217 @@ export function RecordingManagementModal({ isOpen, onClose }: RecordingManagemen
               <CardContent className="p-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs text-gray-600">평균 파일 크기</p>
-                    <p className="text-lg font-bold">
-                      {filteredRecordings.length > 0 ? formatFileSize(totalSize / filteredRecordings.length) : '0 B'}
-                    </p>
+                    <p className="text-xs text-gray-600">선택됨</p>
+                    <p className="text-lg font-bold">{selectedGroups.size}</p>
                   </div>
-                  <Clock className="w-8 h-8 text-purple-500" />
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardContent className="p-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-600">선택된 월</p>
-                    <p className="text-lg font-bold">
-                      {monthOptions.find(m => m.value === selectedMonth)?.label || '-'}
-                    </p>
-                  </div>
-                  <Calendar className="w-8 h-8 text-orange-500" />
+                  <CheckSquare className="w-7 h-7 text-orange-500" />
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* 테이블 */}
-          <div className="flex-1 overflow-auto border rounded-lg">
+          {/* 전체 선택 */}
+          <div className="flex-shrink-0 flex items-center gap-2 bg-purple-50 px-3 py-2 rounded-lg border border-purple-100">
+            <Checkbox
+              checked={evaluationGroups.length > 0 && selectedGroups.size === evaluationGroups.length}
+              onCheckedChange={toggleSelectAll}
+            />
+            <span className="text-sm font-medium text-purple-700">전체 선택</span>
+          </div>
+
+          {/* 평가 그룹 목록 */}
+          <div className="flex-1 overflow-auto space-y-2">
             {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <RefreshCw className="w-6 h-6 animate-spin mr-2" />
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="w-6 h-6 animate-spin mr-2 text-blue-500" />
                 <span>데이터를 불러오는 중...</span>
               </div>
-            ) : filteredRecordings.length === 0 ? (
-              <div className="flex items-center justify-center py-8 text-gray-500">
+            ) : evaluationGroups.length === 0 ? (
+              <div className="flex items-center justify-center py-12 text-gray-500">
                 선택한 조건에 해당하는 녹음 파일이 없습니다.
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">제출일시</TableHead>
-                    <TableHead className="text-xs">사용자</TableHead>
-                    <TableHead className="text-xs">언어</TableHead>
-                    <TableHead className="text-xs">카테고리</TableHead>
-                    <TableHead className="text-xs">파일명</TableHead>
-                    <TableHead className="text-xs">크기</TableHead>
-                    <TableHead className="text-xs">상태</TableHead>
-                    <TableHead className="text-xs">재생</TableHead>
-                    <TableHead className="text-xs">다운로드</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredRecordings.map((recording) => {
-                    const statusInfo = getStatusDisplay(recording.status)
-                    return (
-                      <TableRow key={recording.id} className="hover:bg-gray-50">
-                        <TableCell className="text-xs">
-                          {new Date(recording.submittedAt).toLocaleString('ko-KR')}
-                        </TableCell>
-                        <TableCell className="text-xs">
+              evaluationGroups.map((group) => {
+                const isExpanded = expandedGroups.has(group.evaluationId)
+                const isSelected = selectedGroups.has(group.evaluationId)
+                const statusInfo = getStatusDisplay(group.status)
+                
+                return (
+                  <Card key={group.evaluationId} className={`overflow-hidden transition-all ${isSelected ? 'ring-2 ring-blue-400' : ''}`}>
+                    {/* 그룹 헤더 */}
+                    <div className="flex items-center gap-3 p-4 bg-gradient-to-r from-gray-50 to-white hover:from-gray-100 hover:to-gray-50 transition-colors">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleSelectGroup(group.evaluationId)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      
+                      <button
+                        onClick={() => toggleGroup(group.evaluationId)}
+                        className="flex-1 flex items-center gap-3 text-left"
+                      >
+                        {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-600" /> : <ChevronRight className="w-4 h-4 text-gray-600" />}
+                        
+                        <div className="flex-1 grid grid-cols-6 gap-3 items-center">
                           <div>
-                            <div className="font-medium">{recording.userName}</div>
-                            <div className="text-gray-500">{recording.employeeId}</div>
+                            <p className="font-semibold text-sm text-gray-900">{group.userName}</p>
+                            <p className="text-xs text-gray-500">{group.employeeId}</p>
                           </div>
-                        </TableCell>
-                        <TableCell className="text-xs">
+                          
                           <Badge variant="outline" className="text-xs">
-                            {getLanguageDisplay(recording.language)}
+                            {getLanguageDisplay(group.language)}
                           </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs">{recording.category}</TableCell>
-                        <TableCell className="text-xs font-mono">
-                          {recording.fileName}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {formatFileSize(recording.fileSize)}
-                        </TableCell>
-                        <TableCell className="text-xs">
+                          
                           <Badge className={`text-xs ${statusInfo.color}`}>
                             {statusInfo.label}
                           </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          <Button
-                            onClick={() => togglePlayPause(recording)}
-                            variant={playingRecordingId === recording.id ? "default" : "outline"}
-                            size="sm"
-                            className="text-xs h-7 px-2"
-                            disabled={isLoadingAudio && playingRecordingId === recording.id}
-                          >
-                            {playingRecordingId === recording.id && isLoadingAudio ? (
-                              <>
-                                <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
-                                로딩중
-                              </>
-                            ) : playingRecordingId === recording.id ? (
-                              <>
-                                <Pause className="w-3 h-3 mr-1" />
-                                일시정지
-                              </>
-                            ) : (
-                              <>
-                                <Play className="w-3 h-3 mr-1" />
-                                재생
-                              </>
-                            )}
-                          </Button>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          <Button
-                            onClick={() => downloadFile(recording)}
-                            disabled={isDownloading === recording.id}
-                            variant="outline"
-                            size="sm"
-                            className="text-xs h-7 px-2"
-                          >
-                            <Download className="w-3 h-3 mr-1" />
-                            {isDownloading === recording.id ? '다운로드중...' : '다운로드'}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
+                          
+                          <div className="text-xs text-gray-600">
+                            <p>{group.recordings.length}개 파일</p>
+                            <p className="text-gray-500">{formatFileSize(group.totalSize)}</p>
+                          </div>
+                          
+                          <div className="text-xs text-gray-500">
+                            {new Date(group.submittedAt).toLocaleDateString('ko-KR')}
+                          </div>
+                          
+                          <div className="flex gap-1 justify-end">
+                            <Button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                downloadGroup(group)
+                              }}
+                              variant="outline"
+                              size="sm"
+                              className="text-xs h-7 px-2"
+                            >
+                              <Download className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* 펼쳐진 내용 - 개별 파일 목록 */}
+                    {isExpanded && (
+                      <div className="border-t border-gray-200 bg-gray-50 p-4 space-y-2">
+                        {group.recordings
+                          .sort((a, b) => {
+                            if (a.scriptNumber !== b.scriptNumber) {
+                              return a.scriptNumber - b.scriptNumber
+                            }
+                            const langOrder: {[key: string]: number} = { korean: 1, english: 2 }
+                            return (langOrder[a.language] || 999) - (langOrder[b.language] || 999)
+                          })
+                          .map((recording) => {
+                            const isPlaying = currentlyPlaying === recording.id
+                            const langDisplay = recording.language === 'korean' ? '한국어' : recording.language === 'english' ? '영어' : recording.language
+                            
+                            return (
+                              <div key={recording.id} className="flex items-center gap-2 bg-white p-3 rounded-lg border border-gray-200">
+                                <Badge variant="outline" className="text-xs min-w-[50px] text-center">
+                                  {recording.scriptNumber}번
+                                </Badge>
+                                
+                                <Badge 
+                                  className={`text-xs min-w-[60px] text-center ${
+                                    recording.language === 'korean' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'
+                                  }`}
+                                >
+                                  {langDisplay}
+                                </Badge>
+                                
+                                <p className="flex-1 text-xs font-mono text-gray-600 truncate">
+                                  {recording.fileName}
+                                </p>
+                                
+                                <p className="text-xs text-gray-500 min-w-[60px] text-right">
+                                  {formatFileSize(recording.fileSize)}
+                                </p>
+                                
+                                <Button
+                                  onClick={() => playRecording(recording.id)}
+                                  variant={isPlaying ? "default" : "outline"}
+                                  size="sm"
+                                  className={`text-xs h-7 px-2 min-w-[70px] ${
+                                    isPlaying ? 'bg-blue-600 hover:bg-blue-700' : ''
+                                  }`}
+                                >
+                                  {isPlaying ? (
+                                    <>
+                                      <Pause className="w-3 h-3 mr-1" />
+                                      재생중
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play className="w-3 h-3 mr-1" />
+                                      재생
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            )
+                          })}
+                      </div>
+                    )}
+                  </Card>
+                )
+              })
             )}
           </div>
 
           {/* 오디오 플레이어 바 */}
-          {playingRecordingId && !isLoadingAudio && (
-            <div className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 border-t border-blue-200 rounded-b-lg p-3">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
+          {currentlyPlaying && (() => {
+            const currentRecording = recordings.find(r => r.id === currentlyPlaying)
+            if (!currentRecording) return null
+            
+            return (
+              <div className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 border-t border-blue-200 rounded-lg p-3">
+                <div className="flex items-center gap-3">
                   <Volume2 className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-medium text-blue-900">재생 중</span>
-                </div>
-                
-                <div className="flex-1">
-                  <div className="flex items-center justify-between text-xs text-blue-700 mb-1">
-                    <span className="font-medium">
-                      {filteredRecordings.find(r => r.id === playingRecordingId)?.fileName}
-                    </span>
-                    <span>
-                      {formatTime(currentTime)} / {formatTime(audioDuration)}
-                    </span>
+                  <div className="flex-1">
+                    <p className="text-xs font-medium text-blue-900 mb-1">
+                      {currentRecording.scriptNumber}번 - {currentRecording.language === 'korean' ? '한국어' : '영어'} | {currentRecording.userName}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-blue-200 rounded-full h-1.5">
+                        <div
+                          className="bg-blue-600 h-1.5 rounded-full transition-all"
+                          style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-blue-700 font-mono min-w-[80px] text-right">
+                        {formatTime(currentTime)} / {formatTime(duration)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="w-full bg-blue-200 rounded-full h-2">
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-200"
-                      style={{ width: `${audioDuration > 0 ? (currentTime / audioDuration) * 100 : 0}%` }}
-                    />
+                  
+                  <div className="flex gap-1">
+                    <Button
+                      onClick={togglePlayPause}
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7 text-blue-700"
+                    >
+                      {audioElementsRef.current[currentlyPlaying]?.paused ? (
+                        <Play className="w-3 h-3" />
+                      ) : (
+                        <Pause className="w-3 h-3" />
+                      )}
+                    </Button>
+                    <Button
+                      onClick={stopRecording}
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7 text-red-600"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                    </Button>
                   </div>
                 </div>
-
-                <Button
-                  onClick={() => {
-                    if (audioElement) {
-                      audioElement.pause()
-                      setPlayingRecordingId(null)
-                    }
-                  }}
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs h-7 text-blue-700 hover:text-blue-900"
-                >
-                  <X className="w-3 h-3 mr-1" />
-                  닫기
-                </Button>
               </div>
-            </div>
-          )}
-          {/* 로딩 중 표시 */}
-          {playingRecordingId && isLoadingAudio && (
-            <div className="flex-shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 border-t border-blue-200 rounded-b-lg p-3">
-              <div className="flex items-center justify-center gap-2">
-                <RefreshCw className="w-4 h-4 text-blue-600 animate-spin" />
-                <span className="text-xs font-medium text-blue-900">오디오 로딩 중...</span>
-              </div>
-            </div>
-          )}
+            )
+          })()}
         </div>
       </DialogContent>
     </Dialog>

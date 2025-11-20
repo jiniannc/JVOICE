@@ -38,28 +38,43 @@ export async function GET(request: NextRequest) {
 
     console.log(`🔍 [API] 교관 통계 조회: ${month}`);
 
-    // 1. 평가 통계 수집 (submitted, completed 상태)
+    // 1. 평가 통계 수집 (submitted, completed 상태) - 최초 평가자 기준
     const evaluations = await prisma.evaluation.findMany({
       where: {
-        evaluatedAt: {
-          gte: new Date(`${month}-01`),
-          lt: new Date(`${month}-31T23:59:59`),
-        },
+        OR: [
+          {
+            // initialEvaluatedAt이 있는 경우
+            initialEvaluatedAt: {
+              gte: new Date(`${month}-01`),
+              lt: new Date(`${month}-31T23:59:59`),
+            },
+          },
+          {
+            // initialEvaluatedAt이 없으면 evaluatedAt 사용
+            initialEvaluatedAt: null,
+            evaluatedAt: {
+              gte: new Date(`${month}-01`),
+              lt: new Date(`${month}-31T23:59:59`),
+            },
+          }
+        ],
         status: {
-          in: ["submitted", "completed"],
+          in: ["submitted", "completed", "approved"],
         },
-        evaluatedBy: {
+        initialEvaluatedBy: {
           not: null,
         },
       },
       select: {
-        evaluatedBy: true,
-        evaluatedAt: true,
+        initialEvaluatedBy: true, // 최초 평가자
+        initialEvaluatedAt: true, // 최초 평가 시간
+        evaluatedBy: true, // 최종 평가자 (참고용)
+        evaluatedAt: true, // fallback용
         language: true,
       },
     });
 
-    console.log(`📊 [API] 평가 데이터 ${evaluations.length}건 조회됨`);
+    console.log(`📊 [API] 평가 데이터 ${evaluations.length}건 조회됨 (최초 평가자 기준)`);
 
     // 2. 교육 일지 통계 수집
     const educationJournals = await prisma.educationJournal.findMany({
@@ -96,10 +111,11 @@ export async function GET(request: NextRequest) {
     // 3. 교관별 통계 집계
     const instructorStatsMap = new Map<string, InstructorStats>();
 
-    // 평가 통계 처리
+    // 평가 통계 처리 (최초 평가자 기준)
     evaluations.forEach((evaluation) => {
-      const instructorId = evaluation.evaluatedBy!;
-      const evaluatedDate = evaluation.evaluatedAt!.toISOString().split('T')[0];
+      const instructorId = evaluation.initialEvaluatedBy!; // 최초 평가자 사용
+      // initialEvaluatedAt이 없으면 evaluatedAt 사용
+      const evaluatedDate = (evaluation.initialEvaluatedAt || evaluation.evaluatedAt)!.toISOString().split('T')[0];
       const language = evaluation.language || 'unknown';
 
       if (!instructorStatsMap.has(instructorId)) {
@@ -199,8 +215,27 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // 4. 결과 정리
+    // 4. 결과 정리 및 교관명 조회
     const instructorStats = Array.from(instructorStatsMap.values());
+    
+    // User 테이블에서 교관 이름 조회 및 업데이트
+    console.log(`🔍 [API] User 테이블에서 교관 이름 조회 중...`);
+    for (const stat of instructorStats) {
+      // 이름이 사번과 같으면 User 테이블에서 조회
+      if (stat.instructorName === stat.instructorId) {
+        const user = await prisma.user.findUnique({
+          where: { employeeId: stat.instructorId },
+          select: { name: true }
+        });
+        
+        if (user?.name) {
+          stat.instructorName = user.name;
+          console.log(`  ✅ ${stat.instructorId} -> ${user.name}`);
+        } else {
+          console.log(`  ⚠️ ${stat.instructorId} -> User 테이블에 없음`);
+        }
+      }
+    }
 
     console.log(`✅ [API] 교관 통계 완료: ${instructorStats.length}명`);
     instructorStats.forEach((stat, index) => {

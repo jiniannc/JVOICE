@@ -9,14 +9,10 @@ import {
   Mic, 
   Clock, 
   AlertTriangle, 
-  CheckCircle, 
   Play, 
   ArrowRight,
   Volume2,
-  FileText,
   Shield,
-  Users,
-  Timer,
   RotateCcw
 } from "lucide-react"
 
@@ -36,18 +32,6 @@ interface RecordingWaitingPageProps {
 
 export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWaitingPageProps) {
   const [hasReadInstructions, setHasReadInstructions] = useState(false)
-  const [countdown, setCountdown] = useState<number | null>(null)
-  const [isStarting, setIsStarting] = useState(false)
-  const [countdownInterval, setCountdownInterval] = useState<NodeJS.Timeout | null>(null)
-
-  // 컴포넌트 언마운트 시 interval 정리
-  useEffect(() => {
-    return () => {
-      if (countdownInterval) {
-        clearInterval(countdownInterval)
-      }
-    }
-  }, [countdownInterval])
 
   const getLanguageDisplay = (language: string) => {
     const displays: { [key: string]: string } = {
@@ -64,95 +48,53 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
       return
     }
     
-    setIsStarting(true)
-    setCountdown(3)
+    // 방송교관의 시작 신호 확인 알러트
+    const confirmed = window.confirm("방송교관의 시작 신호를 받으셨습니까?")
+    if (!confirmed) {
+      return
+    }
     
-    // 3초 카운트다운 후 시작
-    const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev === null || prev <= 1) {
-          clearInterval(interval)
-          setCountdownInterval(null)
-          try {
-            onStart()
-          } catch (error) {
-            console.error("녹음 시작 중 오류 발생:", error)
-            setIsStarting(false)
-            setCountdown(null)
-          }
-          return null
-        }
-        return prev - 1
-      })
-    }, 1000)
-    
-    setCountdownInterval(interval)
+    // 확인 시 바로 시작
+    try {
+      onStart()
+    } catch (error) {
+      console.error("녹음 시작 중 오류 발생:", error)
+      alert("녹음 시작 중 오류가 발생했습니다. 다시 시도해주세요.")
+    }
   }
 
   const instructions = [
     {
-      icon: Timer,
-      title: "시험 시간",
-      content: "녹음 시험은 총 50분으로 제한됩니다. 시간이 초과되면 자동으로 제출 페이지로 이동됩니다.",
+      icon: Clock,
+      title: "시험 시간 및 구성",
+      content: "녹음 시험은 총 50분으로 제한됩니다. 시간이 초과되면 자동으로 제출 페이지로 이동됩니다. 총 10개의 취득 문안 중 5개가 무작위로 선택되어 표시됩니다.",
       color: "text-red-600",
       bgColor: "bg-red-50",
       borderColor: "border-red-200"
     },
     {
-      icon: FileText,
-      title: "문안 구성",
-      content: "총 10개의 취득 문안 중 5개가 무작위로 선택되어 표시됩니다.",
+      icon: Volume2,
+      title: "방송 내용 및 평가",
+      content: "방송문의 빈칸(편명, 도시명, 공항명, 비행시간, 지연 사유 등)은 자유롭게 설정하여 녹음하시면 됩니다. 방송문 내 필수 내용이 누락되거나, 문안을 임의로 수정하거나, 최신 문안이 아닌 경우 평가에서 제외될 수 있습니다.",
       color: "text-blue-600",
       bgColor: "bg-blue-50",
       borderColor: "border-blue-200"
     },
     {
-      icon: Volume2,
-      title: "방송 내용",
-      content: "방송문의 빈칸(편명, 도시명, 공항명, 비행시간, 지연 사유 등)은 자유롭게 설정하여 녹음하시면 됩니다.",
+      icon: RotateCcw,
+      title: "녹음 진행 시 주의사항",
+      content: "각 문안을 완료한 다음으로 넘어가면 이전 문안으로 돌아올 수 없습니다. '다음' 버튼을 누르기 전에 녹음 결과물을 꼭 확인해주세요. 녹음은 시간 내에서 원하는 만큼 반복할 수 있습니다. 시작 후 첫 번째 문안은 반드시 녹음하고 재생하여 음향 상태를 확인해주세요.",
       color: "text-green-600",
       bgColor: "bg-green-50",
       borderColor: "border-green-200"
     },
     {
-      icon: AlertTriangle,
-      title: "평가 기준",
-      content: "방송문 내 필수 내용이 누락되거나, 문안을 임의로 수정하거나, 최신 문안이 아닌 경우 평가에서 제외될 수 있습니다.",
-      color: "text-orange-600",
-      bgColor: "bg-orange-50",
-      borderColor: "border-orange-200"
-    },
-    {
       icon: Shield,
-      title: "브라우저 주의",
-      content: "브라우저를 닫거나, 뒤로가기 버튼을 누르거나, 새로고침을 하면 녹음 데이터가 모두 사라집니다. 주의해 주세요.",
+      title: "기술적 주의사항",
+      content: "브라우저를 닫거나, 뒤로가기 버튼을 누르거나, 새로고침을 하면 녹음 데이터가 모두 사라집니다. 주의해 주세요. 궁금한 점이나 문제가 발생하면 언제든지 방송교관에게 문의해 주세요.",
       color: "text-purple-600",
       bgColor: "bg-purple-50",
       borderColor: "border-purple-200"
-    },
-    {
-      icon: Users,
-      title: "문의 안내",
-      content: "궁금한 점이나 문제가 발생하면 언제든지 방송교관에게 문의해 주세요.",
-      color: "text-indigo-600",
-      bgColor: "bg-indigo-50",
-      borderColor: "border-indigo-200"
-    },
-    {
-      icon: RotateCcw,
-      title: "녹음 진행",
-      content: "각 문안별로 녹음을 완료한 후 넘어간 후에는 다시 돌아올 수 없습니다. 다음 문안으로 넘어가기 전에 원하는 결과물이 나왔는지 꼭 확인한 후에 '다음' 버튼을 눌러주세요. 녹음은 몇 번이고 할 수 있지만 시험 시간 안에만 끝내면 됩니다.",
-      color: "text-teal-600",
-      bgColor: "bg-teal-50",
-      borderColor: "border-teal-200"
-    },
-    {
-      icon: Mic,
-      title: "음향 확인",
-      content: "시작하면 첫 번째 문안을 녹음하고 재생하여 음향 상태가 좋은지 확인해주세요.",
-      color: "text-pink-600",
-      bgColor: "bg-pink-50",
-      borderColor: "border-pink-200"
     }
   ]
 
@@ -237,29 +179,20 @@ export function RecordingWaitingPage({ userInfo, onStart, onBack }: RecordingWai
 
         {/* 시작 버튼 */}
         <div className="text-center">
-          {isStarting && countdown !== null ? (
-            <div className="space-y-4">
-              <div className="text-6xl font-bold text-orange-600 animate-pulse">
-                {countdown}
-              </div>
-                             <p className="text-xl text-gray-600">곧 녹음 시험이 시작됩니다...</p>
-            </div>
-                           ) : (
-                   <Button
-                     onClick={handleStart}
-                     disabled={!hasReadInstructions}
-                     size="lg"
-                     className={`px-16 py-8 text-2xl font-bold rounded-3xl shadow-2xl transition-all duration-300 ${
-                       hasReadInstructions
-                         ? "bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white transform hover:scale-105"
-                         : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                     }`}
-                   >
-                     <Play className="w-8 h-8 mr-4" />
-                     녹음 시작하기
-                     <ArrowRight className="w-8 h-8 ml-4" />
-                   </Button>
-                 )}
+          <Button
+            onClick={handleStart}
+            disabled={!hasReadInstructions}
+            size="lg"
+            className={`px-16 py-8 text-2xl font-bold rounded-3xl shadow-2xl transition-all duration-300 ${
+              hasReadInstructions
+                ? "bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white transform hover:scale-105"
+                : "bg-gray-300 text-gray-500 cursor-not-allowed"
+            }`}
+          >
+            <Play className="w-8 h-8 mr-4" />
+            녹음 시작하기
+            <ArrowRight className="w-8 h-8 ml-4" />
+          </Button>
         </div>
 
         

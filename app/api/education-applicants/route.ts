@@ -198,9 +198,9 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // 날짜들을 중복 제거하고 정렬
+    // 날짜들을 중복 제거하고 정렬 (최신순)
     const uniqueDates = [...new Set(availableDates.map(app => app.schedule.date))]
-      .sort();
+      .sort((a, b) => b.localeCompare(a));
 
     // 초기 날짜 선택 로직 개선
     let selectedDate = requestedDate;
@@ -215,11 +215,12 @@ export async function GET(request: NextRequest) {
         // 2. 오늘 이후의 가장 가까운 미래 날짜 찾기
         const futureDates = uniqueDates.filter(date => date > today);
         if (futureDates.length > 0) {
-          selectedDate = futureDates[0];
+          // 최신순 목록에서 가장 가까운 미래 날짜는 마지막
+          selectedDate = futureDates[futureDates.length - 1];
           console.log(`📋 [education-applicants] 미래 가장 가까운 날짜로 설정: ${selectedDate}`);
         } else {
-          // 3. 미래 날짜가 없으면 가장 최근 날짜
-          selectedDate = uniqueDates[uniqueDates.length - 1];
+          // 3. 미래 날짜가 없으면 가장 최근 날짜 (최신순이므로 첫 번째)
+          selectedDate = uniqueDates[0];
           console.log(`📋 [education-applicants] 가장 최근 날짜로 설정: ${selectedDate}`);
         }
       }
