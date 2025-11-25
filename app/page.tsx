@@ -1414,7 +1414,7 @@ function RequestMode({
         error: bulkData.error
       })
 
-      if (bulkData.success && bulkData.data) {
+      if (bulkData.success && bulkData.data && Object.keys(bulkData.data).length > 0) {
         console.log(`✅ [데스크톱] Bulk API 성공! ${Object.keys(bulkData.data).length}개 날짜 데이터`)
 
         // Bulk 데이터를 기존 캐시 형식으로 변환
@@ -1444,10 +1444,14 @@ function RequestMode({
           ...transformedData
         }))
 
-        console.log('💾 [데스크톱] Bulk 데이터 캐시 저장 완료 - 이제 개별 API 호출 없음!')
+        console.log('💾 [데스크톱] Bulk 데이터 캐시 저장 완료!')
+        
+        // Bulk API가 반환하지 않은 날짜들에 대해서도 폴백 실행
+        await loadAvailabilityFallback(scheduleData)
+        
         return // 성공했으므로 여기서 종료
       } else {
-        console.warn('⚠️ [데스크톱] Bulk API 실패, 기존 방식으로 폴백:', bulkData.error)
+        console.warn('⚠️ [데스크톱] Bulk API 실패 또는 빈 데이터, 기존 방식으로 폴백:', bulkData.error)
         // 기존 방식으로 폴백
         await loadAvailabilityFallback(scheduleData)
       }
@@ -1463,8 +1467,19 @@ function RequestMode({
 
   // 폴백: 기존 방식으로 가용성 로드
   const loadAvailabilityFallback = async (scheduleData: any[]) => {
-    const uniqueDates = [...new Set(scheduleData.map((item: any) => item.date).filter(Boolean))]
-    console.log(`📅 [데스크톱] 폴백 모드: ${uniqueDates.length}개 날짜 처리`)
+    // 녹음 슬롯이 있는 날짜만 추출
+    const recordingDates = scheduleData
+      .filter((item: any) => item.recording?.slots?.length > 0)
+      .map((item: any) => item.date)
+      .filter(Boolean)
+    
+    const uniqueDates = [...new Set(recordingDates)]
+    console.log(`📅 [데스크톱] 폴백 모드: ${uniqueDates.length}개 녹음 날짜 처리`, uniqueDates.slice(0, 5))
+
+    if (uniqueDates.length === 0) {
+      console.warn('⚠️ [데스크톱] 폴백 모드: 녹음 슬롯이 있는 날짜가 없음')
+      return
+    }
 
     // 각 날짜의 가용성을 병렬로 로드 (최대 5개씩 배치 처리)
     const batchSize = 5
@@ -1486,6 +1501,8 @@ function RequestMode({
         await new Promise(resolve => setTimeout(resolve, 100))
       }
     }
+    
+    console.log(`✅ [데스크톱] 폴백 모드 완료: ${uniqueDates.length}개 날짜 가용성 로드됨`)
   }
 
   // 신청 기한 체크 함수 (2일 전 14:00 기준)
@@ -1654,7 +1671,7 @@ function RequestMode({
     console.log("📅 data.days[0]:", data.days[0])
     console.log("📅 data.month:", data.month)
     return items
-  },[data, myRequests])
+  },[data, myRequests, availabilityCache])
 
   // 스케줄 데이터 리프레시 함수
   const refreshScheduleData = async () => {
@@ -3488,12 +3505,60 @@ function RequestCalendar(props: {
                   <div className="px-3 md:px-4 pb-3 md:pb-4 space-y-2">
                     {tab === 'recording' && dayData.recording?.slots?.length > 0 && (
                       <div className="space-y-2">
-                         {/* 간결한 녹음 시간표 - 통일된 블루 테마 */}
+                         {/* 간결한 녹음 시간표 - 신청 인원에 따른 색상 코드 */}
                          <div className="space-y-1">
                            {dayData.recording.slots.map((slot: number) => {
                              const currentApplicants = getRecordingCurrentApplicants(formatDateKey(date), slot)
                              const slotTime = getRecordingSlotTime(slot)
                              const isFull = currentApplicants >= 8
+                             
+                             // 신청 인원에 따른 색상 결정
+                             // 1/8~2/8: 파란색, 3/8~4/8: 초록색, 5/8~7/8: 주황색, 8/8: 빨간색
+                             const getColorClasses = () => {
+                               if (isFull) {
+                                 return {
+                                   bg: 'bg-red-100',
+                                   border: 'border-red-300',
+                                   hoverBg: 'hover:bg-red-100',
+                                   hoverBorder: 'hover:border-red-300',
+                                   textMain: 'text-red-700',
+                                   textSecondary: 'text-red-600',
+                                   icon: 'text-red-500'
+                                 }
+                               } else if (currentApplicants >= 5) { // 5/8~7/8
+                                 return {
+                                   bg: 'bg-orange-50',
+                                   border: 'border-orange-300',
+                                   hoverBg: 'hover:bg-orange-100',
+                                   hoverBorder: 'hover:border-orange-400',
+                                   textMain: 'text-orange-700',
+                                   textSecondary: 'text-orange-600',
+                                   icon: 'text-orange-500'
+                                 }
+                               } else if (currentApplicants >= 3) { // 3/8~4/8
+                                 return {
+                                   bg: 'bg-green-50',
+                                   border: 'border-green-300',
+                                   hoverBg: 'hover:bg-green-100',
+                                   hoverBorder: 'hover:border-green-400',
+                                   textMain: 'text-green-700',
+                                   textSecondary: 'text-green-600',
+                                   icon: 'text-green-500'
+                                 }
+                               } else { // 1/8~2/8
+                                 return {
+                                   bg: 'bg-blue-50',
+                                   border: 'border-blue-200',
+                                   hoverBg: 'hover:bg-blue-100',
+                                   hoverBorder: 'hover:border-blue-300',
+                                   textMain: 'text-blue-700',
+                                   textSecondary: 'text-blue-600',
+                                   icon: 'text-blue-500'
+                                 }
+                               }
+                             }
+                             
+                             const colors = getColorClasses()
                              
                              return (
                                <button
@@ -3502,13 +3567,13 @@ function RequestCalendar(props: {
                                  disabled={isFull}
                                  className={`w-full p-2 rounded-lg border transition-all duration-200 hover:shadow-sm ${
                                    isFull 
-                                     ? 'bg-gray-100 border-gray-200 cursor-not-allowed' 
-                                     : 'bg-blue-50 border-blue-200 hover:bg-blue-100 hover:border-blue-300'
+                                     ? `${colors.bg} ${colors.border} cursor-not-allowed` 
+                                     : `${colors.bg} ${colors.border} ${colors.hoverBg} ${colors.hoverBorder}`
                                  }`}
                                >
                                  <div className="flex items-center justify-between">
                                    <div className="flex items-center gap-3">
-                                     <span className={`text-sm font-bold ${isFull ? 'text-gray-500' : 'text-blue-700'}`}>
+                                     <span className={`text-sm font-bold ${isFull ? 'text-gray-500' : colors.textMain}`}>
                                        {slot}차수
                                      </span>
                                      <span className={`text-xs ${isFull ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -3516,12 +3581,10 @@ function RequestCalendar(props: {
                                      </span>
                                    </div>
                                    <div className="flex items-center gap-2">
-                                     <span className={`text-xs font-medium ${
-                                       isFull ? 'text-red-600' : 'text-blue-600'
-                                     }`}>
-                                       {isFull ? '마감' : `${currentApplicants}/8`}
+                                     <span className={`text-xs font-medium ${colors.textSecondary}`}>
+                                       {currentApplicants}/8
                                      </span>
-                                     <Mic className={`w-3 h-3 ${isFull ? 'text-gray-400' : 'text-blue-500'}`} />
+                                     <Mic className={`w-3 h-3 ${isFull ? 'text-gray-400' : colors.icon}`} />
                                    </div>
                                  </div>
                                </button>

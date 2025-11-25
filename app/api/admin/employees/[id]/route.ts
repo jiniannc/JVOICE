@@ -64,16 +64,17 @@ export async function PUT(
     }
 
     // 업데이트 데이터 구성
-    const updateData: any = {
-      name: body.name,
-      email: body.email.toLowerCase(),
-      department: body.department,
-      position: body.position || null,
-      lineTeam: body.lineTeam || null,
-      isActive: body.isActive,
-      isInstructor: body.isInstructor,
-      isAdmin: body.isAdmin,
-    };
+    const updateData: any = {};
+    
+    // 필수 필드 (존재할 때만 업데이트)
+    if (body.name !== undefined) updateData.name = body.name;
+    if (body.email !== undefined) updateData.email = body.email.toLowerCase();
+    if (body.department !== undefined) updateData.department = body.department;
+    if (body.position !== undefined) updateData.position = body.position || null;
+    if (body.lineTeam !== undefined) updateData.lineTeam = body.lineTeam || null;
+    if (body.isActive !== undefined) updateData.isActive = body.isActive;
+    if (body.isInstructor !== undefined) updateData.isInstructor = body.isInstructor;
+    if (body.isAdmin !== undefined) updateData.isAdmin = body.isAdmin;
 
     // 자격 정보 (빈 문자열은 null로 변환)
     if (body.koreanEnglishGrade !== undefined) {

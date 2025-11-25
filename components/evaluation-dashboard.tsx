@@ -356,7 +356,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
         }
       })
       setApplicants(withAttendance)
-      setApplicantDates([...(data.dates || [])].reverse()) // 내림차순 정렬
+      setApplicantDates([...(data.dates || [])]) // 최신순 정렬 (API에서 이미 정렬된 상태)
       
       // 초기 날짜 설정 로직 개선 - 교육 신청자 목록과 동일
       if (data.selectedDate) {
@@ -553,7 +553,7 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
 
       // 2단계: 날짜 목록 설정
       if (data.dates && Array.isArray(data.dates)) {
-        setEducationDates([...data.dates].reverse()) // 내림차순 정렬
+        setEducationDates([...data.dates]) // 최신순 정렬 (API에서 이미 정렬된 상태)
         console.log(`✅ [loadEducationApplicantsWithInitialDate] 날짜 목록 로드 완료: ${data.dates.length}개 날짜`)
         
         // 3단계: 적절한 초기 날짜 선택 및 해당 날짜로 필터링된 데이터 로드
@@ -1973,58 +1973,21 @@ export function EvaluationDashboard({ onBack, authenticatedUser, userInfo, refre
           return;
         }
         
-        // 🔥 중요: 제출 시 0인 점수를 80% 기본값으로 보정
+        // ✅ 평가자가 입력한 점수를 그대로 사용 (0점 포함)
         const correctedScores = { ...result.scores };
         
-        if (selectedCandidate.language === "korean-english") {
-          const allCategories = [
-            ...Object.keys(evaluationCriteria.korean),
-            ...Object.keys(evaluationCriteria.english)
-          ];
-          
-          for (const category of allCategories) {
-            const koreanPrefix = Object.keys(evaluationCriteria.korean).includes(category) ? "korean-" : "english-";
-            const isKorean = Object.keys(evaluationCriteria.korean).includes(category);
-            const criteriaGroup = isKorean ? evaluationCriteria.korean : evaluationCriteria.english;
-            const criteria = (criteriaGroup as any)[category];
-            
-            if (typeof criteria === 'object') {
-              // 소항목이 있는 경우
-              for (const [subKey, maxScore] of Object.entries(criteria)) {
-                const scoreKey = `${koreanPrefix}${category}-${subKey}`;
-                if (correctedScores[scoreKey] === undefined) {
-                  correctedScores[scoreKey] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
-                }
-              }
-            } else {
-              // 직접 점수인 경우
-              const scoreKey = `${koreanPrefix}${category}`;
-              if (correctedScores[scoreKey] === undefined) {
-                correctedScores[scoreKey] = Math.round((Number(criteria) * 0.8) * 2) / 2;
-              }
-            }
-          }
-        } else {
-          // 일본어/중국어
-          const criteria = evaluationCriteria[selectedCandidate.language as keyof typeof evaluationCriteria];
-          for (const [category, maxScore] of Object.entries(criteria)) {
-            if (correctedScores[category] === undefined) {
-              correctedScores[category] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
-            }
-          }
-        }
-        
-        // grade 계산 (result.grade가 없으면 totalScore 기반으로 계산)
+        // grade 계산 (result.grade가 없으면 totalScore와 categoryScores 기반으로 계산)
         let calculatedGrade = result.grade;
         if (!calculatedGrade || calculatedGrade === 'N/A') {
+          // 🔥 수정: correctedScores를 전달해야 카테고리별 16점 체크가 가능
           const gradeInfo = getGradeInfo(
             result.totalScore || 0,
-            {}, // categoryScores - 빈 객체 전달
+            correctedScores, // ✅ 빈 객체가 아닌 실제 점수 전달
             selectedCandidate.language,
             selectedCandidate.category
           );
           calculatedGrade = gradeInfo.grade;
-          console.log(`✅ [BROWSER] grade 계산됨: ${calculatedGrade} (totalScore: ${result.totalScore})`);
+          console.log(`✅ [BROWSER] grade 계산됨: ${calculatedGrade} (totalScore: ${result.totalScore}, categoryScores 포함)`);
         }
         
         // 평가 완료 API 호출

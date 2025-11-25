@@ -828,8 +828,8 @@ export default function AdminDashboard() {
       // 해당 월의 평가 완료된 데이터 (점수나 등급이 있는 모든 평가 포함)
       const monthEvaluationResults = monthSubmissions.filter(
         (sub) => {
-          // 점수가 있거나 등급이 있으면 평가 완료로 간주
-          const hasValidScore = sub.totalScore !== undefined && sub.totalScore !== null && sub.totalScore > 0;
+          // ✅ 0점도 유효한 점수로 인정 (>= 0으로 변경)
+          const hasValidScore = sub.totalScore !== undefined && sub.totalScore !== null && sub.totalScore >= 0;
           const hasValidGrade = sub.grade !== undefined && sub.grade !== null && sub.grade !== '' && sub.grade !== 'N/A';
           const hasCategoryScores = sub.categoryScores && Object.keys(sub.categoryScores).length > 0;
           
@@ -852,7 +852,8 @@ export default function AdminDashboard() {
         for (const evaluationResult of monthEvaluationResults) {
           // 항상 getGradeInfo로 실시간 계산된 등급을 사용 (테이블 표시와 동일)
           const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
-          const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
+          // ✅ 0점도 유효한 점수로 인정 (>= 0으로 변경)
+          const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore >= 0;
           
           if (hasScores && hasValidScore) {
             const gradeInfo = getGradeInfo(
@@ -879,7 +880,8 @@ export default function AdminDashboard() {
         for (const evaluationResult of monthEvaluationResults) {
           // 항상 getGradeInfo로 실시간 계산된 등급을 사용 (테이블 표시와 동일)
           const hasScores = evaluationResult.categoryScores && Object.keys(evaluationResult.categoryScores).length > 0;
-          const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore > 0;
+          // ✅ 0점도 유효한 점수로 인정 (>= 0으로 변경)
+          const hasValidScore = evaluationResult.totalScore !== undefined && evaluationResult.totalScore >= 0;
           
           if (hasScores && hasValidScore) {
             const gradeInfo = getGradeInfo(
@@ -928,6 +930,19 @@ export default function AdminDashboard() {
   // 언어별 내보내기 함수들
   const exportKoreanEnglishSpreadsheet = () => {
     const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt && sub.submittedAt.startsWith(selectedMonth) && sub.language === "korean-english");
+    
+    console.log("📊 [엑셀 다운로드] 한/영 데이터 확인:", {
+      totalData: monthlyData.length,
+      firstSample: monthlyData[0] ? {
+        name: monthlyData[0].name,
+        grade: monthlyData[0].grade,
+        status: monthlyData[0].status,
+        approved: monthlyData[0].approved,
+        categoryScoresKeys: monthlyData[0].categoryScores ? Object.keys(monthlyData[0].categoryScores) : [],
+        isFullyEvaluated: isFullyEvaluated(monthlyData[0])
+      } : null
+    });
+    
     if (monthlyData.length === 0) {
       alert("선택한 월에 해당하는 한/영 데이터가 없습니다.");
       return;
@@ -943,8 +958,14 @@ export default function AdminDashboard() {
     ];
     let csvData: any[] = [];
     let rowNumber = 1;
+    
+    console.log("📊 [엑셀 다운로드] isFullyEvaluated 필터링 시작...");
+    let evaluatedCount = 0;
+    let notEvaluatedCount = 0;
+    
     for (const sub of monthlyData) {
       if (isFullyEvaluated(sub)) {
+        evaluatedCount++;
         // 한/영: 한 행에 모두
         const korKeys = ["korean-발음", "korean-억양", "korean-전달력", "korean-음성", "korean-속도"];
         const engKeys = ["english-발음_자음", "english-발음_모음", "english-억양", "english-강세", "english-전달력"];
@@ -952,8 +973,42 @@ export default function AdminDashboard() {
         const engScores = engKeys.map(k => sub.categoryScores?.[k] ?? "");
         const korTotal = korKeys.reduce((sum, k) => sum + (sub.categoryScores?.[k] ?? 0), 0);
         const engTotal = engKeys.reduce((sum, k) => sum + (sub.categoryScores?.[k] ?? 0), 0);
-        const result = sub.grade === "FAIL" || sub.grade === "F" ? "Fail" : "Pass";
-        const grade = sub.grade ?? "";
+        
+        // 🔥 수정: DB의 grade가 아닌, categoryScores로 다시 계산
+        let grade = sub.grade ?? "";
+        if (!grade || grade === 'N/A' || grade === 'FAIL') {
+          // DB에 잘못된 등급이 저장되어 있을 수 있으므로 다시 계산
+          try {
+            const gradeInfo = getGradeInfo(
+              typeof sub.totalScore === 'number' ? sub.totalScore : 0,
+              sub.categoryScores || {},
+              sub.language,
+              sub.category
+            );
+            grade = gradeInfo.grade;
+          } catch (e) {
+            grade = 'N/A';
+          }
+        }
+        
+        const result = (grade && !grade.toUpperCase().includes("FAIL") && grade.toUpperCase() !== "F" && grade !== "N/A") ? "Pass" : "Fail";
+        
+        // 첫 3개 행 디버깅
+        if (rowNumber <= 3) {
+          console.log(`📊 [엑셀 Row ${rowNumber}] ${sub.name}:`, {
+            dbGrade: sub.grade,
+            calculatedGrade: grade,
+            gradeUpperCase: grade.toUpperCase(),
+            result,
+            korTotal,
+            engTotal,
+            status: sub.status,
+            approved: sub.approved,
+            evaluatedAt: sub.evaluatedAt,
+            categoryScoresKeys: Object.keys(sub.categoryScores || {}).slice(0, 10)
+          });
+        }
+        
         const korComment = typeof sub.comments === 'object' ? (sub.comments.korean || "") : (sub.comments || "");
         const engComment = typeof sub.comments === 'object' ? (sub.comments.english || "") : (sub.comments || "");
         csvData.push([
@@ -969,8 +1024,16 @@ export default function AdminDashboard() {
           engComment
         ]);
         rowNumber++;
+      } else {
+        notEvaluatedCount++;
       }
     }
+    
+    console.log("📊 [엑셀 다운로드] 필터링 완료:", {
+      evaluatedCount,
+      notEvaluatedCount,
+      csvRowsCount: csvData.length
+    });
     const monthLabel = selectedMonth.replace(/\D/g, '') + "월 ";
     const csvContent = [headers, ...csvData].map((row: (string | number)[]) => row.map((cell: string | number) => `"${cell}"`).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
@@ -986,6 +1049,16 @@ export default function AdminDashboard() {
 
   const exportJapaneseSpreadsheet = () => {
     const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt && sub.submittedAt.startsWith(selectedMonth) && sub.language === "japanese");
+    
+    console.log("📊 [엑셀 다운로드] 일본어 데이터 확인:", {
+      totalData: monthlyData.length,
+      firstSample: monthlyData[0] ? {
+        name: monthlyData[0].name,
+        grade: monthlyData[0].grade,
+        categoryScoresKeys: monthlyData[0].categoryScores ? Object.keys(monthlyData[0].categoryScores) : []
+      } : null
+    });
+    
     if (monthlyData.length === 0) {
       alert("선택한 월에 해당하는 일본어 데이터가 없습니다.");
       return;
@@ -1004,7 +1077,24 @@ export default function AdminDashboard() {
         const keys = ["발음", "억양", "Pause", "Speed", "Tone", "Volume"];
         const itemScores = keys.map(k => sub.categoryScores?.[k] ?? "");
         const total = keys.reduce((sum, k) => sum + (sub.categoryScores?.[k] ?? 0), 0);
-        const result = sub.grade === "FAIL" || sub.grade === "F" ? "Fail" : "Pass";
+        
+        // 🔥 수정: DB의 grade가 아닌, categoryScores로 다시 계산
+        let grade = sub.grade ?? "";
+        if (!grade || grade === 'N/A' || grade === 'FAIL' || grade === 'F') {
+          try {
+            const gradeInfo = getGradeInfo(
+              typeof sub.totalScore === 'number' ? sub.totalScore : 0,
+              sub.categoryScores || {},
+              sub.language,
+              sub.category
+            );
+            grade = gradeInfo.grade;
+          } catch (e) {
+            grade = 'N/A';
+          }
+        }
+        
+        const result = (grade && !grade.toUpperCase().includes("FAIL") && grade.toUpperCase() !== "F" && grade !== "N/A") ? "Pass" : "Fail";
         csvData.push([
           rowNumber,
           sub.employeeId,
@@ -1014,7 +1104,7 @@ export default function AdminDashboard() {
           ...itemScores,
           total,
           result,
-          sub.grade ?? "",
+          grade,
           typeof sub.comments === 'object' ? (sub.comments.korean || sub.comments.english || "") : (sub.comments || "")
         ]);
         rowNumber++;
@@ -1035,6 +1125,16 @@ export default function AdminDashboard() {
 
   const exportChineseSpreadsheet = () => {
     const monthlyData = filteredSubmissions.filter(sub => sub.submittedAt && sub.submittedAt.startsWith(selectedMonth) && sub.language === "chinese");
+    
+    console.log("📊 [엑셀 다운로드] 중국어 데이터 확인:", {
+      totalData: monthlyData.length,
+      firstSample: monthlyData[0] ? {
+        name: monthlyData[0].name,
+        grade: monthlyData[0].grade,
+        categoryScoresKeys: monthlyData[0].categoryScores ? Object.keys(monthlyData[0].categoryScores) : []
+      } : null
+    });
+    
     if (monthlyData.length === 0) {
       alert("선택한 월에 해당하는 중국어 데이터가 없습니다.");
       return;
@@ -1053,7 +1153,24 @@ export default function AdminDashboard() {
         const keys = ["한어병음", "억양", "PAUSE", "속도", "Tone", "Volume"];
         const itemScores = keys.map(k => sub.categoryScores?.[k] ?? "");
         const total = keys.reduce((sum, k) => sum + (sub.categoryScores?.[k] ?? 0), 0);
-        const result = sub.grade === "FAIL" || sub.grade === "F" ? "Fail" : "Pass";
+        
+        // 🔥 수정: DB의 grade가 아닌, categoryScores로 다시 계산
+        let grade = sub.grade ?? "";
+        if (!grade || grade === 'N/A' || grade === 'FAIL' || grade === 'F') {
+          try {
+            const gradeInfo = getGradeInfo(
+              typeof sub.totalScore === 'number' ? sub.totalScore : 0,
+              sub.categoryScores || {},
+              sub.language,
+              sub.category
+            );
+            grade = gradeInfo.grade;
+          } catch (e) {
+            grade = 'N/A';
+          }
+        }
+        
+        const result = (grade && !grade.toUpperCase().includes("FAIL") && grade.toUpperCase() !== "F" && grade !== "N/A") ? "Pass" : "Fail";
         csvData.push([
           rowNumber,
           sub.employeeId,
@@ -1063,7 +1180,7 @@ export default function AdminDashboard() {
           ...itemScores,
           total,
           result,
-          sub.grade ?? "",
+          grade,
           typeof sub.comments === 'object' ? (sub.comments.korean || sub.comments.english || "") : (sub.comments || "")
         ]);
         rowNumber++;

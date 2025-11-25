@@ -4,21 +4,18 @@ import React, { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { 
   Trash2, 
   Calendar, 
-  Shield, 
-  AlertTriangle,
-  CheckCircle,
   RefreshCw,
   Search,
-  Filter,
-  Users,
   Mic,
   GraduationCap,
-  Download
+  Download,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react"
 
 interface RequestEntry {
@@ -41,6 +38,9 @@ interface MonthlyStats {
   requests: RequestEntry[]
 }
 
+type SortField = 'month' | 'date' | 'type' | 'slot' | 'time' | 'name' | 'employeeId' | 'language' | 'status'
+type SortDirection = 'asc' | 'desc' | null
+
 interface AdminRequestManagerModalProps {
   isOpen: boolean
   onClose: () => void
@@ -52,10 +52,10 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedType, setSelectedType] = useState<'all' | 'education' | 'recording'>('all')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
-  const [cleanupLoading, setCleanupLoading] = useState<Record<string, boolean>>({})
-  const [cleanupResults, setCleanupResults] = useState<Record<string, any>>({})
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
   const [exportLoading, setExportLoading] = useState(false)
+  const [sortField, setSortField] = useState<SortField | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null)
 
   // 모든 활성 신청 내역 로드
   const loadAllRequests = async () => {
@@ -108,56 +108,6 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
     }
   }, [isOpen])
 
-  // 필터링된 데이터
-  const filteredStats = monthlyStats.filter(stat => {
-    if (selectedMonth && stat.month !== selectedMonth) return false
-    return true
-  })
-
-  const filteredRequests = filteredStats.flatMap(stat => 
-    stat.requests.filter(request => {
-      if (selectedType !== 'all' && request.type !== selectedType) return false
-      if (searchTerm && !request.name.toLowerCase().includes(searchTerm.toLowerCase()) && 
-          !request.employeeId.includes(searchTerm)) return false
-      return true
-    })
-  )
-
-  // 월별 정리 실행
-  const handleCleanupMonth = async (month: string, dryRun: boolean = false) => {
-    const key = `${month}-${dryRun ? 'test' : 'real'}`
-    setCleanupLoading(prev => ({ ...prev, [key]: true }))
-    
-    try {
-      const response = await fetch(`/api/admin/cleanup-requests?month=${month}${dryRun ? '&dryRun=true' : ''}`, {
-        method: 'POST'
-      })
-      
-      if (response.ok) {
-        const result = await response.json()
-        setCleanupResults(prev => ({ ...prev, [key]: result }))
-        
-        // 실제 삭제 후 데이터 새로고침
-        if (!dryRun && result.success) {
-          await loadAllRequests()
-        }
-      } else {
-        const error = await response.json()
-        setCleanupResults(prev => ({ ...prev, [key]: { success: false, message: error.error } }))
-      }
-    } catch (error) {
-      setCleanupResults(prev => ({ 
-        ...prev, 
-        [key]: { 
-          success: false, 
-          message: error instanceof Error ? error.message : '알 수 없는 오류' 
-        } 
-      }))
-    } finally {
-      setCleanupLoading(prev => ({ ...prev, [key]: false }))
-    }
-  }
-
   const getLanguageDisplay = (request: any) => {
     if (!request.details) return 'N/A'
     
@@ -186,27 +136,17 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
     return 'N/A'
   }
 
-  // 월 표시 함수 (10 → 10월)
-  const formatMonth = (dateStr: string) => {
-    const month = dateStr.substring(5, 7) // YYYY-MM-DD에서 MM 추출
-    return `${parseInt(month)}월`
-  }
-
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr)
-    return date.toLocaleDateString('ko-KR', { 
-      month: '2-digit', 
-      day: '2-digit',
-      weekday: 'short'
-    })
-  }
-
-  const formatTime = (dateStr: string) => {
-    const date = new Date(dateStr)
-    return date.toLocaleTimeString('ko-KR', { 
-      hour: '2-digit', 
-      minute: '2-digit'
-    })
+  // 교육 모드 추출 함수
+  const getEducationMode = (request: any): string => {
+    if (request.type !== 'education') return ''
+    
+    // details에서 mode 추출
+    const mode = request.details?.mode || request.details?.educationType || request.schedule?.classType
+    if (mode === 'small' || mode === 'small-group') return 'small'
+    if (mode === '1:1') return '1:1'
+    
+    // 기본값은 1:1
+    return '1:1'
   }
 
   // slot을 차수와 시간으로 변환하는 함수 (my page와 동일한 로직)
@@ -262,17 +202,125 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
     return ""
   }
 
-  // 교육 모드 추출 함수
-  const getEducationMode = (request: any): string => {
-    if (request.type !== 'education') return ''
-    
-    // details에서 mode 추출
-    const mode = request.details?.mode || request.details?.educationType || request.schedule?.classType
-    if (mode === 'small' || mode === 'small-group') return 'small'
-    if (mode === '1:1') return '1:1'
-    
-    // 기본값은 1:1
-    return '1:1'
+  // 필터링된 데이터
+  const filteredStats = monthlyStats.filter(stat => {
+    if (selectedMonth && stat.month !== selectedMonth) return false
+    return true
+  })
+
+  let filteredRequests = filteredStats.flatMap(stat => 
+    stat.requests.filter(request => {
+      if (selectedType !== 'all' && request.type !== selectedType) return false
+      if (searchTerm && !request.name.toLowerCase().includes(searchTerm.toLowerCase()) && 
+          !request.employeeId.includes(searchTerm)) return false
+      return true
+    })
+  )
+
+  // 정렬 함수
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // 같은 필드를 클릭하면 방향 변경 (asc -> desc -> null)
+      if (sortDirection === 'asc') {
+        setSortDirection('desc')
+      } else if (sortDirection === 'desc') {
+        setSortDirection(null)
+        setSortField(null)
+      }
+    } else {
+      // 새로운 필드를 클릭하면 오름차순으로 시작
+      setSortField(field)
+      setSortDirection('asc')
+    }
+  }
+
+  // 정렬 적용
+  if (sortField && sortDirection) {
+    filteredRequests = [...filteredRequests].sort((a, b) => {
+      let valueA: any
+      let valueB: any
+
+      switch (sortField) {
+        case 'month':
+          valueA = a.date.substring(5, 7) // MM
+          valueB = b.date.substring(5, 7)
+          break
+        case 'date':
+          valueA = a.date
+          valueB = b.date
+          break
+        case 'type':
+          valueA = a.type
+          valueB = b.type
+          break
+        case 'slot':
+          valueA = a.slot
+          valueB = b.slot
+          break
+        case 'time':
+          const educationModeA = getEducationMode(a)
+          const educationModeB = getEducationMode(b)
+          valueA = getSlotTimeInfo(a.type, a.slot, educationModeA)
+          valueB = getSlotTimeInfo(b.type, b.slot, educationModeB)
+          break
+        case 'name':
+          valueA = a.name
+          valueB = b.name
+          break
+        case 'employeeId':
+          valueA = a.employeeId
+          valueB = b.employeeId
+          break
+        case 'language':
+          valueA = getLanguageDisplay(a)
+          valueB = getLanguageDisplay(b)
+          break
+        case 'status':
+          valueA = a.status
+          valueB = b.status
+          break
+        default:
+          return 0
+      }
+
+      if (valueA < valueB) return sortDirection === 'asc' ? -1 : 1
+      if (valueA > valueB) return sortDirection === 'asc' ? 1 : -1
+      return 0
+    })
+  }
+
+  // 정렬 아이콘 렌더링
+  const getSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="w-3 h-3 opacity-30" />
+    }
+    if (sortDirection === 'asc') {
+      return <ArrowUp className="w-3 h-3 text-blue-600" />
+    }
+    return <ArrowDown className="w-3 h-3 text-blue-600" />
+  }
+
+  // 월 표시 함수 (10 → 10월)
+  const formatMonth = (dateStr: string) => {
+    const month = dateStr.substring(5, 7) // YYYY-MM-DD에서 MM 추출
+    return `${parseInt(month)}월`
+  }
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('ko-KR', { 
+      month: '2-digit', 
+      day: '2-digit',
+      weekday: 'short'
+    })
+  }
+
+  const formatTime = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleTimeString('ko-KR', { 
+      hour: '2-digit', 
+      minute: '2-digit'
+    })
   }
 
   // 개별 신청 내역 삭제 함수
@@ -371,15 +419,19 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl w-[90vw] h-[90vh] overflow-hidden flex flex-col z-[99999]">
-        <DialogHeader className="pb-2">
+      <DialogContent className="max-w-7xl w-[95vw] h-[90vh] overflow-hidden flex flex-col z-[99999]">
+        <DialogHeader className="pb-4 border-b">
           <DialogTitle className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-lg">
-              <Calendar className="w-5 h-5" />
-              신청 내역 관리
-              <Badge variant="outline" className="ml-2">
-                총 {filteredRequests.length}개
-              </Badge>
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
+                <Calendar className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">신청 내역 관리</h2>
+                <p className="text-xs text-gray-500 font-normal mt-0.5">
+                  총 {filteredRequests.length}개의 신청 내역
+                </p>
+              </div>
             </div>
             
             {/* 엑셀 내보내기 버튼 */}
@@ -387,155 +439,161 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
               onClick={handleExportToExcel}
               disabled={exportLoading || filteredRequests.length === 0}
               size="sm"
-              variant="outline"
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white"
             >
               <Download className="w-4 h-4" />
-              {exportLoading ? '내보내는 중...' : '엑셀 내보내기'}
+              {exportLoading ? '내보내는 중...' : 'Excel 내보내기'}
             </Button>
           </DialogTitle>
         </DialogHeader>
 
-        {/* 안전 경고 */}
-        <Alert className="mb-3">
-          <Shield className="w-4 h-4" />
-          <AlertDescription className="text-xs">
-            <strong>안전 보장:</strong> 신청 내역만 정리하며, <strong className="text-green-600">평가 파일과 녹음 파일은 절대 건드리지 않습니다.</strong>
-          </AlertDescription>
-        </Alert>
-
         {/* 필터 및 검색 */}
-        <div className="flex gap-2 mb-3">
-          <div className="flex-1">
+        <div className="flex gap-3 py-4">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <Input
               placeholder="이름 또는 사번으로 검색..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-8 text-xs"
+              className="h-10 pl-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
             />
           </div>
           
+          {/* 월 필터 */}
+          <select 
+            value={selectedMonth} 
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all bg-white min-w-[140px]"
+          >
+            <option value="">전체 월</option>
+            {monthlyStats.map(stat => (
+              <option key={stat.month} value={stat.month}>
+                {stat.month} ({stat.total}건)
+              </option>
+            ))}
+          </select>
+          
           {/* 타입 필터 버튼 */}
-          <div className="flex gap-1">
+          <div className="flex gap-2 bg-gray-100 p-1 rounded-lg">
             <Button
               onClick={() => setSelectedType('all')}
-              variant={selectedType === 'all' ? 'default' : 'outline'}
+              variant={selectedType === 'all' ? 'default' : 'ghost'}
               size="sm"
-              className="h-8 text-xs px-3"
+              className={`h-8 px-4 text-sm font-medium transition-all ${
+                selectedType === 'all' 
+                  ? 'bg-white shadow-sm' 
+                  : 'hover:bg-gray-50'
+              }`}
             >
               전체
             </Button>
             <Button
               onClick={() => setSelectedType('education')}
-              variant={selectedType === 'education' ? 'default' : 'outline'}
+              variant={selectedType === 'education' ? 'default' : 'ghost'}
               size="sm"
-              className="h-8 text-xs px-3"
+              className={`h-8 px-4 text-sm font-medium transition-all ${
+                selectedType === 'education' 
+                  ? 'bg-white shadow-sm' 
+                  : 'hover:bg-gray-50'
+              }`}
             >
-              <GraduationCap className="w-3 h-3 mr-1" />
+              <GraduationCap className="w-3.5 h-3.5 mr-1.5" />
               교육
             </Button>
             <Button
               onClick={() => setSelectedType('recording')}
-              variant={selectedType === 'recording' ? 'default' : 'outline'}
+              variant={selectedType === 'recording' ? 'default' : 'ghost'}
               size="sm"
-              className="h-8 text-xs px-3"
+              className={`h-8 px-4 text-sm font-medium transition-all ${
+                selectedType === 'recording' 
+                  ? 'bg-white shadow-sm' 
+                  : 'hover:bg-gray-50'
+              }`}
             >
-              <Mic className="w-3 h-3 mr-1" />
+              <Mic className="w-3.5 h-3.5 mr-1.5" />
               녹음
             </Button>
           </div>
           
-          <select 
-            value={selectedMonth} 
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-2 py-1 border rounded text-xs h-8"
+          <Button 
+            onClick={loadAllRequests} 
+            disabled={loading} 
+            variant="outline" 
+            size="sm" 
+            className="h-10 px-4 border-gray-300 hover:border-gray-400"
           >
-            <option value="">전체 월</option>
-            {monthlyStats.map(stat => (
-              <option key={stat.month} value={stat.month}>{stat.month}</option>
-            ))}
-          </select>
-          <Button onClick={loadAllRequests} disabled={loading} variant="outline" size="sm" className="h-8">
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
 
-        {/* 월별 통계 요약 */}
-        <div className="grid grid-cols-6 gap-2 mb-3">
-          {filteredStats.slice(0, 6).map((stat) => (
-            <div key={stat.month} className="border rounded p-2 bg-gray-50">
-              <div className="text-xs font-semibold mb-1">{stat.month}</div>
-              <div className="flex justify-between text-xs">
-                <span className="flex items-center gap-1">
-                  <GraduationCap className="w-3 h-3" />
-                  {stat.education}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Mic className="w-3 h-3" />
-                  {stat.recording}
-                </span>
-              </div>
-              <div className="flex gap-1 mt-1">
-                <Button
-                  onClick={() => handleCleanupMonth(stat.month, true)}
-                  disabled={cleanupLoading[`${stat.month}-test`]}
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-xs flex-1"
-                >
-                  {cleanupLoading[`${stat.month}-test`] ? '...' : '미리보기'}
-                </Button>
-                <Button
-                  onClick={() => handleCleanupMonth(stat.month, false)}
-                  disabled={cleanupLoading[`${stat.month}-real`]}
-                  variant="destructive"
-                  size="sm"
-                  className="h-6 text-xs flex-1"
-                >
-                  {cleanupLoading[`${stat.month}-real`] ? '...' : '삭제'}
-                </Button>
-              </div>
-              
-              {/* 결과 표시 */}
-              {(cleanupResults[`${stat.month}-test`] || cleanupResults[`${stat.month}-real`]) && (
-                <div className="mt-1 text-xs">
-                  {cleanupResults[`${stat.month}-test`] && (
-                    <div className="text-blue-600 mb-1">
-                      미리보기: {cleanupResults[`${stat.month}-test`].wouldDelete || 0}개
-                    </div>
-                  )}
-                  {cleanupResults[`${stat.month}-real`] && (
-                    <div className={cleanupResults[`${stat.month}-real`].success ? "text-green-600" : "text-red-600"}>
-                      {cleanupResults[`${stat.month}-real`].success ? '완료' : '실패'}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
         {/* 상세 목록 */}
-        <div className="flex-1 overflow-auto border rounded">
+        <div className="flex-1 overflow-hidden border rounded-lg bg-white shadow-sm">
           {loading ? (
-            <div className="flex items-center justify-center h-32">
-              <RefreshCw className="w-6 h-6 animate-spin mr-2" />
-              <span className="text-sm">로딩 중...</span>
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <RefreshCw className="w-8 h-8 animate-spin text-blue-500 mx-auto mb-3" />
+                <span className="text-sm text-gray-600">로딩 중...</span>
+              </div>
             </div>
           ) : (
-            <div className="text-xs">
+            <div className="h-full overflow-auto">
               {/* 헤더 */}
-              <div className="sticky top-0 bg-gray-100 border-b grid grid-cols-12 gap-1 p-2 font-semibold">
-                <div className="col-span-1">월</div>
-                <div className="col-span-1">일</div>
-                <div className="col-span-1">타입</div>
-                <div className="col-span-1">차수</div>
-                <div className="col-span-1">시간</div>
-                <div className="col-span-2">이름</div>
-                <div className="col-span-1">사번</div>
-                <div className="col-span-2">언어/상세</div>
-                <div className="col-span-1">상태</div>
-                <div className="col-span-1">삭제</div>
+              <div className="sticky top-0 bg-gradient-to-r from-gray-50 to-gray-100 border-b grid grid-cols-12 gap-2 p-3 font-semibold text-xs text-gray-700 z-10">
+                <button 
+                  onClick={() => handleSort('month')}
+                  className="col-span-1 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  월 {getSortIcon('month')}
+                </button>
+                <button 
+                  onClick={() => handleSort('date')}
+                  className="col-span-1 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  날짜 {getSortIcon('date')}
+                </button>
+                <button 
+                  onClick={() => handleSort('type')}
+                  className="col-span-1 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  타입 {getSortIcon('type')}
+                </button>
+                <button 
+                  onClick={() => handleSort('slot')}
+                  className="col-span-1 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  차수 {getSortIcon('slot')}
+                </button>
+                <button 
+                  onClick={() => handleSort('time')}
+                  className="col-span-1 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  시간 {getSortIcon('time')}
+                </button>
+                <button 
+                  onClick={() => handleSort('name')}
+                  className="col-span-2 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  이름 {getSortIcon('name')}
+                </button>
+                <button 
+                  onClick={() => handleSort('employeeId')}
+                  className="col-span-1 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  사번 {getSortIcon('employeeId')}
+                </button>
+                <button 
+                  onClick={() => handleSort('language')}
+                  className="col-span-2 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  언어/상세 {getSortIcon('language')}
+                </button>
+                <button 
+                  onClick={() => handleSort('status')}
+                  className="col-span-1 flex items-center gap-1 hover:text-blue-600 transition-colors"
+                >
+                  상태 {getSortIcon('status')}
+                </button>
+                <div className="col-span-1 text-center">삭제</div>
               </div>
               
               {/* 데이터 행 */}
@@ -548,48 +606,56 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
                 return (
                   <div 
                     key={request.id} 
-                    className={`grid grid-cols-12 gap-1 p-2 border-b hover:bg-gray-50 ${
-                      index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
+                    className={`grid grid-cols-12 gap-2 p-3 border-b hover:bg-blue-50/50 transition-colors text-xs ${
+                      index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
                     } ${isDeleting ? 'opacity-50' : ''}`}
                   >
-                    <div className="col-span-1 font-mono">
+                    <div className="col-span-1 font-medium text-gray-700">
                       {formatMonth(request.date)}
                     </div>
-                    <div className="col-span-1">
+                    <div className="col-span-1 text-gray-600">
                       {formatDate(request.date)}
                     </div>
                     <div className="col-span-1">
                       <Badge 
                         variant={request.type === 'education' ? 'default' : 'secondary'}
-                        className="text-xs px-1 py-0"
+                        className={`text-xs px-2 py-0.5 font-medium ${
+                          request.type === 'education' 
+                            ? 'bg-blue-100 text-blue-700 border-blue-200' 
+                            : 'bg-purple-100 text-purple-700 border-purple-200'
+                        }`}
                       >
                         {request.type === 'education' ? '교육' : '녹음'}
                       </Badge>
                     </div>
-                    <div className="col-span-1 font-mono text-left">
-                      {request.slot}차수
+                    <div className="col-span-1 font-mono text-gray-700 font-medium">
+                      {request.slot}차
                     </div>
                     <div className="col-span-1 text-gray-500 text-xs">
                       {timeInfo}
                     </div>
-                    <div className="col-span-2 font-medium truncate">
+                    <div className="col-span-2 font-medium text-gray-900 truncate">
                       {request.name}
                     </div>
-                    <div className="col-span-1 font-mono text-gray-600">
+                    <div className="col-span-1 font-mono text-gray-600 text-xs">
                       {request.employeeId}
                     </div>
-                    <div className="col-span-2 truncate text-gray-600">
+                    <div className="col-span-2 truncate text-gray-700">
                       {getLanguageDisplay(request)}
                     </div>
                     <div className="col-span-1">
                       <Badge 
                         variant={request.status === 'ACTIVE' ? 'default' : 'outline'}
-                        className="text-xs px-1 py-0"
+                        className={`text-xs px-2 py-0.5 ${
+                          request.status === 'ACTIVE' 
+                            ? 'bg-green-100 text-green-700 border-green-200' 
+                            : 'bg-gray-100 text-gray-600 border-gray-200'
+                        }`}
                       >
-                        {request.status}
+                        {request.status === 'ACTIVE' ? '활성' : request.status}
                       </Badge>
                     </div>
-                    <div className="col-span-1 flex flex-col items-center">
+                    <div className="col-span-1 flex flex-col items-center justify-center gap-1">
                       <Button
                         onClick={() => handleDeleteSingleRequest(request.id, {
                           name: request.name,
@@ -601,15 +667,15 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
                         disabled={isDeleting || request.status === 'DELETED'}
                         variant="ghost"
                         size="sm"
-                        className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 mb-1"
+                        className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-md"
                       >
                         {isDeleting ? (
-                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                         ) : (
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         )}
                       </Button>
-                      <div className="text-xs text-gray-400 text-center">
+                      <div className="text-[10px] text-gray-400 text-center leading-tight">
                         <div>{formatDate(request.createdAt)}</div>
                         <div className="opacity-75">{formatTime(request.createdAt)}</div>
                       </div>
@@ -619,8 +685,10 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
               })}
               
               {filteredRequests.length === 0 && (
-                <div className="text-center py-8 text-gray-500">
-                  조건에 맞는 신청 내역이 없습니다.
+                <div className="text-center py-16">
+                  <Calendar className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p className="text-sm text-gray-500 font-medium">조건에 맞는 신청 내역이 없습니다.</p>
+                  <p className="text-xs text-gray-400 mt-1">필터를 조정하거나 검색어를 변경해보세요.</p>
                 </div>
               )}
             </div>
@@ -628,11 +696,28 @@ export function AdminRequestManagerModal({ isOpen, onClose }: AdminRequestManage
         </div>
 
         {/* 푸터 */}
-        <div className="flex justify-between items-center pt-3 border-t">
-          <div className="text-xs text-gray-600">
-            총 {filteredRequests.length}개 항목 표시 중
+        <div className="flex justify-between items-center pt-4 border-t bg-gray-50/50 px-1">
+          <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-1.5 text-gray-600">
+              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+              <span className="font-medium">교육 {filteredRequests.filter(r => r.type === 'education').length}건</span>
+            </div>
+            <div className="w-px h-4 bg-gray-300"></div>
+            <div className="flex items-center gap-1.5 text-gray-600">
+              <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+              <span className="font-medium">녹음 {filteredRequests.filter(r => r.type === 'recording').length}건</span>
+            </div>
+            <div className="w-px h-4 bg-gray-300"></div>
+            <span className="text-gray-500 text-xs">
+              총 {filteredRequests.length}개 항목
+            </span>
           </div>
-          <Button onClick={onClose} variant="outline" size="sm">
+          <Button 
+            onClick={onClose} 
+            variant="outline" 
+            size="sm"
+            className="px-6 hover:bg-gray-100"
+          >
             닫기
           </Button>
         </div>

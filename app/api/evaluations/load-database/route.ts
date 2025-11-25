@@ -91,33 +91,44 @@ export async function GET(request: NextRequest) {
         evaluation.scores.forEach(score => {
           categoryScores[score.criteriaKey] = score.score;
         });
+        
+        // 🔥 강여울 승무원 디버깅
+        if (evaluation.id === 'cmhstiybx005zpc015r07116f') {
+          console.log(`🚨🚨🚨 [강여울] 평가 상태: ${evaluation.status}, 소항목 개수: ${evaluation.scores.length}`);
+          console.log(`🚨🚨🚨 [강여울] 첫 5개 점수:`, evaluation.scores.slice(0, 5).map(s => `${s.criteriaKey}=${s.score}`));
+        }
 
-        // 🔥 중요: 누락된 소항목에 대해 80% 기본값 추가
-        const addMissingSubItems = (langPrefix: string, langCriteria: any) => {
-          Object.entries(langCriteria).forEach(([category, subCriteria]) => {
-            if (typeof subCriteria === 'object') {
-              // 소항목이 있는 경우
-              Object.entries(subCriteria).forEach(([subKey, maxScore]) => {
-                const scoreKey = `${langPrefix}-${category}-${subKey}`;
+        // 🔥 중요: 평가가 완료되지 않은 경우(pending)에만 80% 기본값 추가
+        // completed나 approved 상태에서는 실제 점수만 사용
+        if (evaluation.status === 'pending') {
+          const addMissingSubItems = (langPrefix: string, langCriteria: any) => {
+            Object.entries(langCriteria).forEach(([category, subCriteria]) => {
+              if (typeof subCriteria === 'object') {
+                // 소항목이 있는 경우
+                Object.entries(subCriteria).forEach(([subKey, maxScore]) => {
+                  const scoreKey = `${langPrefix}-${category}-${subKey}`;
+                  // ✅ undefined일 때만 기본값 설정 (0점은 유지)
+                  if (categoryScores[scoreKey] === undefined) {
+                    categoryScores[scoreKey] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+                    console.log(`🔥 [API] 한/영 ${scoreKey} 기본값 설정: ${categoryScores[scoreKey]} (80% of ${maxScore})`);
+                  }
+                });
+              } else {
+                // 직접 점수인 경우
+                const scoreKey = `${langPrefix}-${category}`;
+                // ✅ undefined일 때만 기본값 설정 (0점은 유지)
                 if (categoryScores[scoreKey] === undefined) {
-                  categoryScores[scoreKey] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
-                  console.log(`🔥 [API] 한/영 ${scoreKey} 기본값 설정: ${categoryScores[scoreKey]} (80% of ${maxScore})`);
+                  categoryScores[scoreKey] = Math.round((Number(subCriteria) * 0.8) * 2) / 2;
+                  console.log(`🔥 [API] 한/영 ${scoreKey} 기본값 설정: ${categoryScores[scoreKey]} (80% of ${subCriteria})`);
                 }
-              });
-            } else {
-              // 직접 점수인 경우
-              const scoreKey = `${langPrefix}-${category}`;
-              if (categoryScores[scoreKey] === undefined) {
-                categoryScores[scoreKey] = Math.round((Number(subCriteria) * 0.8) * 2) / 2;
-                console.log(`🔥 [API] 한/영 ${scoreKey} 기본값 설정: ${categoryScores[scoreKey]} (80% of ${subCriteria})`);
               }
-            }
-          });
-        };
+            });
+          };
 
-        // 한국어 및 영어 누락 소항목 보정
-        addMissingSubItems('korean', evaluationCriteria.korean);
-        addMissingSubItems('english', evaluationCriteria.english);
+          // 한국어 및 영어 누락 소항목 보정
+          addMissingSubItems('korean', evaluationCriteria.korean);
+          addMissingSubItems('english', evaluationCriteria.english);
+        }
 
         // 2) 대분류 합계 생성: korean-발음, korean-억양, ..., english-전달력
         const koreanCategories = Object.keys(evaluationCriteria.korean);
@@ -126,6 +137,7 @@ export async function GET(request: NextRequest) {
             .filter(([key]) => key.startsWith(`korean-${cat}-`))
             .reduce((acc, [, score]) => acc + (score || 0), 0);
           categoryScores[`korean-${cat}`] = sum;
+          console.log(`🔍 [API] korean-${cat} 합계: ${sum}`);
         });
 
         const englishCategories = Object.keys(evaluationCriteria.english);
@@ -134,6 +146,7 @@ export async function GET(request: NextRequest) {
             .filter(([key]) => key.startsWith(`english-${cat}-`))
             .reduce((acc, [, score]) => acc + (score || 0), 0);
           categoryScores[`english-${cat}`] = sum;
+          console.log(`🔍 [API] english-${cat} 합계: ${sum}`);
         });
 
         // 3) 언어별 총합 (100+100)
@@ -141,22 +154,32 @@ export async function GET(request: NextRequest) {
         const englishTotal = englishCategories.reduce((acc, cat) => acc + (categoryScores[`english-${cat}`] || 0), 0);
         categoryScores['korean'] = koreanTotal;
         categoryScores['english'] = englishTotal;
+        
+        // 🔥 강여울 승무원 디버깅
+        if (evaluation.id === 'cmhstiybx005zpc015r07116f') {
+          console.log(`🚨🚨🚨 [강여울] 최종 총점: 한국어=${koreanTotal}, 영어=${englishTotal}`);
+        } else {
+          console.log(`🔥 [API] 한/영 최종 총점: 한국어=${koreanTotal}, 영어=${englishTotal}, 상태=${evaluation.status}, 소항목수=${evaluation.scores.length}`);
+        }
       } else {
         // 일본어/중국어: 개별 카테고리별 점수를 저장 + 누락된 카테고리 기본값 보정
         evaluation.scores.forEach(score => {
           categoryScores[score.criteriaKey] = score.score;
         });
         
-        // 🔥 중요: 누락된 카테고리에 대해 80% 기본값 추가
-        const languageCriteria = evaluationCriteria[evaluation.language as keyof typeof evaluationCriteria];
-        if (languageCriteria) {
-          Object.entries(languageCriteria).forEach(([category, maxScore]) => {
-            if (categoryScores[category] === undefined) {
-              // 누락된 카테고리는 80% 기본값으로 설정
-              categoryScores[category] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
-              console.log(`🔥 [API] ${evaluation.language} ${category} 기본값 설정: ${categoryScores[category]} (80% of ${maxScore})`);
-            }
-          });
+        // 🔥 중요: 평가가 완료되지 않은 경우(pending)에만 80% 기본값 추가
+        if (evaluation.status === 'pending') {
+          const languageCriteria = evaluationCriteria[evaluation.language as keyof typeof evaluationCriteria];
+          if (languageCriteria) {
+            Object.entries(languageCriteria).forEach(([category, maxScore]) => {
+              // ✅ undefined일 때만 기본값 설정 (0점은 유지)
+              if (categoryScores[category] === undefined) {
+                // 누락된 카테고리는 80% 기본값으로 설정
+                categoryScores[category] = Math.round((Number(maxScore) * 0.8) * 2) / 2;
+                console.log(`🔥 [API] ${evaluation.language} ${category} 기본값 설정: ${categoryScores[category]} (80% of ${maxScore})`);
+              }
+            });
+          }
         }
         
         console.log("🔍 [API DEBUG] 일본어/중국어 categoryScores (기본값 포함):", {
