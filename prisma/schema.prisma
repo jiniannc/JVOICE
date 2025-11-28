@@ -326,4 +326,20 @@ model EducationJournal {
   @@map("education_journals")
 }
 
+// 허용된 컴퓨터/IP 관리 테이블
+model AllowedDevice {
+  id         String   @id @default(cuid())
+  ip         String   @unique // 허용된 IP 주소
+  label      String?  // 컴퓨터 식별 라벨 (예: "교관실 PC 1")
+  createdBy  String?  // 등록자 (예: "Admin", 사번 등)
+  userAgent  String?  // 등록 시 User Agent 정보
+  isActive   Boolean  @default(true) // 활성화 상태
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([ip])
+  @@index([isActive])
+  @@map("allowed_devices")
+}
+
 

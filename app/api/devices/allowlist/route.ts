@@ -1,34 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import dropboxService from "@/lib/dropbox-service";
-
-type AllowedDevice = {
-  ip: string;
-  label?: string;
-  createdAt: string;
-  createdBy?: string;
-  userAgent?: string;
-};
-
-const ALLOWLIST_PATH = "/config/allowed-ips.json";
-
-async function readAllowlist(): Promise<AllowedDevice[]> {
-  try {
-    const content = await dropboxService.download({ path: ALLOWLIST_PATH });
-    if (content && typeof content === "string" && content.trim()) {
-      const parsed = JSON.parse(content);
-      return Array.isArray(parsed) ? parsed : [];
-    }
-    return [];
-  } catch (e) {
-    // 파일이 없거나 에러일 경우 빈 목록 반환
-    return [];
-  }
-}
-
-async function writeAllowlist(list: AllowedDevice[]): Promise<void> {
-  const buf = Buffer.from(JSON.stringify(list, null, 2), "utf-8");
-  await dropboxService.overwrite({ path: ALLOWLIST_PATH, content: buf });
-}
+import { prisma } from "@/lib/prisma";
 
 function getClientIp(req: NextRequest): string | null {
   const xff = req.headers.get("x-forwarded-for");
@@ -65,19 +36,42 @@ function getClientIp(req: NextRequest): string | null {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get("mode");
-  const list = await readAllowlist();
 
   if (mode === "check") {
     const ip = getClientIp(request);
-    const allowed = !!ip && list.some((d) => d.ip === ip);
+    const device = await prisma.allowedDevice.findFirst({
+      where: {
+        ip: ip || "unknown",
+        isActive: true,
+      },
+    });
+    const allowed = !!device;
     return NextResponse.json({ allowed, ip: ip || "unknown" });
   }
 
   // 기본: 전체 목록 반환 (최신순)
-  const sorted = [...list].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-  return NextResponse.json({ devices: sorted });
+  const devices = await prisma.allowedDevice.findMany({
+    where: {
+      isActive: true,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
+      ip: true,
+      label: true,
+      createdAt: true,
+      createdBy: true,
+      userAgent: true,
+    },
+  });
+
+  return NextResponse.json({ 
+    devices: devices.map(d => ({
+      ...d,
+      createdAt: d.createdAt.toISOString(),
+    }))
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -100,22 +94,51 @@ export async function POST(request: NextRequest) {
       // 여전히 저장은 허용 (CDN/프록시 IP일 수 있음)
     }
 
-    const list = await readAllowlist();
-    if (list.some((d) => d.ip === ip)) {
+    // 이미 등록된 IP인지 확인
+    const existing = await prisma.allowedDevice.findUnique({
+      where: { ip },
+    });
+
+    if (existing) {
+      // 비활성화된 IP라면 다시 활성화
+      if (!existing.isActive) {
+        await prisma.allowedDevice.update({
+          where: { ip },
+          data: {
+            isActive: true,
+            label,
+            createdBy,
+            userAgent,
+          },
+        });
+        return NextResponse.json({ success: true, message: "IP가 다시 활성화되었습니다.", ip });
+      }
       return NextResponse.json({ success: true, message: "이미 등록된 IP입니다.", ip });
     }
 
-    const entry: AllowedDevice = {
-      ip,
-      label,
-      createdAt: new Date().toISOString(),
-      createdBy,
-      userAgent,
-    };
-    list.push(entry);
-    await writeAllowlist(list);
-    return NextResponse.json({ success: true, ip, entry });
+    // 새로운 IP 등록
+    const device = await prisma.allowedDevice.create({
+      data: {
+        ip,
+        label,
+        createdBy,
+        userAgent,
+      },
+    });
+
+    return NextResponse.json({ 
+      success: true, 
+      ip, 
+      entry: {
+        ip: device.ip,
+        label: device.label,
+        createdAt: device.createdAt.toISOString(),
+        createdBy: device.createdBy,
+        userAgent: device.userAgent,
+      }
+    });
   } catch (error) {
+    console.error("IP 등록 실패:", error);
     return NextResponse.json({ success: false, error: "등록 실패" }, { status: 500 });
   }
 }
@@ -127,11 +150,18 @@ export async function DELETE(request: NextRequest) {
     if (!ip) {
       return NextResponse.json({ success: false, error: "ip 쿼리 파라미터가 필요합니다." }, { status: 400 });
     }
-    const list = await readAllowlist();
-    const next = list.filter((d) => d.ip !== ip);
-    await writeAllowlist(next);
+
+    // 소프트 삭제 (isActive를 false로 설정)
+    await prisma.allowedDevice.update({
+      where: { ip },
+      data: {
+        isActive: false,
+      },
+    });
+
     return NextResponse.json({ success: true });
   } catch (error) {
+    console.error("IP 삭제 실패:", error);
     return NextResponse.json({ success: false, error: "삭제 실패" }, { status: 500 });
   }
 }
