@@ -156,3 +156,4 @@ npx prisma generate
 - API 라우트: `app/api/devices/allowlist/route.ts`
 - 마이그레이션 스크립트: `scripts/migrate-ip-to-db.ts`
 
+

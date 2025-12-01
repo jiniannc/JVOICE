@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from '../../../../lib/generated/prisma';
+import { getGradeInfo } from '../../../../lib/evaluation-criteria';
 
 const prisma = new PrismaClient();
 
@@ -42,6 +43,28 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // 🔥 서버에서 grade 재계산 (클라이언트 grade는 신뢰하지 않음)
+    const finalTotalScore = totalScore || calculatedTotalScore;
+    const categoryScores: Record<string, number> = {};
+    if (scores && Object.keys(scores).length > 0) {
+      Object.entries(scores).forEach(([key, score]) => {
+        categoryScores[key] = score as number;
+      });
+    }
+    
+    const gradeInfo = getGradeInfo(
+      finalTotalScore,
+      categoryScores,
+      existingEvaluation.language,
+      existingEvaluation.category || '신규'
+    );
+    const serverCalculatedGrade = gradeInfo.grade;
+    
+    console.log(`🔍 [Complete] 등급 계산:`);
+    console.log(`   - 클라이언트 전달 grade: ${grade}`);
+    console.log(`   - 서버 계산 grade: ${serverCalculatedGrade}`);
+    console.log(`   - totalScore: ${finalTotalScore}`);
+
     // 평가 정보 업데이트
     const isFirstEvaluation = !existingEvaluation.initialEvaluatedBy;
     
@@ -59,7 +82,7 @@ export async function POST(request: NextRequest) {
         totalScore: totalScore || calculatedTotalScore,
         koreanTotalScore: koreanTotalScore || calculatedKoreanScore,
         englishTotalScore: englishTotalScore || calculatedEnglishScore,
-        grade: grade || 'N/A',
+        grade: serverCalculatedGrade, // 🔥 서버에서 계산한 grade 사용
         comments: comments || { korean: '', english: '' },
         // 최초 평가자 설정 (없을 때만 - 검토 요청 없이 바로 제출하는 경우)
         initialEvaluatedBy: isFirstEvaluation ? evaluatedBy : existingEvaluation.initialEvaluatedBy,

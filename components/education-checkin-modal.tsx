@@ -404,6 +404,7 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
         educationId,
         language: education?.details?.language,
         mode: education?.details?.mode,
+        category: education?.details?.category,
         isKoreanEnglishSmall
       })
 
@@ -415,12 +416,15 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
           employeeId: userInfo.employeeId,
           name: userInfo.name,
           checkinTime: new Date().toISOString(),
-          isKoreanEnglishSmall // 한영 소규모 여부 전달
+          // 교육 정보를 DB에 함께 저장 (상세 리포트 권한 확인용)
+          language: education?.details?.language,
+          educationType: education?.details?.mode,
+          category: education?.details?.category
         })
       })
 
       if (response.ok) {
-        // 한영 소규모 교육 체크인 시 특별한 메시지와 함께 상세 평가 권한 부여
+        // 한영 소규모 교육 체크인 시 특별한 메시지
         if (isKoreanEnglishSmall) {
           showAlert({
             title: '체크인 완료 🎉',
@@ -428,30 +432,7 @@ export function EducationCheckinModal({ isOpen, onClose, userInfo }: EducationCh
             type: 'success'
           })
           
-          // 로컬 스토리지에 한영 소규모 체크인 기록 저장
-          const normalizedEmployeeId = String(userInfo.employeeId || '').trim()
-          const checkinRecord = {
-            employeeId: normalizedEmployeeId,
-            name: userInfo.name,
-            educationId,
-            educationLanguage: education?.details?.language,
-            educationMode: education?.details?.mode,
-            checkinTime: new Date().toISOString(),
-            hasDetailedReviewAccess: true
-          }
-          
-          const existingRecords = JSON.parse(localStorage.getItem('koreanEnglishSmallCheckins') || '[]')
-          
-          // 중복 체크인 방지 (같은 사번의 기록은 업데이트)
-          const filteredRecords = existingRecords.filter((r: any) => 
-            String(r.employeeId || '').trim() !== normalizedEmployeeId
-          )
-          filteredRecords.push(checkinRecord)
-          
-          localStorage.setItem('koreanEnglishSmallCheckins', JSON.stringify(filteredRecords))
-          
-          console.log('✅ [Education Checkin] 한영 소규모 체크인 기록 저장:', checkinRecord)
-          console.log('📋 [Education Checkin] 전체 체크인 기록:', filteredRecords)
+          console.log('✅ [Education Checkin] 한영 소규모 체크인 완료 - DB에 저장됨')
         } else {
         showAlert({
           title: '체크인 완료',

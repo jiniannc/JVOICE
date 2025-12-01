@@ -204,13 +204,13 @@ export async function updateCertificationFromEvaluation(evaluationId: string) {
       if (isHigherGrade(newGrade, currentGrade)) {
         // 상위 등급 취득 → 등급 + 유효기간 업데이트
         updateData.koreanEnglishGrade = newGrade;
-        updateData.koreanEnglishExpiry = calculateExpiryDate(evaluatedDate);
+        updateData.koreanEnglishExpiry = calculateExpiryDate(evaluatedDate).toISOString();
         shouldUpdate = true;
         updateReason = '상위 등급 취득';
         console.log(`✅ [Certification] 한/영 상위 등급 취득: ${currentGrade || '없음'} → ${newGrade} (등급+유효기간 업데이트)`);
       } else if (newGrade === currentGrade) {
         // 같은 등급 취득 → 유효기간만 갱신
-        updateData.koreanEnglishExpiry = calculateExpiryDate(evaluatedDate);
+        updateData.koreanEnglishExpiry = calculateExpiryDate(evaluatedDate).toISOString();
         shouldUpdate = true;
         updateReason = '유효기간 갱신';
         console.log(`✅ [Certification] 한/영 같은 등급 갱신: ${newGrade} (유효기간만 갱신)`);

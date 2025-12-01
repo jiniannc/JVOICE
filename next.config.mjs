@@ -10,6 +10,14 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // 프로덕션에서 불필요한 console.log 제거 (로그 용량 절감)
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production' 
+      ? {
+          exclude: ['error', 'warn'], // error, warn만 남기고 나머지 제거
+        }
+      : false,
+  },
   async headers() {
     return [
       {

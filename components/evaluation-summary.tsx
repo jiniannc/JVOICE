@@ -341,47 +341,68 @@ export function EvaluationSummary({
 
   const recordingsByScript = getRecordingsByScript();
 
-  // 한영 소규모 체크인 기록 확인 (상세 평가 결과 표시 권한)
-  const hasDetailedReviewAccess = (() => {
-    if (!isReviewMode || language !== 'korean-english') return false;
-    
-    try {
-      // employeeId를 여러 경로에서 찾기 (fallback 처리)
-      const targetEmployeeId = employeeId || 
-                               (evaluationResult as any).candidateInfo?.employeeId ||
-                               (evaluationResult as any).user?.employeeId;
-      
-      if (!targetEmployeeId) {
-        console.warn('⚠️ [EvaluationSummary] employeeId를 찾을 수 없음:', evaluationResult);
-        return false;
+  // 한영 소규모 체크인 기록 확인 (상세 평가 결과 표시 권한) - DB 기반
+  const [hasDetailedReviewAccess, setHasDetailedReviewAccess] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(false);
+
+  useEffect(() => {
+    const checkDetailedAccess = async () => {
+      if (!isReviewMode || language !== 'korean-english') {
+        setHasDetailedReviewAccess(false);
+        return;
       }
       
-      const checkinRecords = JSON.parse(localStorage.getItem('koreanEnglishSmallCheckins') || '[]')
-      
-      // 대소문자 무시, 공백 제거하여 비교
-      const normalizedTargetId = String(targetEmployeeId).trim().toLowerCase();
-      const hasCheckin = checkinRecords.some((record: any) => {
-        const normalizedRecordId = String(record.employeeId || '').trim().toLowerCase();
-        return normalizedRecordId === normalizedTargetId;
-      });
-      
-      console.log('🔍 [EvaluationSummary] 한영 소규모 체크인 기록 확인:', {
-        targetEmployeeId,
-        normalizedTargetId,
-        hasCheckin,
-        checkinRecords: checkinRecords.map((r: any) => ({
-          employeeId: r.employeeId,
-          normalized: String(r.employeeId || '').trim().toLowerCase(),
-          checkinTime: r.checkinTime
-        })),
-        totalRecords: checkinRecords.length
-      })
-      return hasCheckin
-    } catch (error) {
-      console.error('❌ [EvaluationSummary] 체크인 기록 확인 오류:', error)
-      return false
-    }
-  })()
+      setCheckingAccess(true);
+      try {
+        // employeeId를 여러 경로에서 찾기 (fallback 처리)
+        const targetEmployeeId = employeeId || 
+                                 (evaluationResult as any).candidateInfo?.employeeId ||
+                                 (evaluationResult as any).user?.employeeId;
+        
+        if (!targetEmployeeId) {
+          console.warn('⚠️ [EvaluationSummary] employeeId를 찾을 수 없음:', evaluationResult);
+          setHasDetailedReviewAccess(false);
+          return;
+        }
+        
+        // 데이터베이스에서 한영 소규모 체크인 기록 확인
+        const response = await fetch(`/api/education/checkin?employeeId=${targetEmployeeId}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (data.success && data.checkins) {
+            // 한영 소규모 교육 체크인이 있는지 확인
+            const hasKoreanEnglishSmallCheckin = data.checkins.some((checkin: any) => 
+              checkin.language === 'korean-english' && 
+              (checkin.educationType === 'small' || checkin.educationType === 'small-group')
+            );
+            
+            console.log('🔍 [EvaluationSummary] 한영 소규모 체크인 기록 확인 (DB):', {
+              targetEmployeeId,
+              totalCheckins: data.checkins.length,
+              hasKoreanEnglishSmallCheckin,
+              checkins: data.checkins.filter((c: any) => c.language === 'korean-english')
+            });
+            
+            setHasDetailedReviewAccess(hasKoreanEnglishSmallCheckin);
+          } else {
+            setHasDetailedReviewAccess(false);
+          }
+        } else {
+          console.error('❌ [EvaluationSummary] 체크인 기록 조회 실패:', response.statusText);
+          setHasDetailedReviewAccess(false);
+        }
+      } catch (error) {
+        console.error('❌ [EvaluationSummary] 체크인 기록 확인 오류:', error);
+        setHasDetailedReviewAccess(false);
+      } finally {
+        setCheckingAccess(false);
+      }
+    };
+
+    checkDetailedAccess();
+  }, [isReviewMode, language, employeeId, evaluationResult]);
 
   const gradeInfo = getGradeInfo(totalScore, categoryScores, language, category);
 
@@ -811,7 +832,7 @@ export function EvaluationSummary({
                 </div>
                 <hr className="my-4 border-gray-200"/>
                 {!isReviewMode && (
-                  <>
+                  <div className="pdf-exclude">
                     {/* 디버깅 로그 */}
                     {(() => {
                       console.log('🔍 [EvaluationSummary] 평가자 데이터:', {
@@ -861,7 +882,7 @@ export function EvaluationSummary({
                         </span>
                       </div>
                     )}
-                  </>
+                  </div>
                 )}
                 <div className="flex items-center">
                   <Calendar className="w-4 h-4 mr-3 text-gray-400" />
@@ -1207,9 +1228,9 @@ export function EvaluationSummary({
           </CardContent>
         </Card>
 
-        {/* 녹음 파일 재생 카드 (admin 모드에서만 표시) */}
+        {/* 녹음 파일 재생 카드 (admin 모드에서만 표시) - PDF에서는 제외 */}
         {!isReviewMode && recordingsByScript.length > 0 && (
-          <Card className="mb-6 bg-white shadow-lg rounded-2xl overflow-hidden border-purple-100">
+          <Card className="mb-6 bg-white shadow-lg rounded-2xl overflow-hidden border-purple-100 pdf-exclude">
             <CardHeader className="bg-gray-50/80">
               <CardTitle className="flex items-center gap-3">
                 <Volume2 className="w-6 h-6 text-purple-600" />

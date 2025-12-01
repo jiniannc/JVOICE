@@ -241,6 +241,11 @@ model EducationCheckin {
   ipAddress    String?  // 체크인한 IP 주소
   location     String?  // 체크인 위치 (GPS 좌표 등)
   
+  // 교육 정보 (빠른 조회를 위해 추가)
+  language     String?  // 'korean-english', 'japanese', 'chinese'
+  educationType String? // '1:1', 'small', 'small-group'
+  category     String?  // '신규', '재자격', '공통', 'PUS'
+  
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -251,6 +256,7 @@ model EducationCheckin {
   @@index([employeeId])
   @@index([requestId])
   @@index([checkinTime])
+  @@index([language, educationType]) // 빠른 필터링을 위한 인덱스
   @@map("education_checkins")
 }
 

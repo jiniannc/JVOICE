@@ -68,7 +68,8 @@ export async function GET(request: NextRequest) {
           select: {
             name: true,
             employeeId: true,
-            department: true
+            department: true,
+            email: true // 캘린더 초대를 위한 이메일 추가
           }
         }
       },
@@ -154,6 +155,8 @@ export async function GET(request: NextRequest) {
         session.applicants.push({
           name: app.user.name || '이름없음',
           employeeId: app.user.employeeId || '사번없음',
+          email: app.user.email || '', // 캘린더 초대를 위한 이메일 추가
+          department: app.user.department || '부서미상', // 부서 정보 추가
           status: '신청완료',
           applicationId: app.id, // 구글 미트 생성을 위한 applicationId 추가
           isCheckedIn: checkinMap.get(app.id) || false, // 체크인 상태 추가

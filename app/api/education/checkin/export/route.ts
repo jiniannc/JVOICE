@@ -24,100 +24,104 @@ export async function GET(request: NextRequest) {
     // 각 체크인에 대해 교육 신청 정보를 조회하고 필터링
     const enrichedCheckins = await Promise.all(
       checkins.map(async (checkin) => {
+        // 우선: 체크인에 저장된 교육 정보 사용 (새 시스템)
         let educationInfo = {
           date: checkin.checkinTime.toISOString().split('T')[0],
           slot: 1,
-          educationType: '1:1' as const,
-          language: 'korean-english',
-          category: null
+          educationType: checkin.educationType || '1:1' as const,
+          language: checkin.language || 'korean-english',
+          category: checkin.category || null
         }
 
-        // 1. 먼저 새로운 ScheduleApplication 테이블에서 조회
-        const scheduleApplication = await prisma.scheduleApplication.findUnique({
-          where: { id: checkin.requestId },
-          include: {
-            schedule: true
-          }
-        })
-
-        if (scheduleApplication) {
-          // 새로운 시스템 데이터
-          const details = scheduleApplication.details as any || {}
-          educationInfo = {
-            date: scheduleApplication.schedule.date,
-            slot: scheduleApplication.slot,
-            educationType: details.mode === 'small-group' || details.mode === 'small' ? 'small-group' : '1:1',
-            language: details.language || 'korean-english',
-            category: details.category || null
-          }
-        } else {
-          // 2. 기존 Request 테이블에서 조회 (fallback)
-          const request = await prisma.request.findUnique({
-            where: { id: checkin.requestId }
+        // Fallback: 체크인에 교육 정보가 없으면 Request/ScheduleApplication 조회 (기존 시스템)
+        if (!checkin.language || !checkin.educationType) {
+          // 1. 먼저 새로운 ScheduleApplication 테이블에서 조회
+          const scheduleApplication = await prisma.scheduleApplication.findUnique({
+            where: { id: checkin.requestId },
+            include: {
+              schedule: true
+            }
           })
 
-          if (request) {
-            const details = request.details as any || {}
+          if (scheduleApplication) {
+            // 새로운 시스템 데이터
+            const details = scheduleApplication.details as any || {}
             educationInfo = {
-              date: request.date,
-              slot: request.slot,
-              educationType: details.mode === 'small-group' || details.mode === 'small' ? 'small-group' : '1:1',
-              language: details.language || 'korean-english',
-              category: details.category || null
+              date: scheduleApplication.schedule.date,
+              slot: scheduleApplication.slot,
+              educationType: scheduleApplication.schedule.classType === 'small' ? 'small-group' : '1:1',
+              language: scheduleApplication.schedule.type || 'korean-english',
+              category: scheduleApplication.schedule.category || null
             }
           } else {
-            // 3. 체크인 날짜 기준으로 해당 사용자의 교육 신청 찾기
-            const checkinDate = checkin.checkinTime.toISOString().split('T')[0]
-            
-            // 먼저 ScheduleApplication에서 찾기
-            const userScheduleApp = await prisma.scheduleApplication.findFirst({
-              where: {
-                employeeId: checkin.employeeId,
-                schedule: {
-                  date: checkinDate,
-                  type: 'education'
-                },
-                status: 'ACTIVE'
-              },
-              include: {
-                schedule: true
-              },
-              orderBy: {
-                appliedAt: 'desc'
-              }
+            // 2. 기존 Request 테이블에서 조회 (fallback)
+            const request = await prisma.request.findUnique({
+              where: { id: checkin.requestId }
             })
 
-            if (userScheduleApp) {
-              const details = userScheduleApp.details as any || {}
+            if (request) {
+              const details = request.details as any || {}
               educationInfo = {
-                date: userScheduleApp.schedule.date,
-                slot: userScheduleApp.slot,
+                date: request.date,
+                slot: request.slot,
                 educationType: details.mode === 'small-group' || details.mode === 'small' ? 'small-group' : '1:1',
                 language: details.language || 'korean-english',
                 category: details.category || null
               }
             } else {
-              // 마지막으로 Request 테이블에서 날짜 기준 찾기
-              const userRequest = await prisma.request.findFirst({
+              // 3. 체크인 날짜 기준으로 해당 사용자의 교육 신청 찾기
+              const checkinDate = checkin.checkinTime.toISOString().split('T')[0]
+              
+              // 먼저 ScheduleApplication에서 찾기
+              const userScheduleApp = await prisma.scheduleApplication.findFirst({
                 where: {
-                  userId: checkin.employeeId,
-                  date: checkinDate,
-                  type: 'education',
+                  employeeId: checkin.employeeId,
+                  schedule: {
+                    date: checkinDate,
+                    type: 'education'
+                  },
                   status: 'ACTIVE'
                 },
+                include: {
+                  schedule: true
+                },
                 orderBy: {
-                  applicationTime: 'desc'
+                  appliedAt: 'desc'
                 }
               })
 
-              if (userRequest) {
-                const details = userRequest.details as any || {}
+              if (userScheduleApp) {
+                const details = userScheduleApp.details as any || {}
                 educationInfo = {
-                  date: userRequest.date,
-                  slot: userRequest.slot,
-                  educationType: details.mode === 'small-group' || details.mode === 'small' ? 'small-group' : '1:1',
-                  language: details.language || 'korean-english',
-                  category: details.category || null
+                  date: userScheduleApp.schedule.date,
+                  slot: userScheduleApp.slot,
+                  educationType: userScheduleApp.schedule.classType === 'small' ? 'small-group' : '1:1',
+                  language: userScheduleApp.schedule.type || 'korean-english',
+                  category: userScheduleApp.schedule.category || null
+                }
+              } else {
+                // 마지막으로 Request 테이블에서 날짜 기준 찾기
+                const userRequest = await prisma.request.findFirst({
+                  where: {
+                    userId: checkin.employeeId,
+                    date: checkinDate,
+                    type: 'education',
+                    status: 'ACTIVE'
+                  },
+                  orderBy: {
+                    applicationTime: 'desc'
+                  }
+                })
+
+                if (userRequest) {
+                  const details = userRequest.details as any || {}
+                  educationInfo = {
+                    date: userRequest.date,
+                    slot: userRequest.slot,
+                    educationType: details.mode === 'small-group' || details.mode === 'small' ? 'small-group' : '1:1',
+                    language: details.language || 'korean-english',
+                    category: details.category || null
+                  }
                 }
               }
             }
