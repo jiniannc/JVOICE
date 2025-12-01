@@ -26,8 +26,9 @@ export async function GET(request: NextRequest) {
     
     // month 필터링
     if (month) {
-      const startDate = new Date(`${month}-01T00:00:00.000Z`);
-      const endDate = new Date(`${month}-31T23:59:59.999Z`);
+      const [year, monthNum] = month.split('-').map(Number);
+      const startDate = new Date(year, monthNum - 1, 1, 0, 0, 0, 0); // 해당 월 1일
+      const endDate = new Date(year, monthNum, 0, 23, 59, 59, 999); // 해당 월 마지막 날 (다음 달 0일 = 이번 달 마지막 날)
       whereClause.submittedAt = {
         gte: startDate,
         lte: endDate

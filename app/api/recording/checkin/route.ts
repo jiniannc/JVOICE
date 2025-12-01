@@ -25,6 +25,16 @@ export async function POST(request: NextRequest) {
 
     console.log(`🔍 [Recording Checkin] 오늘 날짜:`, todayKorean)
 
+    // 언어 코드를 한국어 표시로 변환하는 함수 (응시자 목록 API와 일치)
+    const getLanguageDisplayName = (code: string): string => {
+      const map: Record<string, string> = {
+        'korean-english': '한/영',
+        'japanese': '일본어',
+        'chinese': '중국어'
+      }
+      return map[code] || code
+    }
+
     // 녹음 응시자 목록 조회 (API 호출 대신 직접 로직 사용)
     let applicantFound = false
     
@@ -39,17 +49,24 @@ export async function POST(request: NextRequest) {
         const applicants = applicantsData.applicants || []
         
         console.log(`🔍 [Recording Checkin] 응시자 목록:`, applicants.length, '명')
+        console.log(`🔍 [Recording Checkin] 체크인 요청 정보:`, { employeeId, name, language, languageDisplay: getLanguageDisplayName(language) })
+        
+        // 응시자 목록의 language는 한국어 표시 (예: "한/영", "일본어")이므로 변환 필요
+        const languageDisplay = getLanguageDisplayName(language)
         
         // 해당 직원이 응시자 목록에 있는지 확인
         applicantFound = applicants.some((applicant: any) => {
           const matchByEmployeeId = applicant.employeeId === employeeId
           const matchByName = applicant.name === name
-          const matchByLanguage = applicant.language === language
+          // 응시자 목록의 language는 한국어 표시로 되어 있음
+          const matchByLanguage = applicant.language === languageDisplay || applicant.language === language
           
           console.log(`🔍 [Recording Checkin] 응시자 매칭 확인:`, {
             applicant: applicant.name,
             applicantEmployeeId: applicant.employeeId,
             applicantLanguage: applicant.language,
+            requestLanguage: language,
+            requestLanguageDisplay: languageDisplay,
             matchByEmployeeId,
             matchByName,
             matchByLanguage
@@ -57,6 +74,8 @@ export async function POST(request: NextRequest) {
           
           return (matchByEmployeeId || matchByName) && matchByLanguage
         })
+        
+        console.log(`🔍 [Recording Checkin] 응시자 목록 매칭 결과:`, applicantFound ? '✅ 찾음' : '❌ 못찾음')
       }
     } catch (error) {
       console.error(`❌ [Recording Checkin] 응시자 목록 조회 오류:`, error)

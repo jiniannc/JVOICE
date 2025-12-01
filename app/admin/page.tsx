@@ -113,6 +113,7 @@ export default function AdminDashboard() {
   const [listMonth, setListMonth] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<string>("")
+  const [isInitialLoad, setIsInitialLoad] = useState(true) // 초기 로드 추적
   // (관리자) 응시 목록 상태 제거됨
 
   // 진행 바 애니메이션을 위한 스타일
@@ -423,14 +424,15 @@ export default function AdminDashboard() {
       setHasNextPage(page * limit < totalMerged)
       setTotalPagesServer(Math.max(1, Math.ceil(totalMerged / limit)))
       
-      // 데이터가 로드된 후 통계/다운로드용 월은 자동 선택하되, 목록 필터는 기본 '전체'
-      if (page === 1 && formattedSubmissions.length > 0) {
+      // 데이터가 로드된 후 통계/다운로드용 월은 자동 선택하되, 초기 로드 시에만 적용
+      if (isInitialLoad && page === 1 && formattedSubmissions.length > 0) {
         const firstMonth = formattedSubmissions[0].submittedAt?.slice(0, 7);
         if (firstMonth) {
           setSelectedMonth(firstMonth);
         }
         // 기본 월 선택은 첫 데이터의 월로 설정
         setListMonth(firstMonth || "");
+        setIsInitialLoad(false); // 초기 로드 완료 표시
       }
 
     } catch (error) {
